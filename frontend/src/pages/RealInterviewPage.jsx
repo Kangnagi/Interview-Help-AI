@@ -1,263 +1,247 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
-import toast from 'react-hot-toast'
 
-const QUESTIONS_TEMPLATE = (resume) => [
-  { id: 1, q: `자기소개를 해주세요. ${resume?.companyName || ''}에 지원한 이유도 함께 말씀해주세요.` },
-  { id: 2, q: `${resume?.jobTitle || '해당 직무'}에서 본인이 어떤 기여를 할 수 있을지 말씀해주세요.` },
-  { id: 3, q: '팀 프로젝트에서 갈등 상황을 경험한 적이 있다면, 어떻게 해결하셨나요?' },
-  { id: 4, q: '본인의 단점과 그것을 극복하기 위해 어떤 노력을 하고 있는지 말씀해주세요.' },
-  { id: 5, q: '마지막으로 저희 회사에 궁금한 사항이나 하고 싶은 말씀이 있으신가요?' },
+const PHASE = { INTRO: 'intro', INTERVIEW: 'interview', RESULT: 'result' }
+
+const QUESTIONS = [
+  '자기소개를 1분 이내로 해주세요.',
+  '지원 동기를 말씀해 주세요.',
+  '본인의 강점과 이를 업무에 어떻게 활용했는지 말씀해 주세요.',
+  '가장 도전적이었던 프로젝트 경험을 공유해 주세요.',
+  '마지막으로 하고 싶은 말씀이 있으신가요?',
 ]
 
-const ANSWER_LIMIT = 120 // 2분 = 120초
-
-const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-
-const PHASE = { INTRO: 'intro', ANSWER: 'answer', RESULT: 'result' }
+const Q_LIMIT = 120 // 질문당 최대 답변 시간 (초)
 
 export default function RealInterviewPage() {
   const navigate = useNavigate()
   const { resumeId } = useParams()
-  const { getResume, addInterviewRecord } = useResumeStore()
-  const resume = getResume(resumeId)
+  const resume = useResumeStore((s) => s.getResume(resumeId))
+  const { addInterviewRecord } = useResumeStore()
 
-  const questions = QUESTIONS_TEMPLATE(resume)
-
-  const [phase, setPhase]         = useState(PHASE.INTRO)
-  const [qIdx, setQIdx]           = useState(0)
-  const [answerTimer, setAnswerTimer] = useState(ANSWER_LIMIT)
-  const [totalTime, setTotalTime] = useState(0)
-  const [answers, setAnswers]     = useState(Array(questions.length).fill(''))
-  const [currentAnswer, setCurrentAnswer] = useState('')
+  const [phase, setPhase] = useState(PHASE.INTRO)
+  const [qIndex, setQIndex] = useState(0)
+  const [remaining, setRemaining] = useState(Q_LIMIT)
+  const [answer, setAnswer] = useState('')
+  const [answers, setAnswers] = useState([])
+  const [totalSec, setTotalSec] = useState(0)
   const [exitConfirm, setExitConfirm] = useState(false)
 
-  const timerRef       = useRef(null)
-  const totalTimerRef  = useRef(null)
-  const videoRef       = useRef(null)
-  const streamRef      = useRef(null)
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const timerRef = useRef(null)
+  const totalRef = useRef(null)
 
-  // 총 타이머
-  useEffect(() => {
-    if (phase !== PHASE.INTRO) {
-      totalTimerRef.current = setInterval(() => setTotalTime((t) => t + 1), 1000)
-    }
-    return () => clearInterval(totalTimerRef.current)
-  }, [phase])
+  const currentQ = QUESTIONS[qIndex]
+  const pct = Math.round(((Q_LIMIT - remaining) / Q_LIMIT) * 100)
+  // 원형 타이머
+  const r = 52, circ = 2 * Math.PI * r
+  const color = remaining > 60 ? '#10b981' : remaining > 30 ? '#f59e0b' : '#ef4444'
 
-  // 카메라
   useEffect(() => {
     navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
       .then((s) => { streamRef.current = s; if (videoRef.current) videoRef.current.srcObject = s })
       .catch(() => {})
-    return () => streamRef.current?.getTracks().forEach((t) => t.stop())
+    return () => { streamRef.current?.getTracks().forEach((t) => t.stop()); clearInterval(timerRef.current); clearInterval(totalRef.current) }
   }, [])
 
-  // 답변 타이머
   useEffect(() => {
-    if (phase === PHASE.ANSWER) {
-      setAnswerTimer(ANSWER_LIMIT)
-      clearInterval(timerRef.current)
-      timerRef.current = setInterval(() => {
-        setAnswerTimer((t) => {
-          if (t <= 1) {
-            clearInterval(timerRef.current)
-            handleAutoNext()
-            return 0
-          }
-          return t - 1
-        })
-      }, 1000)
-    } else {
-      clearInterval(timerRef.current)
+    if (phase === PHASE.INTERVIEW) {
+      totalRef.current = setInterval(() => setTotalSec((p) => p + 1), 1000)
+      startQTimer()
     }
-    return () => clearInterval(timerRef.current)
-  // eslint-disable-next-line
-  }, [phase, qIdx])
+    return () => { clearInterval(timerRef.current); clearInterval(totalRef.current) }
+  }, [phase])
 
-  const handleAutoNext = () => {
-    const newAnswers = [...answers]
-    newAnswers[qIdx] = currentAnswer
-    setAnswers(newAnswers)
-    setCurrentAnswer('')
-    if (qIdx + 1 >= questions.length) {
-      finishInterview(newAnswers)
-    } else {
-      setQIdx((i) => i + 1)
-    }
-  }
-
-  const handleNextManual = () => {
+  const startQTimer = () => {
     clearInterval(timerRef.current)
-    const newAnswers = [...answers]
-    newAnswers[qIdx] = currentAnswer
-    setAnswers(newAnswers)
-    setCurrentAnswer('')
-    if (qIdx + 1 >= questions.length) {
-      finishInterview(newAnswers)
-    } else {
-      setQIdx((i) => i + 1)
-    }
-  }
-
-  const finishInterview = (finalAnswers = answers) => {
-    clearInterval(totalTimerRef.current)
-    clearInterval(timerRef.current)
-    if (resumeId) {
-      addInterviewRecord(resumeId, {
-        type: 'real',
-        totalTime,
-        questionCount: questions.length,
-        log: questions.map((q, i) => ({ question: q.q, answer: finalAnswers[i] || '(무응답)' })),
+    setRemaining(Q_LIMIT)
+    timerRef.current = setInterval(() => {
+      setRemaining((p) => {
+        if (p <= 1) { clearInterval(timerRef.current); handleNext(); return 0 }
+        return p - 1
       })
-    }
-    setPhase(PHASE.RESULT)
+    }, 1000)
   }
 
-  const timerPct = (answerTimer / ANSWER_LIMIT) * 100
-  const timerColor = timerPct > 50 ? '#34D399' : timerPct > 20 ? '#F59E0B' : '#EF4444'
+  const handleNext = () => {
+    clearInterval(timerRef.current)
+    const newAnswers = [...answers, { q: currentQ, a: answer }]
+    setAnswers(newAnswers)
+    setAnswer('')
+    if (qIndex + 1 >= QUESTIONS.length) {
+      clearInterval(totalRef.current)
+      addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: newAnswers })
+      setPhase(PHASE.RESULT)
+    } else {
+      setQIndex((p) => p + 1)
+      startQTimer()
+    }
+  }
 
-  if (!resume) return <div style={{ padding: 40, color: '#fff' }}>자기소개서를 찾을 수 없습니다.</div>
+  const fmtTime = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
+
+  const handleExit = () => { streamRef.current?.getTracks().forEach((t) => t.stop()); navigate('/resume') }
+
+  if (!resume) return <div style={{ padding: 40, textAlign: 'center' }}>자기소개서를 찾을 수 없습니다. <button onClick={() => navigate('/resume')} className="btn btn-primary" style={{ marginLeft: 10 }}>목록으로</button></div>
 
   return (
-    <div className="ri-page">
-      {/* ── 인트로 화면 ── */}
-      {phase === PHASE.INTRO && (
-        <div className="ri-intro">
-          <div className="ri-intro-card">
-            <div className="ri-intro-icon">💼</div>
-            <h2>실전 면접 준비</h2>
-            <p className="ri-intro-sub">{resume.title}</p>
-            <p className="ri-intro-company">🏢 {resume.companyName} · {resume.jobTitle}</p>
-            <div className="ri-intro-rules">
-              <div className="ri-rule">⏱ 질문당 최대 {fmt(ANSWER_LIMIT)} 답변시간</div>
-              <div className="ri-rule">📋 총 {questions.length}개 질문</div>
-              <div className="ri-rule">🎥 카메라와 마이크가 필요합니다</div>
-              <div className="ri-rule">🔇 조용한 환경에서 진행하세요</div>
+    <div style={{ position: 'fixed', inset: 0, background: '#0a0d1a', display: 'flex', flexDirection: 'column', zIndex: 500 }}>
+      <style>{`
+        .ri-header { display:flex; align-items:center; justify-content:space-between; padding:16px 28px; background:#111422; border-bottom:1px solid rgba(255,255,255,.06); }
+        .ri-body { flex:1; display:flex; gap:20px; padding:20px 28px; overflow:hidden; }
+        .ri-left { flex:1.4; display:flex; flex-direction:column; gap:14px; }
+        .ri-right { flex:1; display:flex; flex-direction:column; gap:14px; }
+        .ri-panel { background:#111422; border-radius:14px; border:1px solid rgba(255,255,255,.07); overflow:hidden; }
+        .ri-panel-title { font-size:12px; font-weight:700; color:rgba(255,255,255,.35); padding:10px 16px; border-bottom:1px solid rgba(255,255,255,.06); text-transform:uppercase; letter-spacing:.05em; }
+        .ri-timer-ring { display:flex; align-items:center; justify-content:center; padding:24px; flex-direction:column; gap:12px; }
+        .ri-q-bubble { background:#1e2540; border-radius:12px; padding:16px 20px; margin:0 16px 16px; }
+        .ri-q-label { font-size:12px; color:#4f6ef7; font-weight:700; margin-bottom:8px; }
+        .ri-q-text { font-size:16px; color:#fff; line-height:1.6; font-weight:500; }
+        .ri-cam-video { width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1); min-height:180px; }
+        .ri-answer-input { width:calc(100% - 32px); margin:0 16px 16px; background:#0f1220; border:1.5px solid rgba(255,255,255,.1); border-radius:10px; padding:12px 14px; color:#fff; font-size:14px; resize:none; min-height:80px; font-family:inherit; }
+        .ri-answer-input:focus { border-color:#4f6ef7; outline:none; }
+        .ri-progress { height:4px; background:#1a1d2e; }
+        .ri-progress-bar { height:100%; background:linear-gradient(90deg,#4f6ef7,#10b981); transition:width .4s; }
+        .ri-result-item { background:#1a1d2e; border-radius:10px; padding:14px; margin-bottom:12px; }
+        .ri-result-q { font-size:13px; color:#4f6ef7; margin-bottom:6px; font-weight:600; }
+        .ri-result-a { font-size:13px; color:rgba(255,255,255,.7); line-height:1.5; }
+      `}</style>
+
+      {/* 상단 */}
+      <div className="ri-header">
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>🎯 실전 면접</div>
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', marginTop: 2 }}>{resume.companyName} · {resume.jobTitle}</div>
+        </div>
+        {phase === PHASE.INTERVIEW && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)' }}>총 진행 시간</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', fontFamily: 'monospace' }}>{fmtTime(totalSec)}</div>
             </div>
-            <button
-              className="ri-start-btn"
-              onClick={() => setPhase(PHASE.ANSWER)}
-            >
-              면접 시작하기 →
-            </button>
-            <button className="ri-back-btn" onClick={() => navigate('/resume')}>돌아가기</button>
+            <div style={{ width: 1, height: 32, background: 'rgba(255,255,255,.08)' }} />
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>Q {qIndex + 1} / {QUESTIONS.length}</div>
+          </div>
+        )}
+        <button onClick={() => setExitConfirm(true)} style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', font: 'inherit', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>나가기</button>
+      </div>
+
+      {/* 진행바 */}
+      {phase === PHASE.INTERVIEW && (
+        <div className="ri-progress">
+          <div className="ri-progress-bar" style={{ width: `${((qIndex) / QUESTIONS.length) * 100}%` }} />
+        </div>
+      )}
+
+      {/* 인트로 */}
+      {phase === PHASE.INTRO && (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 20 }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>🎯</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>실전 면접 안내</div>
+            <div style={{ fontSize: 14, color: 'rgba(255,255,255,.5)', lineHeight: 1.8, maxWidth: 400 }}>
+              각 질문당 <b style={{ color: '#fff' }}>{Q_LIMIT}초</b>의 답변 시간이 주어집니다.<br />
+              시간이 지나면 자동으로 다음 질문으로 넘어갑니다.<br />
+              총 <b style={{ color: '#fff' }}>{QUESTIONS.length}개</b>의 질문이 준비되어 있습니다.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button onClick={() => navigate('/resume')} style={{ background: 'transparent', color: 'rgba(255,255,255,.5)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '12px 24px', font: 'inherit', cursor: 'pointer', fontSize: 14 }}>취소</button>
+            <button onClick={() => setPhase(PHASE.INTERVIEW)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 32px', font: 'inherit', fontWeight: 700, cursor: 'pointer', fontSize: 15 }}>면접 시작</button>
           </div>
         </div>
       )}
 
-      {/* ── 면접 진행 ── */}
-      {phase === PHASE.ANSWER && (
-        <div className="ri-interview">
-          {/* 상단 바 */}
-          <div className="ri-bar">
-            <div className="ri-bar-left">
-              <span className="ri-badge real">💼 실전면접</span>
-              <span className="ri-bar-name">{resume.title}</span>
-            </div>
-            <div className="ri-bar-center">
-              <div className="ri-bar-progress">
-                {questions.map((_, i) => (
-                  <div key={i} className={`ri-dot ${i < qIdx ? 'done' : i === qIdx ? 'curr' : ''}`} />
-                ))}
-                <span className="ri-dot-label">{qIdx + 1}/{questions.length}</span>
+      {/* 면접 진행 */}
+      {phase === PHASE.INTERVIEW && (
+        <div className="ri-body">
+          {/* 왼쪽 - AI 면접관 + 질문 */}
+          <div className="ri-left">
+            <div className="ri-panel" style={{ flex: 1 }}>
+              <div className="ri-panel-title">🤖 AI 면접관</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 28 }}>
+                <div style={{ width: 90, height: 90, borderRadius: '50%', background: 'linear-gradient(135deg,#4f6ef7,#10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 44 }}>🤖</div>
+              </div>
+              <div className="ri-q-bubble">
+                <div className="ri-q-label">Q{qIndex + 1}</div>
+                <div className="ri-q-text">{currentQ}</div>
               </div>
             </div>
-            <div className="ri-bar-right">
-              <span className="ri-total-time">전체 {fmt(totalTime)}</span>
-              <button className="ri-exit-btn" onClick={() => setExitConfirm(true)}>나가기</button>
-            </div>
-          </div>
-
-          {/* 메인 레이아웃 */}
-          <div className="ri-body">
-            {/* AI 면접관 */}
-            <div className="ri-ai-section">
-              <div className="ri-ai-bg">
-                <div className="ri-ai-avatar">
-                  <span className="ri-ai-emoji">🧑‍💼</span>
-                  <div className="ri-ai-ring" />
-                </div>
-                <p className="ri-ai-name">AI 면접관</p>
-                <p className="ri-ai-hint">{resume.companyName} 인사팀</p>
-              </div>
-
-              {/* 질문 말풍선 */}
-              <div className="ri-speech-bubble">
-                <span className="ri-q-label">Q{qIdx + 1}</span>
-                <p>{questions[qIdx].q}</p>
-              </div>
-            </div>
-
-            {/* 면접자 영역 */}
-            <div className="ri-candidate-section">
-              {/* 타이머 */}
-              <div className="ri-timer-box">
-                <svg className="ri-timer-svg" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,.1)" strokeWidth="8" />
-                  <circle
-                    cx="50" cy="50" r="44"
-                    fill="none" stroke={timerColor} strokeWidth="8"
-                    strokeDasharray={`${2 * Math.PI * 44}`}
-                    strokeDashoffset={`${2 * Math.PI * 44 * (1 - timerPct / 100)}`}
-                    strokeLinecap="round"
-                    style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.5s' }}
-                    transform="rotate(-90 50 50)"
-                  />
-                </svg>
-                <div className="ri-timer-inner">
-                  <span className="ri-timer-val" style={{ color: timerColor }}>{fmt(answerTimer)}</span>
-                  <small>남은시간</small>
-                </div>
-              </div>
-
-              {/* 카메라 */}
-              <div className="ri-camera">
-                <video ref={videoRef} autoPlay muted playsInline className="ri-video" />
-                <div className="ri-rec-dot">● LIVE</div>
-              </div>
-
-              {/* 답변 입력 */}
+            <div className="ri-panel">
+              <div className="ri-panel-title">✍️ 답변 입력</div>
               <textarea
                 className="ri-answer-input"
-                placeholder="답변을 입력하거나 음성으로 말씀해주세요..."
-                value={currentAnswer}
-                onChange={(e) => setCurrentAnswer(e.target.value)}
+                placeholder="답변을 입력하거나 말씀해 주세요..."
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
               />
+              <div style={{ padding: '0 16px 16px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={handleNext}
+                  style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 24px', font: 'inherit', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}
+                >
+                  {qIndex + 1 >= QUESTIONS.length ? '면접 종료 →' : '다음 질문 →'}
+                </button>
+              </div>
+            </div>
+          </div>
 
-              <button className="ri-next-btn" onClick={handleNextManual}>
-                {qIdx + 1 >= questions.length ? '면접 완료' : '다음 질문 →'}
-              </button>
+          {/* 오른쪽 - 타이머 + 카메라 */}
+          <div className="ri-right">
+            <div className="ri-panel">
+              <div className="ri-panel-title">⏱ 답변 시간</div>
+              <div className="ri-timer-ring">
+                <svg width={120} height={120} viewBox="0 0 120 120">
+                  <circle cx={60} cy={60} r={r} fill="none" stroke="#1e2540" strokeWidth={10} />
+                  <circle
+                    cx={60} cy={60} r={r} fill="none" stroke={color} strokeWidth={10}
+                    strokeLinecap="round"
+                    strokeDasharray={circ}
+                    strokeDashoffset={circ * (1 - pct / 100)}
+                    transform="rotate(-90 60 60)"
+                    style={{ transition: 'stroke-dashoffset .9s, stroke .3s' }}
+                  />
+                  <text x={60} y={64} textAnchor="middle" dominantBaseline="middle" fill={color} fontSize={22} fontWeight={700} fontFamily="monospace">
+                    {fmtTime(remaining)}
+                  </text>
+                </svg>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.4)' }}>남은 시간</div>
+              </div>
+            </div>
+
+            <div className="ri-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div className="ri-panel-title">📹 면접자 모습</div>
+              <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                <video ref={videoRef} className="ri-cam-video" autoPlay playsInline muted />
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── 결과 화면 ── */}
+      {/* 결과 화면 */}
       {phase === PHASE.RESULT && (
-        <div className="ri-result">
-          <div className="ri-result-card">
-            <div className="ri-result-icon">🎉</div>
-            <h2>면접이 완료되었습니다!</h2>
-            <p className="ri-result-sub">총 소요시간 <strong>{fmt(totalTime)}</strong></p>
-
-            <div className="ri-result-summary">
-              {questions.map((q, i) => (
-                <div key={i} className="ri-result-item">
-                  <div className="ri-result-q">Q{i + 1}. {q.q}</div>
-                  <div className="ri-result-a">{answers[i] || '(무응답)'}</div>
-                </div>
-              ))}
+        <div style={{ flex: 1, overflow: 'auto', padding: '28px 40px' }}>
+          <div style={{ maxWidth: 720, margin: '0 auto' }}>
+            <div style={{ textAlign: 'center', marginBottom: 32 }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: '#fff' }}>실전 면접 완료</div>
+              <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)', marginTop: 8 }}>
+                {QUESTIONS.length}개 질문 · 총 소요 시간 {fmtTime(totalSec)}
+              </div>
             </div>
-
-            <div className="ri-result-actions">
-              <button className="ri-result-btn primary" onClick={() => navigate('/resume')}>
-                목록으로 돌아가기
-              </button>
-              <button className="ri-result-btn" onClick={() => navigate('/dashboard')}>
-                대시보드
-              </button>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'rgba(255,255,255,.5)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: '.05em' }}>답변 요약</div>
+            {answers.map((item, i) => (
+              <div key={i} className="ri-result-item">
+                <div className="ri-result-q">Q{i + 1}. {item.q}</div>
+                <div className="ri-result-a">{item.a || '(답변 없음)'}</div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 12, marginTop: 24, justifyContent: 'center' }}>
+              <button onClick={handleExit} style={{ background: 'transparent', color: 'rgba(255,255,255,.6)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '12px 24px', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}>목록으로</button>
+              <button onClick={() => navigate(`/resume/${resumeId}/history`)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}>기록 보기</button>
             </div>
           </div>
         </div>
@@ -265,305 +249,17 @@ export default function RealInterviewPage() {
 
       {/* 나가기 확인 */}
       {exitConfirm && (
-        <div className="ri-overlay" onClick={() => setExitConfirm(false)}>
-          <div className="ri-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>면접을 종료하시겠습니까?</h3>
-            <p>지금까지의 답변은 저장됩니다.</p>
-            <div className="ri-modal-btns">
-              <button className="ri-modal-cancel" onClick={() => setExitConfirm(false)}>계속하기</button>
-              <button className="ri-modal-exit" onClick={() => finishInterview()}>종료</button>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 600 }}>
+          <div style={{ background: '#111422', borderRadius: 14, padding: '28px 32px', minWidth: 300, textAlign: 'center', border: '1px solid rgba(255,255,255,.1)' }}>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 10 }}>면접을 종료하시겠습니까?</div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)', marginBottom: 24 }}>실전 면접 중 나가면 기록이 저장되지 않습니다.</div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button onClick={() => setExitConfirm(false)} style={{ background: 'transparent', color: 'rgba(255,255,255,.6)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 8, padding: '10px 20px', font: 'inherit', cursor: 'pointer' }}>계속 진행</button>
+              <button onClick={handleExit} style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}>나가기</button>
             </div>
           </div>
         </div>
       )}
-
-      <style>{`
-        .ri-page {
-          position: fixed; inset: 0;
-          background: #0A0C14;
-          color: #fff;
-          font-family: 'Pretendard', 'Noto Sans KR', sans-serif;
-          z-index: 500;
-          overflow: hidden;
-        }
-
-        /* 인트로 */
-        .ri-intro {
-          height: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: radial-gradient(ellipse at center, #1A1F35 0%, #0A0C14 70%);
-        }
-        .ri-intro-card {
-          text-align: center;
-          max-width: 480px;
-          width: 90%;
-          padding: 48px 40px;
-          background: rgba(255,255,255,.04);
-          border: 1px solid rgba(255,255,255,.1);
-          border-radius: 20px;
-        }
-        .ri-intro-icon { font-size: 52px; margin-bottom: 16px; }
-        .ri-intro-card h2 { font-size: 26px; font-weight: 800; margin-bottom: 8px; }
-        .ri-intro-sub { color: rgba(255,255,255,.5); font-size: 14px; }
-        .ri-intro-company { color: #6B8EFF; font-size: 13px; margin-top: 8px; }
-        .ri-intro-rules {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-          margin: 28px 0;
-          text-align: left;
-        }
-        .ri-rule {
-          padding: 12px 16px;
-          background: rgba(255,255,255,.04);
-          border-radius: 8px;
-          font-size: 14px;
-          color: rgba(255,255,255,.7);
-        }
-        .ri-start-btn {
-          width: 100%;
-          padding: 16px;
-          background: linear-gradient(135deg, #4F6EF7, #7B5CF7);
-          color: #fff;
-          border: none;
-          border-radius: 12px;
-          font-size: 16px;
-          font-weight: 700;
-          cursor: pointer;
-          transition: filter 0.2s;
-        }
-        .ri-start-btn:hover { filter: brightness(1.1); }
-        .ri-back-btn {
-          margin-top: 12px;
-          background: none;
-          border: none;
-          color: rgba(255,255,255,.3);
-          font-size: 13px;
-          cursor: pointer;
-        }
-        .ri-back-btn:hover { color: rgba(255,255,255,.6); }
-
-        /* 면접 진행 */
-        .ri-interview { height: 100%; display: flex; flex-direction: column; }
-
-        .ri-bar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 14px 28px;
-          background: #13151F;
-          border-bottom: 1px solid rgba(255,255,255,.06);
-          flex-shrink: 0;
-          gap: 16px;
-        }
-        .ri-bar-left, .ri-bar-right { display: flex; align-items: center; gap: 12px; flex: 1; }
-        .ri-bar-right { justify-content: flex-end; }
-        .ri-bar-center { display: flex; justify-content: center; flex: 1; }
-        .ri-badge { font-size: 12px; padding: 4px 12px; border-radius: 99px; font-weight: 700; }
-        .ri-badge.real { background: rgba(245,158,11,.2); color: #FCD34D; }
-        .ri-bar-name { font-size: 13px; color: rgba(255,255,255,.5); }
-        .ri-bar-progress { display: flex; align-items: center; gap: 8px; }
-        .ri-dot { width: 12px; height: 12px; border-radius: 50%; background: rgba(255,255,255,.15); transition: all .3s; }
-        .ri-dot.done { background: #FCD34D; }
-        .ri-dot.curr { background: #fff; transform: scale(1.4); }
-        .ri-dot-label { font-size: 12px; color: rgba(255,255,255,.4); margin-left: 4px; }
-        .ri-total-time { font-size: 14px; font-weight: 700; color: rgba(255,255,255,.5); }
-        .ri-exit-btn {
-          padding: 6px 16px; border: 1px solid rgba(255,255,255,.15); border-radius: 8px;
-          background: none; color: rgba(255,255,255,.5); font-size: 13px; cursor: pointer;
-        }
-        .ri-exit-btn:hover { border-color: #EF4444; color: #EF4444; }
-
-        .ri-body {
-          flex: 1;
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          overflow: hidden;
-        }
-
-        /* AI 섹션 */
-        .ri-ai-section {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 28px;
-          padding: 32px;
-          background: linear-gradient(135deg, #0F1117, #1A1D2E);
-          border-right: 1px solid rgba(255,255,255,.06);
-        }
-        .ri-ai-bg { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-        .ri-ai-avatar {
-          width: 160px; height: 160px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, #1E2235, #2A3050);
-          border: 3px solid rgba(245,158,11,.3);
-          display: flex; align-items: center; justify-content: center;
-          position: relative;
-        }
-        .ri-ai-emoji { font-size: 70px; }
-        .ri-ai-ring {
-          position: absolute; inset: -6px;
-          border-radius: 50%;
-          border: 2px solid rgba(245,158,11,.4);
-          animation: pulse-ring 2s ease-in-out infinite;
-        }
-        @keyframes pulse-ring { 0%,100% { transform: scale(1); opacity: .4; } 50% { transform: scale(1.04); opacity: 1; } }
-        .ri-ai-name { font-size: 15px; font-weight: 700; }
-        .ri-ai-hint { font-size: 12px; color: rgba(255,255,255,.3); }
-
-        .ri-speech-bubble {
-          background: rgba(255,255,255,.06);
-          border: 1px solid rgba(255,255,255,.1);
-          border-radius: 16px;
-          padding: 20px 24px;
-          width: 100%;
-          max-width: 420px;
-          position: relative;
-        }
-        .ri-q-label {
-          font-size: 12px;
-          font-weight: 700;
-          color: #FCD34D;
-          display: block;
-          margin-bottom: 10px;
-        }
-        .ri-speech-bubble p { font-size: 16px; line-height: 1.7; }
-
-        /* 면접자 섹션 */
-        .ri-candidate-section {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          padding: 28px;
-          gap: 16px;
-          background: #0F1117;
-          overflow-y: auto;
-        }
-
-        .ri-timer-box {
-          width: 100px; height: 100px;
-          position: relative; flex-shrink: 0;
-        }
-        .ri-timer-svg { width: 100%; height: 100%; }
-        .ri-timer-inner {
-          position: absolute; inset: 0;
-          display: flex; flex-direction: column; align-items: center; justify-content: center;
-        }
-        .ri-timer-val { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
-        .ri-timer-inner small { font-size: 10px; color: rgba(255,255,255,.4); }
-
-        .ri-camera {
-          width: 240px; height: 170px;
-          border-radius: 12px; overflow: hidden;
-          background: #000; border: 2px solid rgba(255,255,255,.1);
-          position: relative; flex-shrink: 0;
-        }
-        .ri-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        .ri-rec-dot {
-          position: absolute; top: 8px; right: 10px;
-          font-size: 10px; font-weight: 700; color: #EF4444;
-          background: rgba(0,0,0,.6); padding: 3px 8px; border-radius: 4px;
-          animation: blink 1.2s ease-in-out infinite;
-        }
-        @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
-
-        .ri-answer-input {
-          width: 100%; min-height: 110px;
-          background: rgba(255,255,255,.05);
-          border: 1px solid rgba(255,255,255,.1);
-          border-radius: 12px;
-          padding: 14px;
-          color: #fff; font-size: 14px; line-height: 1.6;
-          resize: vertical;
-        }
-        .ri-answer-input:focus { border-color: rgba(245,158,11,.4); outline: none; }
-        .ri-answer-input::placeholder { color: rgba(255,255,255,.2); }
-
-        .ri-next-btn {
-          width: 100%;
-          padding: 14px;
-          background: linear-gradient(135deg, #D97706, #F59E0B);
-          color: #fff; border: none; border-radius: 12px;
-          font-size: 15px; font-weight: 700; cursor: pointer;
-          transition: filter .2s;
-        }
-        .ri-next-btn:hover { filter: brightness(1.1); }
-
-        /* 결과 화면 */
-        .ri-result {
-          height: 100%;
-          display: flex; align-items: center; justify-content: center;
-          background: radial-gradient(ellipse at center, #1A1F35 0%, #0A0C14 70%);
-          overflow-y: auto;
-          padding: 40px 20px;
-        }
-        .ri-result-card {
-          width: 100%; max-width: 600px;
-          padding: 40px;
-          background: rgba(255,255,255,.04);
-          border: 1px solid rgba(255,255,255,.1);
-          border-radius: 20px;
-          text-align: center;
-        }
-        .ri-result-icon { font-size: 52px; margin-bottom: 16px; }
-        .ri-result-card h2 { font-size: 24px; font-weight: 800; }
-        .ri-result-sub { color: rgba(255,255,255,.5); margin-top: 8px; }
-        .ri-result-sub strong { color: #FCD34D; }
-        .ri-result-summary {
-          margin: 28px 0;
-          display: flex; flex-direction: column; gap: 16px;
-          text-align: left;
-        }
-        .ri-result-item {
-          padding: 16px;
-          background: rgba(255,255,255,.04);
-          border-radius: 10px;
-          border: 1px solid rgba(255,255,255,.07);
-        }
-        .ri-result-q { font-size: 13px; color: #FCD34D; font-weight: 600; margin-bottom: 8px; }
-        .ri-result-a { font-size: 13px; color: rgba(255,255,255,.6); line-height: 1.6; }
-        .ri-result-actions { display: flex; gap: 12px; justify-content: center; }
-        .ri-result-btn {
-          padding: 13px 28px;
-          border-radius: 10px;
-          font-size: 14px; font-weight: 600; cursor: pointer;
-          border: 1px solid rgba(255,255,255,.15);
-          background: rgba(255,255,255,.06); color: rgba(255,255,255,.7);
-          transition: all .2s;
-        }
-        .ri-result-btn:hover { background: rgba(255,255,255,.1); }
-        .ri-result-btn.primary {
-          background: linear-gradient(135deg, #4F6EF7, #7B5CF7);
-          border: none; color: #fff;
-        }
-
-        /* 모달 */
-        .ri-overlay {
-          position: absolute; inset: 0;
-          background: rgba(0,0,0,.7);
-          display: flex; align-items: center; justify-content: center;
-          z-index: 999;
-        }
-        .ri-modal {
-          background: #1A1D2E;
-          border: 1px solid rgba(255,255,255,.1);
-          border-radius: 14px;
-          padding: 28px;
-          width: 90%;
-          max-width: 360px;
-        }
-        .ri-modal h3 { font-size: 17px; font-weight: 700; }
-        .ri-modal p { font-size: 13px; color: rgba(255,255,255,.4); margin-top: 8px; }
-        .ri-modal-btns { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
-        .ri-modal-cancel, .ri-modal-exit {
-          padding: 8px 20px; border-radius: 8px; font-size: 14px; cursor: pointer;
-        }
-        .ri-modal-cancel { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: rgba(255,255,255,.6); }
-        .ri-modal-exit { background: #EF4444; border: none; color: #fff; font-weight: 600; }
-      `}</style>
     </div>
   )
 }

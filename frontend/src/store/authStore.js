@@ -13,10 +13,11 @@ export const useAuthStore = create((set) => ({
       const { data } = await authAPI.login({ email, password })
       localStorage.setItem('token', data.access_token)
       localStorage.setItem('user', JSON.stringify(data.user))
-      set({ token: data.access_token, user: data.user, loading: false })
+      set({ token: data.access_token, user: data.user, loading: false, error: null })
       return true
     } catch (err) {
-      set({ error: err.response?.data?.detail || '로그인 실패', loading: false })
+      const msg = err.response?.data?.detail || err.message || '로그인 실패. 백엔드 서버를 확인해주세요.'
+      set({ error: msg, loading: false })
       return false
     }
   },
@@ -28,7 +29,8 @@ export const useAuthStore = create((set) => ({
       set({ loading: false })
       return true
     } catch (err) {
-      set({ error: err.response?.data?.detail || '회원가입 실패', loading: false })
+      const msg = err.response?.data?.detail || err.message || '회원가입 실패. 백엔드 서버를 확인해주세요.'
+      set({ error: msg, loading: false })
       return false
     }
   },
@@ -36,6 +38,6 @@ export const useAuthStore = create((set) => ({
   logout: () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
-    set({ user: null, token: null })
+    set({ user: null, token: null, error: null })
   },
 }))
