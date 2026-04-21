@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
 import toast from 'react-hot-toast'
@@ -7,221 +7,129 @@ export default function ResumeFormPage() {
   const navigate = useNavigate()
   const { id } = useParams()
   const { addResume, updateResume, getResume } = useResumeStore()
-
-  const existing = id ? getResume(id) : null
+  const isEdit = Boolean(id)
 
   const [form, setForm] = useState({
-    title:          existing?.title || '',
-    companyName:    existing?.companyName || '',
-    jobTitle:       existing?.jobTitle || '',
-    jobDescription: existing?.jobDescription || '',
-    talentProfile:  existing?.talentProfile || '',
+    title: '',
+    companyName: '',
+    jobTitle: '',
+    jobDescription: '',
+    idealCandidate: '',
   })
-
   const [errors, setErrors] = useState({})
+
+  useEffect(() => {
+    if (isEdit) {
+      const r = getResume(id)
+      if (r) setForm({ title: r.title, companyName: r.companyName, jobTitle: r.jobTitle, jobDescription: r.jobDescription, idealCandidate: r.idealCandidate })
+      else { toast.error('자기소개서를 찾을 수 없습니다'); navigate('/resume') }
+    }
+  }, [id])
+
+  const set = (field) => (e) => setForm((p) => ({ ...p, [field]: e.target.value }))
 
   const validate = () => {
     const e = {}
-    if (!form.title.trim())          e.title = '제목을 입력해주세요'
-    if (!form.companyName.trim())    e.companyName = '기업명을 입력해주세요'
-    if (!form.jobTitle.trim())       e.jobTitle = '지원 업무명을 입력해주세요'
+    if (!form.title.trim()) e.title = '제목을 입력해주세요'
+    if (!form.companyName.trim()) e.companyName = '기업명을 입력해주세요'
+    if (!form.jobTitle.trim()) e.jobTitle = '지원 업무명을 입력해주세요'
     if (!form.jobDescription.trim()) e.jobDescription = '직무 수행 업무를 입력해주세요'
-    if (!form.talentProfile.trim())  e.talentProfile = '인재상을 입력해주세요'
-    return e
-  }
-
-  const handleChange = (field) => (e) => {
-    setForm((prev) => ({ ...prev, [field]: e.target.value }))
-    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }))
+    setErrors(e)
+    return Object.keys(e).length === 0
   }
 
   const handleSubmit = () => {
-    const e = validate()
-    if (Object.keys(e).length) {
-      setErrors(e)
-      toast.error('모든 항목을 입력해주세요')
-      return
-    }
-
-    if (existing) {
-      updateResume(id, form)
-      toast.success('자기소개서가 수정되었습니다')
-    } else {
-      addResume(form)
-      toast.success('자기소개서가 등록되었습니다')
-    }
+    if (!validate()) return
+    if (isEdit) { updateResume(id, form); toast.success('수정되었습니다') }
+    else { addResume(form); toast.success('자기소개서가 등록되었습니다') }
     navigate('/resume')
   }
 
-  const charCount = (val, max) => (
-    <span style={{ fontSize: 12, color: val.length > max * 0.9 ? 'var(--warning)' : 'var(--text-muted)' }}>
-      {val.length} / {max}
-    </span>
-  )
-
   return (
-    <div className="rf-page">
-      {/* 헤더 */}
-      <div className="rf-header">
-        <button className="btn btn-outline btn-sm" onClick={() => navigate('/resume')}>
+    <div style={{ maxWidth: 680, margin: '0 auto' }}>
+      <style>{`
+        .rf-card { background:#fff; border-radius:var(--radius-lg); border:1px solid var(--border); padding:32px; }
+        .rf-title { font-size:20px; font-weight:700; margin-bottom:28px; color:var(--text-primary); text-align:center; }
+        .rf-group { margin-bottom:20px; }
+        .rf-label { display:flex; align-items:center; gap:4px; font-size:14px; font-weight:600; color:var(--text-primary); margin-bottom:8px; }
+        .rf-label-req { color:#ef4444; }
+        .rf-input { width:100%; padding:11px 14px; border:1.5px solid var(--border); border-radius:var(--radius-sm); font-size:14px; transition:border-color .15s; background:#fff; }
+        .rf-input:focus { border-color:var(--primary); outline:none; }
+        .rf-input.err { border-color:#ef4444; }
+        .rf-textarea { resize:vertical; min-height:110px; }
+        .rf-error { font-size:12px; color:#ef4444; margin-top:5px; }
+        .rf-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+        .rf-info { background:#f0f4ff; border-radius:10px; padding:12px 16px; font-size:13px; color:#4f6ef7; margin-bottom:20px; }
+        .rf-footer { display:flex; gap:12px; margin-top:28px; }
+        @media(max-width:600px){ .rf-row { grid-template-columns:1fr; } }
+      `}</style>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <button onClick={() => navigate('/resume')} style={{ background: '#f3f4f6', border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 14 }}>
           ← 목록으로
         </button>
-        <h2 className="rf-title">{existing ? '자기소개서 수정' : '자기소개서 작성'}</h2>
-        <p className="rf-sub">작성하신 내용을 바탕으로 AI가 맞춤형 면접 질문을 생성합니다</p>
+        <h2 style={{ fontSize: 18, fontWeight: 700 }}>{isEdit ? '자기소개서 수정' : '자기소개서 작성'}</h2>
       </div>
 
       <div className="rf-card">
+        <div className="rf-info">
+          💡 작성한 자기소개서를 바탕으로 AI가 맞춤형 면접 질문을 생성합니다. 최대한 상세히 작성해 주세요.
+        </div>
+
         {/* 제목 */}
-        <div className="rf-field">
-          <div className="rf-label-row">
-            <label className="rf-label">제목 <span className="rf-required">*</span></label>
-            {charCount(form.title, 50)}
-          </div>
-          <input
-            className={`rf-input ${errors.title ? 'rf-input-error' : ''}`}
-            placeholder="예) 네이버 프론트엔드 개발자 자기소개서"
-            value={form.title}
-            onChange={handleChange('title')}
-            maxLength={50}
-          />
-          {errors.title && <p className="rf-error">{errors.title}</p>}
+        <div className="rf-group">
+          <div className="rf-label">제목 <span className="rf-label-req">*</span></div>
+          <input className={`rf-input${errors.title ? ' err' : ''}`} placeholder="예) 카카오 서버 개발자 지원" value={form.title} onChange={set('title')} />
+          {errors.title && <div className="rf-error">{errors.title}</div>}
         </div>
 
         {/* 채용 정보 */}
-        <div className="rf-field">
-          <label className="rf-label">채용 정보 <span className="rf-required">*</span></label>
+        <div className="rf-group">
+          <div className="rf-label">채용 정보 <span className="rf-label-req">*</span></div>
           <div className="rf-row">
-            <div style={{ flex: 1 }}>
-              <input
-                className={`rf-input ${errors.companyName ? 'rf-input-error' : ''}`}
-                placeholder="기업명"
-                value={form.companyName}
-                onChange={handleChange('companyName')}
-                maxLength={50}
-              />
-              {errors.companyName && <p className="rf-error">{errors.companyName}</p>}
+            <div>
+              <input className={`rf-input${errors.companyName ? ' err' : ''}`} placeholder="기업명 (예: 카카오)" value={form.companyName} onChange={set('companyName')} />
+              {errors.companyName && <div className="rf-error">{errors.companyName}</div>}
             </div>
-            <div style={{ flex: 1 }}>
-              <input
-                className={`rf-input ${errors.jobTitle ? 'rf-input-error' : ''}`}
-                placeholder="지원 업무명 (예: 프론트엔드 개발자)"
-                value={form.jobTitle}
-                onChange={handleChange('jobTitle')}
-                maxLength={50}
-              />
-              {errors.jobTitle && <p className="rf-error">{errors.jobTitle}</p>}
+            <div>
+              <input className={`rf-input${errors.jobTitle ? ' err' : ''}`} placeholder="지원 업무명 (예: 서버 개발자)" value={form.jobTitle} onChange={set('jobTitle')} />
+              {errors.jobTitle && <div className="rf-error">{errors.jobTitle}</div>}
             </div>
           </div>
         </div>
 
         {/* 직무 수행 업무 */}
-        <div className="rf-field">
-          <div className="rf-label-row">
-            <label className="rf-label">직무 수행 업무 <span className="rf-required">*</span></label>
-            {charCount(form.jobDescription, 800)}
-          </div>
-          <p className="rf-hint">해당 직무에서 수행하는 업무나 지원자의 경험·역량을 구체적으로 작성해주세요</p>
+        <div className="rf-group">
+          <div className="rf-label">직무 수행 업무 <span className="rf-label-req">*</span></div>
           <textarea
-            className={`rf-textarea ${errors.jobDescription ? 'rf-input-error' : ''}`}
-            placeholder="예) React, TypeScript를 활용한 웹 프론트엔드 개발&#10;컴포넌트 설계, 성능 최적화, API 연동 경험&#10;Git 기반 협업 및 코드 리뷰..."
-            rows={6}
+            className={`rf-input rf-textarea${errors.jobDescription ? ' err' : ''}`}
+            placeholder="담당하게 될 주요 업무나, 지금까지 수행한 직무 경험을 상세히 작성해 주세요."
             value={form.jobDescription}
-            onChange={handleChange('jobDescription')}
-            maxLength={800}
+            onChange={set('jobDescription')}
           />
-          {errors.jobDescription && <p className="rf-error">{errors.jobDescription}</p>}
+          {errors.jobDescription && <div className="rf-error">{errors.jobDescription}</div>}
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>{form.jobDescription.length}자</div>
         </div>
 
         {/* 인재상 */}
-        <div className="rf-field">
-          <div className="rf-label-row">
-            <label className="rf-label">인재상 <span className="rf-required">*</span></label>
-            {charCount(form.talentProfile, 500)}
-          </div>
-          <p className="rf-hint">지원 기업의 인재상이나 본인의 강점/가치관을 작성해주세요</p>
+        <div className="rf-group">
+          <div className="rf-label">인재상</div>
           <textarea
-            className={`rf-textarea ${errors.talentProfile ? 'rf-input-error' : ''}`}
-            placeholder="예) 창의적 문제해결 능력을 갖춘 인재&#10;지속적인 학습과 성장을 추구&#10;팀원과 적극적으로 소통하고 협력..."
-            rows={5}
-            value={form.talentProfile}
-            onChange={handleChange('talentProfile')}
-            maxLength={500}
+            className="rf-input rf-textarea"
+            placeholder="지원하는 회사의 인재상 또는 본인이 지향하는 인재상을 작성해 주세요. (선택사항)"
+            value={form.idealCandidate}
+            onChange={set('idealCandidate')}
           />
-          {errors.talentProfile && <p className="rf-error">{errors.talentProfile}</p>}
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>{form.idealCandidate.length}자</div>
         </div>
 
-        {/* AI 활용 안내 */}
-        <div className="rf-ai-notice">
-          <span className="rf-ai-icon">🤖</span>
-          <div>
-            <strong>AI 맞춤 면접 질문 생성</strong>
-            <p>작성하신 내용을 바탕으로 AI가 직무 관련 질문, 인성 질문, 경험 기반 질문을 자동으로 생성합니다.</p>
-          </div>
-        </div>
-
-        {/* 버튼 */}
-        <div className="rf-actions">
-          <button className="btn btn-outline" onClick={() => navigate('/resume')}>취소</button>
-          <button className="btn btn-primary btn-lg" onClick={handleSubmit}>
-            {existing ? '✅ 수정 완료' : '✅ 등록하기'}
+        <div className="rf-footer">
+          <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => navigate('/resume')}>취소</button>
+          <button className="btn btn-primary" style={{ flex: 2 }} onClick={handleSubmit}>
+            {isEdit ? '✅ 수정 완료' : '📋 등록하기'}
           </button>
         </div>
       </div>
-
-      <style>{`
-        .rf-page { max-width: 720px; margin: 0 auto; padding-bottom: 40px; }
-
-        .rf-header { margin-bottom: 24px; }
-        .rf-title { font-size: 24px; font-weight: 700; margin: 16px 0 6px; }
-        .rf-sub { font-size: 14px; color: var(--text-secondary); }
-
-        .rf-card {
-          background: var(--bg-card);
-          border-radius: var(--radius-lg);
-          border: 1px solid var(--border);
-          padding: 32px;
-          display: flex;
-          flex-direction: column;
-          gap: 24px;
-        }
-
-        .rf-field { display: flex; flex-direction: column; gap: 8px; }
-        .rf-label-row { display: flex; align-items: center; justify-content: space-between; }
-        .rf-label { font-size: 14px; font-weight: 600; color: var(--text-primary); }
-        .rf-required { color: var(--danger); }
-        .rf-hint { font-size: 12px; color: var(--text-muted); }
-
-        .rf-input, .rf-textarea {
-          width: 100%;
-          padding: 11px 14px;
-          border: 1.5px solid var(--border);
-          border-radius: var(--radius-md);
-          font-size: 14px;
-          transition: border-color 0.15s;
-          background: var(--bg-page);
-        }
-        .rf-input:focus, .rf-textarea:focus { border-color: var(--primary); background: #fff; }
-        .rf-input-error { border-color: var(--danger) !important; }
-        .rf-textarea { resize: vertical; min-height: 100px; line-height: 1.6; }
-        .rf-error { font-size: 12px; color: var(--danger); }
-
-        .rf-row { display: flex; gap: 12px; }
-
-        .rf-ai-notice {
-          display: flex;
-          gap: 14px;
-          align-items: flex-start;
-          padding: 16px;
-          background: var(--primary-light);
-          border-radius: var(--radius-md);
-          border: 1px solid rgba(79,110,247,.2);
-        }
-        .rf-ai-icon { font-size: 24px; flex-shrink: 0; }
-        .rf-ai-notice strong { font-size: 14px; display: block; margin-bottom: 4px; color: var(--primary); }
-        .rf-ai-notice p { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-
-        .rf-actions { display: flex; gap: 12px; justify-content: flex-end; padding-top: 8px; }
-      `}</style>
     </div>
   )
 }
