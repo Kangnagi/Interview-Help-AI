@@ -37,6 +37,12 @@ httpx==0.27.0
 
 # KoBERT Tokenizer (Custom GitHub URL)
 #git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
+=======
+# LLM - KoBERT             
+# transformers==4.41.0
+# torch==2.3.0
+# tokenizers==0.19.1
+# sentencepiece==0.2.0
 
 # Vision - MediaPipe
 # mediapipe==0.10.14
