@@ -7,6 +7,8 @@ from core.database import get_db
 from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from schemas.schemas import InterviewCreate, InterviewResponse, QuestionResponse, AnswerSubmit
+from pydantic import BaseModel
+from services.llm.kobert_service import kobert_service
 
 router = APIRouter(prefix="/interviews", tags=["면접"])
 
