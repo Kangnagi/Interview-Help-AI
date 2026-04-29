@@ -30,6 +30,10 @@ export default function RealInterviewPage() {
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const detectionRef = useRef(null)
+  const [faceStatus, setFaceStatus] = useState('waiting')
+  const [micActive, setMicActive] = useState(false)
+  const micAnalyserRef = useRef(null)
   const timerRef = useRef(null)
   const totalRef = useRef(null)
 
@@ -40,10 +44,51 @@ export default function RealInterviewPage() {
   const color = remaining > 60 ? '#10b981' : remaining > 30 ? '#f59e0b' : '#ef4444'
 
   useEffect(() => {
+    setFaceStatus('detecting')
     navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
-      .then((s) => { streamRef.current = s; if (videoRef.current) videoRef.current.srcObject = s })
+      .then((s) => {
+        streamRef.current = s
+        if (videoRef.current) videoRef.current.srcObject = s
+        if (typeof FaceDetector !== 'undefined') {
+          const detector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 })
+          detectionRef.current = setInterval(async () => {
+            if (!videoRef.current || videoRef.current.readyState < 2) return
+            try {
+              const faces = await detector.detect(videoRef.current)
+              setFaceStatus(faces.length > 0 ? 'detected' : 'lost')
+            } catch { setFaceStatus('detected') }
+          }, 800)
+        } else {
+          setTimeout(() => setFaceStatus('detected'), 1500)
+        }
+      })
+      .catch(() => { setFaceStatus('lost') })
+
+    // 마이크 감지
+    navigator.mediaDevices?.getUserMedia({ audio: true, video: false })
+      .then((audioStream) => {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)()
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 256
+        const source = ctx.createMediaStreamSource(audioStream)
+        source.connect(analyser)
+        micAnalyserRef.current = analyser
+        const data = new Uint8Array(analyser.frequencyBinCount)
+        const checkMic = () => {
+          analyser.getByteFrequencyData(data)
+          const avg = data.reduce((a, b) => a + b, 0) / data.length
+          setMicActive(avg > 8)
+          micAnalyserRef.requestId = requestAnimationFrame(checkMic)
+        }
+        checkMic()
+      })
       .catch(() => {})
-    return () => { streamRef.current?.getTracks().forEach((t) => t.stop()); clearInterval(timerRef.current); clearInterval(totalRef.current) }
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      clearInterval(timerRef.current)
+      clearInterval(totalRef.current)
+      clearInterval(detectionRef.current)
+    }
   }, [])
 
   useEffect(() => {
@@ -100,6 +145,8 @@ export default function RealInterviewPage() {
         .ri-q-label { font-size:12px; color:#4f6ef7; font-weight:700; margin-bottom:8px; }
         .ri-q-text { font-size:16px; color:#fff; line-height:1.6; font-weight:500; }
         .ri-cam-video { width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1); min-height:180px; }
+        .ri-cam-panel { border:2px solid transparent; transition:border-color .15s, box-shadow .15s; }
+        .ri-cam-panel.mic-on { border-color:#22c55e !important; box-shadow:0 0 14px rgba(34,197,94,.4); }
         .ri-answer-input { width:calc(100% - 32px); margin:0 16px 16px; background:#0f1220; border:1.5px solid rgba(255,255,255,.1); border-radius:10px; padding:12px 14px; color:#fff; font-size:14px; resize:none; min-height:80px; font-family:inherit; }
         .ri-answer-input:focus { border-color:#4f6ef7; outline:none; }
         .ri-progress { height:4px; background:#1a1d2e; }
@@ -107,6 +154,12 @@ export default function RealInterviewPage() {
         .ri-result-item { background:#1a1d2e; border-radius:10px; padding:14px; margin-bottom:12px; }
         .ri-result-q { font-size:13px; color:#4f6ef7; margin-bottom:6px; font-weight:600; }
         .ri-result-a { font-size:13px; color:rgba(255,255,255,.7); line-height:1.5; }
+        .face-badge { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:5px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:600; white-space:nowrap; backdrop-filter:blur(6px); }
+        .face-badge.detecting { background:rgba(245,158,11,.85); color:#fff; }
+        .face-badge.detected  { background:rgba(16,185,129,.85); color:#fff; }
+        .face-badge.lost      { background:rgba(239,68,68,.85);  color:#fff; }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+        .face-dot { width:7px; height:7px; border-radius:50%; background:currentColor; animation:blink 1.2s infinite; }
       `}</style>
 
       {/* 상단 */}
@@ -211,10 +264,19 @@ export default function RealInterviewPage() {
               </div>
             </div>
 
-            <div className="ri-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div className={`ri-panel ri-cam-panel${micActive ? ' mic-on' : ''}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <div className="ri-panel-title">📹 면접자 모습</div>
               <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
                 <video ref={videoRef} className="ri-cam-video" autoPlay playsInline muted />
+                {faceStatus === 'detecting' && (
+                  <div className="face-badge detecting"><span className="face-dot"/>얼굴 인식 중...</div>
+                )}
+                {faceStatus === 'detected' && (
+                  <div className="face-badge detected"><span className="face-dot"/>얼굴 인식됨</div>
+                )}
+                {faceStatus === 'lost' && (
+                  <div className="face-badge lost"><span className="face-dot"/>얼굴 감지 안됨</div>
+                )}
               </div>
             </div>
           </div>
