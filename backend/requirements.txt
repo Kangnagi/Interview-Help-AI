@@ -27,22 +27,16 @@ httpx==0.27.0
 #uvicorn
 #pydantic
 
-# AI / Deep Learning Core
-#torch
-#transformers==4.30.2
-#sentencepiece
-#accelerate
-#tiktoken
-#protobuf
+# AI / Deep Learning Core(llm)
+torch==2.11.0 
+transformers==4.30.2
+sentencepiece==0.2.1
+accelerate==1.13.0
+tiktoken==0.12.0
+protobuf==7.34.1 #다른 라이브러리 호환성에 따라 6.x나 5.x의 최신 버전이 설치될 수 있다
 
-# KoBERT Tokenizer (Custom GitHub URL)
-#git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
-=======
-# LLM - KoBERT             
-# transformers==4.41.0
-# torch==2.3.0
-# tokenizers==0.19.1
-# sentencepiece==0.2.0
+# LLM-KoBERT Tokenizer (Custom GitHub URL)
+git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
 
 # Vision - MediaPipe
 # mediapipe==0.10.14
