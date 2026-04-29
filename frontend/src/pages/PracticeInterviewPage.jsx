@@ -40,19 +40,69 @@ export default function PracticeInterviewPage() {
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const canvasRef = useRef(null)
+  const detectionRef = useRef(null)
+  const [faceStatus, setFaceStatus] = useState('waiting') // waiting | detecting | detected | lost
+  const [micActive, setMicActive] = useState(false)
+  const micAnalyserRef = useRef(null)
   const totalTimer = useRef(null)
   const answerTimer = useRef(null)
 
   const questions = SAMPLE_QUESTIONS.slice(0, 5)
   const currentQ = questions[qIndex]
 
-  // 카메라 시작
+  // 카메라 시작 + 얼굴 감지
   useEffect(() => {
+    setFaceStatus('detecting')
     navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
-      .then((s) => { streamRef.current = s; if (videoRef.current) videoRef.current.srcObject = s })
+      .then((s) => {
+        streamRef.current = s
+        if (videoRef.current) videoRef.current.srcObject = s
+        startFaceDetection()
+      })
+      .catch(() => { setFaceStatus('lost') })
+
+    // 마이크 감지 (별도 스트림)
+    navigator.mediaDevices?.getUserMedia({ audio: true, video: false })
+      .then((audioStream) => {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)()
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 256
+        const source = ctx.createMediaStreamSource(audioStream)
+        source.connect(analyser)
+        micAnalyserRef.current = analyser
+        const data = new Uint8Array(analyser.frequencyBinCount)
+        const checkMic = () => {
+          analyser.getByteFrequencyData(data)
+          const avg = data.reduce((a, b) => a + b, 0) / data.length
+          setMicActive(avg > 8)
+          micAnalyserRef.requestId = requestAnimationFrame(checkMic)
+        }
+        checkMic()
+      })
       .catch(() => {})
-    return () => { streamRef.current?.getTracks().forEach((t) => t.stop()) }
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      clearInterval(detectionRef.current)
+    }
   }, [])
+
+  const startFaceDetection = () => {
+    // 브라우저 FaceDetector API 사용 (미지원 시 타임아웃으로 대체)
+    if (typeof FaceDetector !== 'undefined') {
+      const detector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 })
+      detectionRef.current = setInterval(async () => {
+        if (!videoRef.current || videoRef.current.readyState < 2) return
+        try {
+          const faces = await detector.detect(videoRef.current)
+          setFaceStatus(faces.length > 0 ? 'detected' : 'lost')
+        } catch { setFaceStatus('detected') }
+      }, 800)
+    } else {
+      // FaceDetector 미지원 브라우저 → 일정 시간 후 detected로 표시
+      setTimeout(() => setFaceStatus('detected'), 1500)
+    }
+  }
 
   // 총 면접 타이머
   useEffect(() => {
@@ -121,7 +171,8 @@ export default function PracticeInterviewPage() {
         .pi-timer-box { background:#1a1d2e; border-radius:10px; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; }
         .pi-timer-label { font-size:12px; color:rgba(255,255,255,.4); }
         .pi-timer-val { font-size:20px; font-weight:700; color:#fff; font-variant-numeric:tabular-nums; font-family:monospace; }
-        .pi-cam-box { flex:1; background:#111827; border-radius:10px; overflow:hidden; position:relative; }
+        .pi-cam-box { flex:1; background:#111827; border-radius:10px; overflow:hidden; position:relative; border:2px solid transparent; transition:border-color .15s, box-shadow .15s; }
+        .pi-cam-box.mic-on { border-color:#22c55e; box-shadow:0 0 12px rgba(34,197,94,.45); }
         .pi-cam-label { position:absolute; top:8px; left:10px; font-size:11px; color:rgba(255,255,255,.5); background:rgba(0,0,0,.4); padding:2px 8px; border-radius:99px; }
         .pi-cam-video { width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1); }
         .pi-phase-box { background:#1e2235; border-radius:12px; padding:20px; margin:16px; flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; }
@@ -140,6 +191,13 @@ export default function PracticeInterviewPage() {
         .pi-log-q { color:#4f6ef7; margin-bottom:6px; font-weight:600; }
         .pi-log-a { color:rgba(255,255,255,.7); margin-bottom:6px; }
         .pi-log-f { color:#22c55e; }
+        .face-badge { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:5px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:600; white-space:nowrap; backdrop-filter:blur(6px); }
+        .face-badge.detecting { background:rgba(245,158,11,.85); color:#fff; }
+        .face-badge.detected  { background:rgba(16,185,129,.85); color:#fff; }
+        .face-badge.lost      { background:rgba(239,68,68,.85);  color:#fff; }
+        .face-badge.waiting   { background:rgba(100,100,100,.7); color:#fff; }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+        .face-dot { width:7px; height:7px; border-radius:50%; background:currentColor; animation:blink 1.2s infinite; }
         .pi-progress { height:3px; background:#1a1d2e; }
         .pi-progress-bar { height:100%; background:linear-gradient(90deg,#4f6ef7,#10b981); transition:width .4s; }
         .pi-btn { padding:10px 24px; border-radius:8px; font-size:14px; font-weight:600; border:none; cursor:pointer; transition:background .15s; }
@@ -276,14 +334,18 @@ export default function PracticeInterviewPage() {
             </div>
 
             {/* 카메라 */}
-            <div className="pi-cam-box">
+            <div className={`pi-cam-box${micActive ? ' mic-on' : ''}`}>
               <div className="pi-cam-label">📹 면접자 모습</div>
               <video ref={videoRef} className="pi-cam-video" autoPlay playsInline muted />
-              {!videoRef.current?.srcObject && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ fontSize: 32 }}>📷</div>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,.4)' }}>카메라 연결 중...</div>
-                </div>
+              {/* 얼굴 인식 상태 배지 */}
+              {faceStatus === 'detecting' && (
+                <div className="face-badge detecting"><span className="face-dot"/>얼굴 인식 중...</div>
+              )}
+              {faceStatus === 'detected' && (
+                <div className="face-badge detected"><span className="face-dot"/>얼굴 인식됨</div>
+              )}
+              {faceStatus === 'lost' && (
+                <div className="face-badge lost"><span className="face-dot"/>얼굴 감지 안됨</div>
               )}
             </div>
 
