@@ -4,7 +4,6 @@ import Layout from '@/components/Common/Layout'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import DashboardPage from '@/pages/DashboardPage'
-import InterviewSetupPage from '@/pages/InterviewSetupPage'
 import InterviewPage from '@/pages/InterviewPage'
 import AnalysisPage from '@/pages/AnalysisPage'
 import HistoryPage from '@/pages/HistoryPage'
@@ -22,12 +21,15 @@ function PrivateRoute({ children }) {
 export default function App() {
   return (
     <Routes>
+      {/* 공개 라우트 */}
       <Route path="/login"    element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
 
+      {/* 풀스크린 면접 라우트 (Layout 밖) */}
       <Route path="/interview/practice/:resumeId" element={<PrivateRoute><PracticeInterviewPage /></PrivateRoute>} />
       <Route path="/interview/real/:resumeId"     element={<PrivateRoute><RealInterviewPage /></PrivateRoute>} />
 
+      {/* 인증 필요 라우트 */}
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
         <Route index                       element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard"            element={<DashboardPage />} />
@@ -35,7 +37,6 @@ export default function App() {
         <Route path="resume/new"           element={<ResumeFormPage />} />
         <Route path="resume/:id/edit"      element={<ResumeFormPage />} />
         <Route path="resume/:id/history"   element={<ResumeHistoryPage />} />
-        <Route path="interview/setup"      element={<InterviewSetupPage />} />
         <Route path="interview/:id"        element={<InterviewPage />} />
         <Route path="interview/:id/result" element={<AnalysisPage />} />
         <Route path="history"              element={<HistoryPage />} />

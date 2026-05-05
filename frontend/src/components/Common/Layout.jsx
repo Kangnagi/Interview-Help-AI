@@ -5,10 +5,9 @@ import SettingsModal from '@/components/Common/SettingsModal'
 import toast from 'react-hot-toast'
 
 const NAV_ITEMS = [
-  { to: '/dashboard',      icon: '🏠', label: '대시보드' },
-  { to: '/resume',         icon: '📄', label: '자기소개서' },
-  { to: '/interview/setup', icon: '🎤', label: '면접 시작' },
-  { to: '/history',        icon: '📋', label: '면접 이력' },
+  { to: '/dashboard', icon: '🏠', label: '대시보드' },
+  { to: '/resume',    icon: '📄', label: '면접 시작' },
+  { to: '/history',   icon: '📋', label: '면접 이력' },
 ]
 
 export default function Layout() {
@@ -24,7 +23,6 @@ export default function Layout() {
 
   return (
     <div className="layout">
-      {/* 사이드바 */}
       <aside className="layout__sidebar">
         <div className="sidebar__logo">
           <h1>AI <span>면접</span> 도우미</h1>
@@ -44,7 +42,6 @@ export default function Layout() {
           ))}
         </nav>
 
-        {/* 하단 */}
         <div style={{ marginTop: 'auto', padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
           <button
             onClick={() => setShowSettings(true)}
@@ -64,7 +61,6 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* 메인 */}
       <main className="layout__main">
         <header className="layout__header">
           <h2 style={{ fontSize: 16, fontWeight: 600 }}>AI 면접 도우미</h2>
