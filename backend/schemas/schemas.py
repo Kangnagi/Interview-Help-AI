@@ -53,7 +53,12 @@ class InterviewCreate(BaseModel):
     title: str
     # 카테고리를 지정하지 않으면 일반 면접(GENERAL)으로 생성
     category: InterviewCategory = InterviewCategory.GENERAL
+<<<<<<< Updated upstream
 
+=======
+    interview_type: str = "practice"
+    resume_ref_id: Optional[str] = None
+>>>>>>> Stashed changes
 
 class InterviewResponse(BaseModel):
     """면접 단건 조회·목록 응답"""
@@ -62,7 +67,13 @@ class InterviewResponse(BaseModel):
     category: InterviewCategory   # general / technical / behavioral / self_intro
     status: InterviewStatus       # pending / in_progress / completed / cancelled
     total_questions: int
+<<<<<<< Updated upstream
     duration_seconds: Optional[int]   # 면접 총 소요 시간 (종료 후 산출)
+=======
+    duration_seconds: Optional[int]
+    interview_type: Optional[str] = None
+    resume_ref_id: Optional[str] = None
+>>>>>>> Stashed changes
     created_at: datetime
     ended_at: Optional[datetime]      # 면접 종료 시각 (진행 중이면 None)
 
@@ -123,9 +134,14 @@ class AnalysisResponse(BaseModel):
 # ─── WebSocket 제어 메시지 ────────────────────────────────────────────────────
 
 class WSMessage(BaseModel):
+<<<<<<< Updated upstream
     """
     WebSocket으로 주고받는 JSON 제어 메시지 형식.
     바이너리(영상 프레임)는 별도로 bytes로 전송하고 이 스키마는 사용하지 않음.
     """
     type: str                       # "start" | "stop" | "ping" | "status" | "frame_analysis"
     payload: Optional[dict] = None  # type별 추가 데이터 (없으면 None)
+=======
+    type: str
+    payload: Optional[dict] = None
+>>>>>>> Stashed changes

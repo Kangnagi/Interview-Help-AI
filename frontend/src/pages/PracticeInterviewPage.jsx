@@ -46,6 +46,13 @@ export default function PracticeInterviewPage() {
   const [exitConfirm, setExitConfirm] = useState(false)
   const [faceStatus, setFaceStatus] = useState('waiting')
   const [feedback, setFeedback] = useState('')
+<<<<<<< Updated upstream
+=======
+  const [deviceError, setDeviceError] = useState(null)
+  const [backendInterviewId, setBackendInterviewId] = useState(null)
+  const [backendQuestions, setBackendQuestions] = useState([])
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+>>>>>>> Stashed changes
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -204,6 +211,22 @@ export default function PracticeInterviewPage() {
           </div>
         </div>
 
+<<<<<<< Updated upstream
+=======
+        {/* 장치 오류 배너 */}
+        {deviceError && (
+          <div style={{ background: '#450a0a', borderBottom: '1px solid rgba(239,68,68,.3)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            <span>⚠️</span>
+            <span style={{ fontSize: 13, color: '#fca5a5', flex: 1 }}>
+              {deviceError === 'camera' && '카메라에 연결하지 못했습니다.'}
+              {deviceError === 'mic' && '마이크에 연결하지 못했습니다. 텍스트로 답변할 수 있습니다.'}
+              {deviceError === 'both' && '카메라와 마이크에 연결하지 못했습니다.'}
+            </span>
+            <button onClick={() => setDeviceError(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.3)', cursor: 'pointer', fontSize: 16 }}>✕</button>
+          </div>
+        )}
+
+>>>>>>> Stashed changes
         {/* Progress bar */}
         <div style={{ height: 3, background: '#1a1d2e', flexShrink: 0 }}>
           <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / questions.length) * 100}%`, transition: 'width .4s' }} />

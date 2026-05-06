@@ -1,47 +1,117 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useInterviewStore } from '@/store/interviewStore'
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts'
 
+const MAX_POLLS = 20   // 20 × 3s = 최대 60초 대기
+const POLL_INTERVAL = 3000
+
 export default function AnalysisPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { fetchAnalysis, analysis, loading } = useInterviewStore()
-  const [polling, setPolling] = useState(true)
+  const { fetchAnalysis, analysis, loading, resetAnalysis } = useInterviewStore()
+
+  const [polling, setPolling]   = useState(true)
+  const [elapsed, setElapsed]   = useState(0)
+  const [timedOut, setTimedOut] = useState(false)
+  const cancelRef = useRef(false)
 
   useEffect(() => {
+    // 이전 면접의 오래된 분석 데이터 제거
+    resetAnalysis()
+    cancelRef.current = false
+
     let count = 0
-    const timer = setInterval(async () => {
+
+    const tick = async () => {
+      if (cancelRef.current) return
+
       const data = await fetchAnalysis(id)
       count++
-      if (data || count > 10) {
-        clearInterval(timer)
-        setPolling(false)
-      }
-    }, 2000)
-    return () => clearInterval(timer)
-  }, [id])
+      setElapsed(count * POLL_INTERVAL / 1000)
 
-  if (loading || polling && !analysis) {
+      if (cancelRef.current) return
+
+      if (data) {
+        setPolling(false)
+      } else if (count >= MAX_POLLS) {
+        setPolling(false)
+        setTimedOut(true)
+      } else {
+        setTimeout(tick, POLL_INTERVAL)
+      }
+    }
+
+    // 백그라운드 작업이 시작될 시간을 주기 위해 2초 후 첫 폴링
+    const initial = setTimeout(tick, 2000)
+
+    return () => {
+      cancelRef.current = true
+      clearTimeout(initial)
+    }
+  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRetry = () => {
+    setPolling(true)
+    setTimedOut(false)
+    setElapsed(0)
+    cancelRef.current = false
+
+    let count = 0
+    const tick = async () => {
+      if (cancelRef.current) return
+      const data = await fetchAnalysis(id)
+      count++
+      setElapsed(count * POLL_INTERVAL / 1000)
+      if (cancelRef.current) return
+      if (data) {
+        setPolling(false)
+      } else if (count >= MAX_POLLS) {
+        setPolling(false)
+        setTimedOut(true)
+      } else {
+        setTimeout(tick, POLL_INTERVAL)
+      }
+    }
+    setTimeout(tick, 1000)
+  }
+
+  // ── 로딩 화면 ──────────────────────────────────────────
+  if (polling) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <div className="spinner" style={{ margin: '0 auto 16px' }} />
-        <p style={{ color: 'var(--text-secondary)' }}>AI가 면접을 분석하고 있습니다...</p>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
+          AI가 면접을 분석하고 있습니다...
+        </p>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+          {elapsed > 0 ? `${elapsed}초 경과 (최대 ${MAX_POLLS * POLL_INTERVAL / 1000}초)` : '분석 시작 중...'}
+        </p>
       </div>
     )
   }
 
-  if (!analysis) {
+  // ── 타임아웃 or 결과 없음 ──────────────────────────────
+  if (timedOut || !analysis) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
-        <p>분석 결과를 불러올 수 없습니다</p>
-        <button className="btn btn-outline btn-sm" style={{ marginTop: 12 }} onClick={() => navigate('/dashboard')}>
-          대시보드로
-        </button>
+        <p style={{ fontSize: 18, marginBottom: 8 }}>분석 결과를 불러오지 못했습니다</p>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 24 }}>
+          AI 분석에 시간이 오래 걸리고 있습니다. 잠시 후 다시 시도하거나 새로고침해 주세요.
+        </p>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+          <button className="btn btn-primary btn-sm" onClick={handleRetry}>
+            다시 확인
+          </button>
+          <button className="btn btn-outline btn-sm" onClick={() => navigate('/dashboard')}>
+            대시보드로
+          </button>
+        </div>
       </div>
     )
   }
 
+  // ── 결과 화면 ──────────────────────────────────────────
   const radarData = [
     { subject: '내용 충실도', score: analysis.content_score    ?? 0 },
     { subject: '질문 관련성', score: analysis.relevance_score  ?? 0 },
@@ -51,7 +121,12 @@ export default function AnalysisPage() {
     { subject: '눈맞춤',     score: analysis.eye_contact_score ?? 0 },
   ]
 
-  const totalColor = analysis.total_score >= 80 ? 'var(--secondary)' : analysis.total_score >= 60 ? 'var(--warning)' : 'var(--danger)'
+  const total = analysis.total_score
+  const totalColor = total == null
+    ? 'var(--text-secondary)'
+    : total >= 80 ? 'var(--secondary)'
+    : total >= 60 ? 'var(--warning)'
+    : 'var(--danger)'
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto' }}>
@@ -67,7 +142,7 @@ export default function AnalysisPage() {
       <div className="card" style={{ textAlign: 'center', marginBottom: 20, padding: 36 }}>
         <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }}>종합 점수</p>
         <p style={{ fontSize: 64, fontWeight: 800, color: totalColor, lineHeight: 1 }}>
-          {analysis.total_score?.toFixed(0) ?? '—'}
+          {total != null ? total.toFixed(0) : '—'}
         </p>
         <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 4 }}>/ 100점</p>
         {analysis.feedback_summary && (
@@ -112,21 +187,25 @@ export default function AnalysisPage() {
       <div className="grid-2" style={{ marginBottom: 20 }}>
         <div className="card" style={{ border: '1px solid #D1FAE5', background: '#F0FDF4' }}>
           <h3 style={{ fontWeight: 600, fontSize: 14, color: '#065F46', marginBottom: 12 }}>✅ 강점</h3>
-          {(analysis.strengths || []).map((s, i) => (
-            <p key={i} style={{ fontSize: 13, color: '#047857', marginBottom: 6, lineHeight: 1.6 }}>· {s}</p>
-          ))}
-          {!analysis.strengths?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 중...</p>}
+          {(analysis.strengths || []).length > 0
+            ? (analysis.strengths || []).map((s, i) => (
+              <p key={i} style={{ fontSize: 13, color: '#047857', marginBottom: 6, lineHeight: 1.6 }}>· {s}</p>
+            ))
+            : <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 데이터가 없습니다</p>
+          }
         </div>
         <div className="card" style={{ border: '1px solid #FED7AA', background: '#FFF7ED' }}>
           <h3 style={{ fontWeight: 600, fontSize: 14, color: '#92400E', marginBottom: 12 }}>📈 개선점</h3>
-          {(analysis.improvements || []).map((s, i) => (
-            <p key={i} style={{ fontSize: 13, color: '#B45309', marginBottom: 6, lineHeight: 1.6 }}>· {s}</p>
-          ))}
-          {!analysis.improvements?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 중...</p>}
+          {(analysis.improvements || []).length > 0
+            ? (analysis.improvements || []).map((s, i) => (
+              <p key={i} style={{ fontSize: 13, color: '#B45309', marginBottom: 6, lineHeight: 1.6 }}>· {s}</p>
+            ))
+            : <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 데이터가 없습니다</p>
+          }
         </div>
       </div>
 
-      <button className="btn btn-primary w-full btn-lg" onClick={() => navigate('/interview/setup')}>
+      <button className="btn btn-primary w-full btn-lg" onClick={() => navigate('/resume')}>
         🎤 다시 면접하기
       </button>
     </div>

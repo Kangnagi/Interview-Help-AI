@@ -19,7 +19,7 @@ export default function RealInterviewPage() {
   const resume = useResumeStore((s) => s.getResume(resumeId))
   const { addInterviewRecord } = useResumeStore()
 
-  const [phase, setPhase] = useState('setup')   // setup | intro | interview | result
+  const [phase, setPhase] = useState('setup')   // setup | intro | interview | feedback | result
   const [deviceIds, setDeviceIds] = useState({ cameraId: '', micId: '' })
   const [sessionStarted, setSessionStarted] = useState(false)
   const [qIndex, setQIndex] = useState(0)
@@ -30,6 +30,14 @@ export default function RealInterviewPage() {
   const [exitConfirm, setExitConfirm] = useState(false)
   const [faceStatus, setFaceStatus] = useState('waiting')
   const [micActive, setMicActive] = useState(false)
+<<<<<<< Updated upstream
+=======
+  const [deviceError, setDeviceError] = useState(null)
+  const [backendInterviewId, setBackendInterviewId] = useState(null)
+  const [backendQuestions, setBackendQuestions] = useState([])
+  const [currentFeedback, setCurrentFeedback] = useState('')
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+>>>>>>> Stashed changes
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -37,6 +45,7 @@ export default function RealInterviewPage() {
   const totalRef = useRef(null)
   const detectionRef = useRef(null)
   const micRafRef = useRef(null)
+  const pendingNextRef = useRef(null)
 
   const currentQ = QUESTIONS[qIndex]
   const pct = Math.round(((Q_LIMIT - remaining) / Q_LIMIT) * 100)
@@ -117,6 +126,7 @@ export default function RealInterviewPage() {
     }
   }, [sessionStarted]) // eslint-disable-line react-hooks/exhaustive-deps
 
+<<<<<<< Updated upstream
   // Use a ref so the timer interval can always call the latest handleNext
   const handleNextRef = useRef(null)
 
@@ -149,8 +159,100 @@ export default function RealInterviewPage() {
       startQTimer()
     }
   }, [answer, currentQ, qIndex, totalSec, resumeId, stopSTT, startQTimer, addInterviewRecord])
+=======
+  const goNextQuestion = useCallback(async (capturedAnswer, capturedQ, capturedQuestion, capturedIndex) => {
+    setAnswer('')
 
-  handleNextRef.current = handleNext
+    if (capturedIndex + 1 >= totalQuestions) {
+      clearInterval(totalRef.current)
+
+      if (backendInterviewId) {
+        try {
+          await interviewAPI.finish(backendInterviewId)
+          await analysisAPI.start(backendInterviewId)
+        } catch (err) {
+          console.error('면접 종료/분석 시작 실패:', err)
+        }
+      }
+
+      addInterviewRecord(resumeId, {
+        type: 'real',
+        duration: totalSec,
+        interviewId: backendInterviewId,
+        questions: backendQuestions.map((q) => ({ question: q.question_text })),
+      })
+      setPhase('result')
+    } else {
+      setQIndex(capturedIndex + 1)
+      setRemaining(Q_LIMIT)
+      setPhase('interview')
+      timerRef.current = setInterval(() => {
+        setRemaining((p) => {
+          if (p <= 1) { clearInterval(timerRef.current); pendingNextRef.current?.(); return 0 }
+          return p - 1
+        })
+      }, 1000)
+    }
+  }, [totalQuestions, backendInterviewId, resumeId, totalSec, backendQuestions, addInterviewRecord])
+>>>>>>> Stashed changes
+
+  const handleNext = useCallback(async () => {
+    stopSTT()
+    clearInterval(timerRef.current)
+
+    const capturedAnswer = answer
+    const capturedQ = currentQ
+    const capturedQuestion = currentQuestion
+    const capturedIndex = qIndex
+
+    // Save to answers log
+    setAnswers((prev) => [...prev, { q: capturedQ, a: capturedAnswer }])
+
+    // Save answer to backend
+    if (backendInterviewId && capturedQuestion?.id) {
+      try {
+        await interviewAPI.submitAnswer(backendInterviewId, capturedQuestion.id, { answer_text: capturedAnswer })
+      } catch (err) {
+        console.error('답변 저장 실패:', err)
+      }
+    }
+
+    // Show AI feedback
+    setPhase('feedback')
+    setFeedbackLoading(true)
+    setCurrentFeedback('')
+
+    try {
+      const { data } = await analysisAPI.getFeedback({
+        question: capturedQ,
+        answer: capturedAnswer || '(답변 없음)',
+        company: resume?.companyName || '',
+        job: resume?.jobTitle || '',
+      })
+      setCurrentFeedback(data.feedback)
+    } catch (err) {
+      console.error('피드백 생성 실패:', err)
+      setCurrentFeedback('답변이 저장되었습니다. 다음 질문으로 이동해주세요.')
+    }
+    setFeedbackLoading(false)
+
+    pendingNextRef.current = () => goNextQuestion(capturedAnswer, capturedQ, capturedQuestion, capturedIndex)
+  }, [answer, currentQ, currentQuestion, qIndex, backendInterviewId, resume, stopSTT, goNextQuestion])
+
+  useEffect(() => {
+    pendingNextRef.current = handleNext
+  })
+
+  const startQTimer = useCallback(() => {
+    clearInterval(timerRef.current)
+    setRemaining(Q_LIMIT)
+    timerRef.current = setInterval(() => {
+      setRemaining((p) => {
+        if (p <= 1) { clearInterval(timerRef.current); pendingNextRef.current?.(); return 0 }
+        return p - 1
+      })
+    }, 1000)
+  }, [])
 
   const handleStart = () => {
     setPhase('interview')
@@ -192,9 +294,12 @@ export default function RealInterviewPage() {
         .fade-up { animation:fadeUp .35s ease; }
         .ri-result-item { background:#1a1d2e; border-radius:10px; padding:14px; margin-bottom:10px; }
         .ri-result-q { font-size:13px; color:#4f6ef7; margin-bottom:6px; font-weight:600; }
-        .ri-result-a { font-size:13px; color:rgba(255,255,255,.7); line-height:1.5; }
+        .ri-result-a { font-size:13px; color:rgba(255,255,255,.7); line-height:1.5; margin-bottom:6px; }
+        .ri-result-f { font-size:12px; color:#22c55e; line-height:1.5; }
         @keyframes stt-pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
         .stt-active { animation:stt-pulse 1s infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .fb-spinner { width:18px; height:18px; border:2px solid rgba(255,255,255,.2); border-top-color:#22c55e; border-radius:50%; animation:spin .7s linear infinite; display:inline-block; }
       `}</style>
 
       {/* Top bar */}
@@ -203,7 +308,7 @@ export default function RealInterviewPage() {
           <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>🎯 실전 면접</span>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>{resume.companyName} · {resume.jobTitle}</span>
         </div>
-        {phase === 'interview' && (
+        {(phase === 'interview' || phase === 'feedback') && (
           <span style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>
             Q {qIndex + 1} / {QUESTIONS.length} &nbsp;·&nbsp; 총 {fmt(totalSec)}
           </span>
@@ -211,8 +316,24 @@ export default function RealInterviewPage() {
         <button onClick={() => setExitConfirm(true)} style={{ background: '#ef4444', border: 'none', borderRadius: 8, padding: '6px 16px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>나가기</button>
       </div>
 
+<<<<<<< Updated upstream
+=======
+      {/* 장치 오류 배너 */}
+      {deviceError && (
+        <div style={{ background: '#450a0a', borderBottom: '1px solid rgba(239,68,68,.3)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <span>⚠️</span>
+          <span style={{ fontSize: 13, color: '#fca5a5', flex: 1 }}>
+            {deviceError === 'camera' && '카메라에 연결하지 못했습니다.'}
+            {deviceError === 'mic' && '마이크에 연결하지 못했습니다. 텍스트로 답변을 입력할 수 있습니다.'}
+            {deviceError === 'both' && '카메라와 마이크에 연결하지 못했습니다.'}
+          </span>
+          <button onClick={() => setDeviceError(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.3)', cursor: 'pointer', fontSize: 16 }}>✕</button>
+        </div>
+      )}
+
+>>>>>>> Stashed changes
       {/* Progress bar */}
-      {phase === 'interview' && (
+      {(phase === 'interview' || phase === 'feedback') && (
         <div style={{ height: 3, background: '#1a1d2e', flexShrink: 0 }}>
           <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / QUESTIONS.length) * 100}%`, transition: 'width .4s' }} />
         </div>
@@ -336,10 +457,46 @@ export default function RealInterviewPage() {
 
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
                 <button onClick={handleNext} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+<<<<<<< Updated upstream
                   {qIndex + 1 >= QUESTIONS.length ? '면접 종료 →' : '다음 질문 →'}
+=======
+                  {qIndex + 1 >= totalQuestions ? '면접 종료 →' : '답변 완료 ✅'}
+>>>>>>> Stashed changes
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Feedback stage */}
+      {phase === 'feedback' && (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 40px' }}>
+          <div style={{ width: '100%', maxWidth: 640 }} className="fade-up">
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#4f6ef7', letterSpacing: '.08em', marginBottom: 12, textTransform: 'uppercase', textAlign: 'center' }}>
+              Q{qIndex + 1} AI 피드백
+            </div>
+            <div style={{ background: 'rgba(16,185,129,.1)', border: '1.5px solid rgba(34,197,94,.35)', borderRadius: 14, padding: '20px 24px', marginBottom: 20 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#22c55e', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                💡 AI 피드백
+                {feedbackLoading && <span className="fb-spinner" />}
+              </div>
+              {feedbackLoading ? (
+                <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)' }}>AI가 답변을 분석하고 있습니다...</div>
+              ) : (
+                <div style={{ fontSize: 15, color: 'rgba(255,255,255,.85)', lineHeight: 1.7 }}>{currentFeedback}</div>
+              )}
+            </div>
+            {!feedbackLoading && (
+              <div style={{ textAlign: 'center' }}>
+                <button
+                  onClick={() => pendingNextRef.current?.()}
+                  style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 40px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  {qIndex + 1 >= totalQuestions ? '🎉 면접 종료' : '다음 질문 →'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -351,7 +508,14 @@ export default function RealInterviewPage() {
             <div style={{ textAlign: 'center', marginBottom: 32 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
               <div style={{ fontSize: 22, fontWeight: 800, color: '#fff' }}>실전 면접 완료</div>
+<<<<<<< Updated upstream
               <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)', marginTop: 8 }}>{QUESTIONS.length}개 질문 · 총 {fmt(totalSec)}</div>
+=======
+              <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)', marginTop: 8 }}>{totalQuestions}개 질문 · 총 {fmt(totalSec)}</div>
+              {backendInterviewId && (
+                <div style={{ fontSize: 13, color: 'rgba(255,255,255,.3)', marginTop: 6 }}>AI가 종합 분석을 처리 중입니다. 잠시 후 결과를 확인하세요.</div>
+              )}
+>>>>>>> Stashed changes
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '.05em' }}>답변 요약</div>
             {answers.map((item, i) => (

@@ -87,5 +87,12 @@ export const useInterviewStore = create((set, get) => ({
     }
   },
 
+<<<<<<< Updated upstream
+=======
+  // 분석 결과만 초기화 (다른 면접의 오래된 데이터 제거)
+  resetAnalysis: () => set({ analysis: null }),
+
+  // 상태 초기화
+>>>>>>> Stashed changes
   reset: () => set({ current: null, questions: [], currentQuestionIdx: 0, analysis: null }),
 }))

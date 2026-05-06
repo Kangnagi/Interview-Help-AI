@@ -33,10 +33,14 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 100               # 최대 업로드 파일 크기 (MB)
 
     # ── AI 모델 설정 ────────────────────────────────────────
-    KOBERT_MODEL_PATH: str = "./models/kobert"              # KoBERT 로컬 모델 경로 (미사용 시 HuggingFace 자동 다운)
-    WHISPER_MODEL_SIZE: str = "base"                        # Whisper 모델 크기 (tiny/base/small/medium/large)
-    WHISPER_LANGUAGE: str = "ko"                            # Whisper 인식 언어 (한국어 고정)
-    MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5        # MediaPipe 얼굴 감지 최소 신뢰도 (0~1)
+    KOBERT_MODEL_PATH: str = "./models/kobert"
+    WHISPER_MODEL_SIZE: str = "base"
+    WHISPER_LANGUAGE: str = "ko"
+    MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5
+
+    # ── Gemini ──────────────────────────────────────────────
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-1.5-flash"
 
     class Config:
         env_file = ".env"          # 프로젝트 루트의 .env 파일에서 환경 변수 로드

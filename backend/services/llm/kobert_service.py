@@ -59,8 +59,14 @@ class KoBERTService:
             self.model.eval()   # 드롭아웃·배치정규화를 추론 모드로 전환
             logger.info(f"KoBERT 로딩 완료 (device: {self.device})")
         except Exception as e:
+<<<<<<< Updated upstream
             logger.error(f"KoBERT 로딩 실패: {e}")
             raise
+=======
+            logger.error(f"❌ KoBERT 로딩 실패: {e} — Stub 모드로 동작합니다")
+            self.tokenizer = None
+            self.model = None
+>>>>>>> Stashed changes
 
     async def analyze_answer(self, question: str, answer: str) -> dict:
         """

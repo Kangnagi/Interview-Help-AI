@@ -1,11 +1,18 @@
 """
 AI 면접 도우미 — FastAPI 진입점
+<<<<<<< Updated upstream
 
 앱 시작 순서:
   1. lifespan: DB 테이블 생성 → AI 모델 3종 사전 로딩
   2. 미들웨어: CORS 허용 (프론트 Origin 화이트리스트)
   3. 라우터:   /api/v1/auth · /api/v1/interviews · /api/v1/analysis · /ws/...
   4. 정적 파일: /uploads → 로컬 업로드 디렉토리 서빙
+=======
+- lifespan: DB 초기화 + AI 모델 사전 로딩
+- /api/v1 prefix 라우터 등록
+- /ws WebSocket 라우터 등록
+- CORS, 정적 업로드 디렉토리 마운트
+>>>>>>> Stashed changes
 """
 import logging
 from contextlib import asynccontextmanager
@@ -13,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+<<<<<<< Updated upstream
 from core.config import settings                          # 환경 변수 / 앱 설정 객체
 from core.database import init_db                         # 앱 시작 시 DB 테이블 생성 함수
 from routers import auth, interview, analysis, websocket  # 각 기능별 라우터
@@ -21,6 +29,15 @@ from services.voice.whisper_service import whisper_service        # Whisper STT 
 from services.vision.mediapipe_service import mediapipe_service   # MediaPipe 비전 분석 서비스 싱글톤
 
 # DEBUG=True면 INFO 레벨 이상 출력, 운영 환경에서는 WARNING 이상만 출력
+=======
+from core.config import settings
+from core.database import init_db
+from routers import auth, interview, analysis, websocket
+from services.llm.kobert_service import kobert_service
+from services.voice.whisper_service import whisper_service
+from services.vision.mediapipe_service import mediapipe_service
+
+>>>>>>> Stashed changes
 logging.basicConfig(
     level=logging.INFO if settings.DEBUG else logging.WARNING,
     format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
@@ -30,6 +47,7 @@ logger = logging.getLogger("app")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+<<<<<<< Updated upstream
     """
     FastAPI lifespan 핸들러 — 서버 시작/종료 시 딱 1회 실행되는 코드 블록.
 
@@ -60,10 +78,28 @@ async def lifespan(app: FastAPI):
 
 # ─── FastAPI 앱 인스턴스 ──────────────────────────────────────────────────────
 # lifespan 주입으로 시작/종료 훅 연결, /docs·/redoc는 개발용 Swagger UI
+=======
+    logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} 시작")
+
+    await init_db()
+    logger.info("DB 초기화 완료")
+
+    await kobert_service.load_model()
+    await whisper_service.load_model()
+    await mediapipe_service.initialize()
+    logger.info("AI 모델 준비 완료")
+
+    yield
+
+    logger.info("앱 종료")
+
+
+>>>>>>> Stashed changes
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     lifespan=lifespan,
+<<<<<<< Updated upstream
     docs_url="/docs",    # Swagger UI: http://localhost:8000/docs
     redoc_url="/redoc",  # ReDoc UI:   http://localhost:8000/redoc
 )
@@ -92,12 +128,37 @@ app.include_router(analysis.router,  prefix=API_PREFIX)   # /api/v1/analysis   �
 
 # WebSocket은 REST prefix 없이 /ws/... 경로 직접 사용
 app.include_router(websocket.router)                      # /ws/interview/{id} — 실시간 분석
+=======
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+
+API_PREFIX = "/api/v1"
+app.include_router(auth.router,      prefix=API_PREFIX)
+app.include_router(interview.router, prefix=API_PREFIX)
+app.include_router(analysis.router,  prefix=API_PREFIX)
+
+app.include_router(websocket.router)
+>>>>>>> Stashed changes
 
 
 # ─── 헬스체크 엔드포인트 ──────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
 async def root():
+<<<<<<< Updated upstream
     """서버 정보 반환 — Swagger 링크 포함."""
+=======
+>>>>>>> Stashed changes
     return {
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
@@ -107,14 +168,20 @@ async def root():
 
 @app.get("/health", tags=["Health"])
 async def health():
+<<<<<<< Updated upstream
     """로드밸런서·모니터링 도구가 서버 생존 여부를 확인하는 엔드포인트."""
+=======
+>>>>>>> Stashed changes
     return {"status": "ok"}
 
 
 if __name__ == "__main__":
     import uvicorn
+<<<<<<< Updated upstream
     # python main.py 직접 실행 시 uvicorn 서버 구동
     # DEBUG=True면 코드 변경 감지 시 자동 재시작 (reload=True)
+=======
+>>>>>>> Stashed changes
     uvicorn.run(
         "main:app",
         host=settings.HOST,   # 0.0.0.0 → 외부 접근 허용
