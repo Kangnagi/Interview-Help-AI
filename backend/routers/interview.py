@@ -52,8 +52,20 @@ async def create_interview(
     db.add(interview)
     await db.flush()
 
-    # 카테고리에 맞는 질문 생성
-    questions_list = DEFAULT_QUESTIONS.get(body.category.value, DEFAULT_QUESTIONS["general"])
+    # 2. AI 모델(KoBERT 등)을 통해 질문 리스트 동적 생성
+    try:
+        # 서비스 레이어의 질문 생성 함수 호출 (메서드 명은 kobert_service 구현에 맞게 조정하세요)
+        # 예: generate_questions(category, count)
+        questions_list = await kobert_service.generate_questions(
+            category=body.category.value,
+            count=5
+        )
+    except Exception as e:
+        # AI 모델 호출 실패 시 예외 처리
+        print(f"AI Generation Error: {e}")
+        raise HTTPException(status_code=500, detail="AI 질문 생성 중 오류가 발생했습니다.")
+
+    # 3. 생성된 질문을 DB에 순차적으로 저장
     for i, q_text in enumerate(questions_list):
         db.add(InterviewQuestion(
             interview_id=interview.id,
@@ -62,6 +74,8 @@ async def create_interview(
         ))
 
     interview.total_questions = len(questions_list)
+
+    # 4. 최종 DB 커밋
     await db.flush()
     await db.refresh(interview)
     return interview
