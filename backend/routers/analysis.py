@@ -2,8 +2,6 @@
 면접 분석 라우터
 - POST /analysis/{interview_id}/start  : 분석 작업 시작 (백그라운드)
 - GET  /analysis/{interview_id}        : 분석 결과 조회
-
-현재는 Stub 서비스 호출 → 다음 단계에서 실제 KoBERT/Whisper/MediaPipe로 교체.
 """
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -16,7 +14,6 @@ from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
-from services.llm.kobert_service import kobert_service
 from services.voice.whisper_service import whisper_service
 from services.vision.mediapipe_service import mediapipe_service
 
@@ -52,38 +49,21 @@ async def _run_analysis_pipeline(interview_id: int):
         )
         analysis = existing.scalar_one_or_none() or Analysis(interview_id=interview_id)
 
-        # ── 2) KoBERT: 답변별 분석 → 평균 점수 ─────────
-        content_scores, relevance_scores, clarity_scores = [], [], []
-        for q in interview.questions:
-            if not q.answer_text:
-                continue
-            r = await kobert_service.analyze_answer(q.question_text, q.answer_text)
-            content_scores.append(r["content_score"])
-            relevance_scores.append(r["relevance_score"])
-            clarity_scores.append(r["clarity_score"])
-
-        analysis.content_score   = _avg(content_scores)
-        analysis.relevance_score = _avg(relevance_scores)
-        analysis.clarity_score   = _avg(clarity_scores)
-
-        # ── 3) Whisper: 음성 분석 (영상이 있을 경우) ───
+        # ── 2) Whisper: 음성 분석 (영상이 있을 경우) ───
         if interview.video_path:
             speech = await whisper_service.analyze_speech(interview.video_path)
             analysis.speech_score      = speech["speech_score"]
             analysis.speech_pace       = speech["speech_pace"]
             analysis.filler_word_count = speech["filler_word_count"]
 
-            # ── 4) MediaPipe: 영상 분석 ─────────────────
+            # ── 3) MediaPipe: 영상 분석 ─────────────────
             vision = await mediapipe_service.analyze_video(interview.video_path)
             analysis.eye_contact_score = vision["eye_contact_score"]
             analysis.posture_score     = vision["posture_score"]
             analysis.expression_data   = vision["expression_data"]
 
-        # ── 5) 종합 점수 + 피드백 ───────────────────────
+        # ── 4) 종합 점수 + 피드백 ───────────────────────
         sub_scores = [
-            analysis.content_score,
-            analysis.relevance_score,
-            analysis.clarity_score,
             analysis.speech_score,
             analysis.eye_contact_score,
             analysis.posture_score,
