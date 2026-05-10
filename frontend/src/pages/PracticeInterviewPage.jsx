@@ -1,8 +1,17 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
+import InterviewSetup from '@/components/Interview/InterviewSetup'
 
-const PHASE = { WAITING: 'waiting', QUESTION: 'question', ANSWERING: 'answering', FEEDBACK: 'feedback', DONE: 'done' }
+const PHASE = {
+  SETUP: 'setup',
+  WAITING: 'waiting',
+  QUESTION: 'question',
+  ANSWERING: 'answering',
+  FEEDBACK: 'feedback',
+  DONE: 'done',
+}
 
 const SAMPLE_QUESTIONS = [
   '자기소개를 간략하게 해주세요.',
@@ -25,7 +34,9 @@ export default function PracticeInterviewPage() {
   const resume = useResumeStore((s) => s.getResume(resumeId))
   const { addInterviewRecord } = useResumeStore()
 
-  const [phase, setPhase] = useState(PHASE.WAITING)
+  const [phase, setPhase] = useState(PHASE.SETUP)
+  const [deviceIds, setDeviceIds] = useState({ cameraId: '', micId: '' })
+  const [sessionStarted, setSessionStarted] = useState(false)
   const [qIndex, setQIndex] = useState(0)
   const [answer, setAnswer] = useState('')
   const [log, setLog] = useState([])
@@ -34,7 +45,6 @@ export default function PracticeInterviewPage() {
   const [answerSec, setAnswerSec] = useState(0)
   const [exitConfirm, setExitConfirm] = useState(false)
   const [faceStatus, setFaceStatus] = useState('waiting')
-  const [micActive, setMicActive] = useState(false)
   const [feedback, setFeedback] = useState('')
 
   const videoRef = useRef(null)
@@ -42,15 +52,35 @@ export default function PracticeInterviewPage() {
   const totalTimer = useRef(null)
   const answerTimer = useRef(null)
   const detectionRef = useRef(null)
-  const micAnalyserRef = useRef(null)
 
   const questions = SAMPLE_QUESTIONS.slice(0, 5)
   const currentQ = questions[qIndex]
 
-  // 카메라 + 마이크
+  const { listening, interim, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
+    useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
+
+  // Stop STT when leaving ANSWERING
   useEffect(() => {
+    if (phase !== PHASE.ANSWERING) stopSTT()
+  }, [phase, stopSTT])
+
+  // Setup complete → start session
+  const handleSetupReady = useCallback(({ cameraId, micId }) => {
+    setDeviceIds({ cameraId, micId })
+    setPhase(PHASE.WAITING)
+    setSessionStarted(true)
+  }, [])
+
+  // Init camera + face detection after setup
+  useEffect(() => {
+    if (!sessionStarted) return
     setFaceStatus('detecting')
-    navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
+
+    const constraints = {
+      video: deviceIds.cameraId ? { deviceId: { exact: deviceIds.cameraId } } : true,
+      audio: deviceIds.micId ? { deviceId: { exact: deviceIds.micId } } : true,
+    }
+    navigator.mediaDevices.getUserMedia(constraints)
       .then((s) => {
         streamRef.current = s
         if (videoRef.current) videoRef.current.srcObject = s
@@ -64,47 +94,25 @@ export default function PracticeInterviewPage() {
             } catch { setFaceStatus('detected') }
           }, 800)
         } else {
-          setTimeout(() => setFaceStatus('detected'), 1500)
+          setTimeout(() => setFaceStatus('detected'), 1000)
         }
       })
       .catch(() => setFaceStatus('lost'))
 
-    navigator.mediaDevices?.getUserMedia({ audio: true, video: false })
-      .then((audioStream) => {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)()
-        if (ctx.state === 'suspended') ctx.resume()
-        const analyser = ctx.createAnalyser()
-        analyser.fftSize = 512
-        analyser.smoothingTimeConstant = 0.4
-        ctx.createMediaStreamSource(audioStream).connect(analyser)
-        micAnalyserRef.current = analyser
-        const data = new Uint8Array(analyser.frequencyBinCount)
-        const check = () => {
-          analyser.getByteFrequencyData(data)
-          const avg = data.slice(0, 60).reduce((a, b) => a + b, 0) / 60
-          setMicActive(avg > 30)
-          micAnalyserRef.requestId = requestAnimationFrame(check)
-        }
-        check()
-      })
-      .catch(() => {})
-
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
       clearInterval(detectionRef.current)
-      clearInterval(totalTimer.current)
-      clearInterval(answerTimer.current)
     }
-  }, [])
+  }, [sessionStarted]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 총 타이머
+  // Total timer
   useEffect(() => {
-    if (phase === PHASE.WAITING || phase === PHASE.DONE) return
+    if ([PHASE.WAITING, PHASE.DONE, PHASE.SETUP].includes(phase)) return
     totalTimer.current = setInterval(() => setTotalSec((p) => p + 1), 1000)
     return () => clearInterval(totalTimer.current)
   }, [phase])
 
-  // 답변 타이머
+  // Answer timer
   useEffect(() => {
     clearInterval(answerTimer.current)
     if (phase === PHASE.ANSWERING) {
@@ -117,6 +125,7 @@ export default function PracticeInterviewPage() {
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
   const submitAnswer = () => {
+    stopSTT()
     clearInterval(answerTimer.current)
     const fb = SAMPLE_FEEDBACK[Math.floor(Math.random() * SAMPLE_FEEDBACK.length)]
     setFeedback(fb)
@@ -140,6 +149,10 @@ export default function PracticeInterviewPage() {
     navigate('/resume')
   }
 
+  if (phase === PHASE.SETUP) {
+    return <InterviewSetup resumeInfo={resume} onReady={handleSetupReady} />
+  }
+
   if (!resume) return (
     <div style={{ padding: 40, textAlign: 'center', color: '#fff', background: '#0f1117', minHeight: '100vh' }}>
       자기소개서를 찾을 수 없습니다.
@@ -150,7 +163,6 @@ export default function PracticeInterviewPage() {
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0a0d1a', display: 'flex', zIndex: 500, fontFamily: 'inherit' }}>
       <style>{`
-        /* 로그 패널 */
         .pi-log-panel { width:0; overflow:hidden; transition:width .25s; flex-shrink:0; background:#111422; }
         .pi-log-panel.open { width:270px; border-left:1px solid rgba(255,255,255,.07); }
         .pi-log-inner { width:270px; padding:16px; height:100%; overflow-y:auto; }
@@ -158,7 +170,6 @@ export default function PracticeInterviewPage() {
         .pi-log-q { color:#4f6ef7; font-weight:600; margin-bottom:5px; }
         .pi-log-a { color:rgba(255,255,255,.6); margin-bottom:5px; line-height:1.5; }
         .pi-log-f { color:#22c55e; line-height:1.5; }
-        /* 얼굴 인식 배지 */
         .face-badge { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:5px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:600; white-space:nowrap; backdrop-filter:blur(6px); }
         .face-badge.detecting { background:rgba(245,158,11,.85); color:#fff; }
         .face-badge.detected  { background:rgba(16,185,129,.85); color:#fff; }
@@ -169,12 +180,14 @@ export default function PracticeInterviewPage() {
         @keyframes fadeUpCenter { from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
         .fade-up-center { animation:fadeUpCenter .35s ease forwards; }
         .fade-up { animation:fadeUp .35s ease; }
+        @keyframes stt-pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+        .stt-active { animation:stt-pulse 1s infinite; }
       `}</style>
 
-      {/* ── 메인 영역 ───────────────────────────── */}
+      {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* 상단 바 */}
+        {/* Top bar */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
           <div>
             <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>🎓 연습 면접</span>
@@ -191,19 +204,17 @@ export default function PracticeInterviewPage() {
           </div>
         </div>
 
-        {/* 진행바 */}
+        {/* Progress bar */}
         <div style={{ height: 3, background: '#1a1d2e', flexShrink: 0 }}>
           <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / questions.length) * 100}%`, transition: 'width .4s' }} />
         </div>
 
-        {/* ── 메인 무대 (하나의 블록) ── */}
+        {/* Stage */}
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-
-          {/* 배경 그라디언트 */}
           <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 40%, #1a2040 0%, #0a0d1a 70%)', pointerEvents: 'none' }} />
 
-          {/* ── 질문 텍스트 (AI 면접관 위) ── */}
-          {(phase === PHASE.QUESTION || phase === PHASE.ANSWERING || phase === PHASE.FEEDBACK) && (
+          {/* Question */}
+          {[PHASE.QUESTION, PHASE.ANSWERING, PHASE.FEEDBACK].includes(phase) && (
             <div key={qIndex} className="fade-up-center" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>Q{qIndex + 1} 질문</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '16px 24px', backdropFilter: 'blur(8px)' }}>
@@ -212,13 +223,13 @@ export default function PracticeInterviewPage() {
             </div>
           )}
 
-          {/* ── AI 면접관 (가운데 살짝 위) ── */}
+          {/* AI Interviewer */}
           <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -54%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
             <div style={{ width: 130, height: 130, borderRadius: '50%', background: 'linear-gradient(135deg,#4f6ef7,#10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 64, boxShadow: '0 0 48px rgba(79,110,247,.35)' }}>🤖</div>
             <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(255,255,255,.4)', fontWeight: 500 }}>AI 면접관</div>
           </div>
 
-          {/* ── 타이머 (오른쪽 상단) ── */}
+          {/* Timer */}
           <div style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
             <div style={{ background: 'rgba(17,20,34,.85)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 12, padding: '10px 16px', backdropFilter: 'blur(8px)', textAlign: 'center' }}>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginBottom: 2 }}>면접 시간</div>
@@ -232,28 +243,20 @@ export default function PracticeInterviewPage() {
             </div>
           </div>
 
-          {/* ── 면접자 카메라 (오른쪽 하단) ── */}
-          <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 440, height: 320 }}>
-            <div style={{
-              width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative',
-              border: micActive ? '2.5px solid #22c55e' : '2px solid rgba(255,255,255,.12)',
-              boxShadow: micActive ? '0 0 16px rgba(34,197,94,.4)' : '0 4px 20px rgba(0,0,0,.5)',
-              transition: 'border-color .15s, box-shadow .15s',
-              background: '#111827',
-            }}>
+          {/* Camera (bottom right) */}
+          <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
+            <div style={{ width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative', border: '2px solid rgba(255,255,255,.1)', boxShadow: '0 4px 20px rgba(0,0,0,.5)', background: '#111827' }}>
               <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
-              {/* 얼굴 인식 배지 */}
               {faceStatus === 'detecting' && <div className="face-badge detecting"><span className="face-dot" />인식 중...</div>}
-              {faceStatus === 'detected'  && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
-              {faceStatus === 'lost'      && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
+              {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
+              {faceStatus === 'lost' && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
             </div>
           </div>
 
-          {/* ── 하단 액션 패널 ── */}
-          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '58%', maxWidth: 620 }}>
+          {/* Bottom action panel */}
+          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
 
-            {/* 대기 */}
             {phase === PHASE.WAITING && (
               <div className="fade-up" style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 15, color: 'rgba(255,255,255,.5)', marginBottom: 16 }}>총 {questions.length}개 질문이 준비되었습니다</div>
@@ -263,7 +266,6 @@ export default function PracticeInterviewPage() {
               </div>
             )}
 
-            {/* 질문 확인 */}
             {phase === PHASE.QUESTION && (
               <div className="fade-up" style={{ textAlign: 'center' }}>
                 <button onClick={() => setPhase(PHASE.ANSWERING)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 40px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
@@ -272,24 +274,55 @@ export default function PracticeInterviewPage() {
               </div>
             )}
 
-            {/* 답변 입력 */}
             {phase === PHASE.ANSWERING && (
               <div className="fade-up">
+                {/* STT toggle */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  {sttSupported ? (
+                    <button
+                      onClick={toggleSTT}
+                      className={listening ? 'stt-active' : ''}
+                      style={{
+                        background: listening ? 'rgba(239,68,68,.15)' : 'rgba(79,110,247,.12)',
+                        border: `1.5px solid ${listening ? '#ef4444' : 'rgba(79,110,247,.5)'}`,
+                        borderRadius: 8, padding: '7px 16px',
+                        color: listening ? '#ef4444' : '#6d85f8',
+                        fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 6,
+                      }}
+                    >
+                      {listening ? '🔴 인식 중지' : '🎤 음성 입력'}
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,.25)' }}>이 브라우저는 음성 인식을 지원하지 않습니다</span>
+                  )}
+                  {listening && (
+                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>
+                  )}
+                </div>
+
                 <textarea
                   value={answer}
                   onChange={(e) => setAnswer(e.target.value)}
-                  placeholder="답변을 입력하거나 말씀해 주세요..."
+                  placeholder={sttSupported ? '답변을 입력하거나 위 버튼으로 음성 입력하세요' : '답변을 입력하세요'}
                   autoFocus
                   style={{ width: '100%', background: 'rgba(17,20,34,.9)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 12, padding: '14px 16px', color: '#fff', fontSize: 14, resize: 'none', minHeight: 90, fontFamily: 'inherit', backdropFilter: 'blur(8px)', boxSizing: 'border-box' }}
                 />
+
+                {/* Interim transcript */}
+                {interim && (
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', fontStyle: 'italic', marginTop: 5, padding: '0 4px' }}>
+                    💬 {interim}
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', gap: 10, marginTop: 10, justifyContent: 'center' }}>
-                  <button onClick={() => { setPhase(PHASE.QUESTION); setAnswer('') }} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>재시작</button>
+                  <button onClick={() => { stopSTT(); setPhase(PHASE.QUESTION); setAnswer('') }} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>재시작</button>
                   <button onClick={submitAnswer} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✅ 답변 완료</button>
                 </div>
               </div>
             )}
 
-            {/* 피드백 */}
             {phase === PHASE.FEEDBACK && (
               <div className="fade-up">
                 <div style={{ background: 'rgba(16,185,129,.12)', border: '1.5px solid rgba(34,197,94,.4)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
@@ -304,7 +337,6 @@ export default function PracticeInterviewPage() {
               </div>
             )}
 
-            {/* 완료 */}
             {phase === PHASE.DONE && (
               <div className="fade-up" style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 42, marginBottom: 10 }}>🎉</div>
@@ -320,7 +352,7 @@ export default function PracticeInterviewPage() {
         </div>
       </div>
 
-      {/* ── 로그 패널 (오른쪽 날개) ── */}
+      {/* Log panel */}
       <div className={`pi-log-panel${logOpen ? ' open' : ''}`}>
         <div className="pi-log-inner">
           <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,.45)', marginBottom: 14 }}>📋 면접 로그</div>
@@ -337,7 +369,7 @@ export default function PracticeInterviewPage() {
         </div>
       </div>
 
-      {/* 나가기 확인 */}
+      {/* Exit confirm */}
       {exitConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 600 }}>
           <div style={{ background: '#111422', borderRadius: 14, padding: '28px 32px', minWidth: 300, textAlign: 'center', border: '1px solid rgba(255,255,255,.1)' }}>

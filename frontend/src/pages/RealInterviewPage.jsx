@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
+import InterviewSetup from '@/components/Interview/InterviewSetup'
 
 const QUESTIONS = [
   '자기소개를 1분 이내로 해주세요.',
@@ -17,7 +19,9 @@ export default function RealInterviewPage() {
   const resume = useResumeStore((s) => s.getResume(resumeId))
   const { addInterviewRecord } = useResumeStore()
 
-  const [phase, setPhase] = useState('intro')   // intro | interview | result
+  const [phase, setPhase] = useState('setup')   // setup | intro | interview | result
+  const [deviceIds, setDeviceIds] = useState({ cameraId: '', micId: '' })
+  const [sessionStarted, setSessionStarted] = useState(false)
   const [qIndex, setQIndex] = useState(0)
   const [remaining, setRemaining] = useState(Q_LIMIT)
   const [answer, setAnswer] = useState('')
@@ -32,16 +36,43 @@ export default function RealInterviewPage() {
   const timerRef = useRef(null)
   const totalRef = useRef(null)
   const detectionRef = useRef(null)
+  const micRafRef = useRef(null)
 
   const currentQ = QUESTIONS[qIndex]
   const pct = Math.round(((Q_LIMIT - remaining) / Q_LIMIT) * 100)
   const r = 44, circ = 2 * Math.PI * r
   const timerColor = remaining > 60 ? '#10b981' : remaining > 30 ? '#f59e0b' : '#ef4444'
 
-  // 카메라 + 마이크
+  const { listening, interim, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
+    useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
+
+  // Stop STT when leaving interview phase
   useEffect(() => {
+    if (phase !== 'interview') stopSTT()
+  }, [phase, stopSTT])
+
+  // Setup complete
+  const handleSetupReady = useCallback(({ cameraId, micId }) => {
+    setDeviceIds({ cameraId, micId })
+    setPhase('intro')
+    setSessionStarted(true)
+  }, [])
+
+  // Init camera + mic after setup
+  useEffect(() => {
+    if (!sessionStarted) return
     setFaceStatus('detecting')
-    navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
+
+    const camConstraints = {
+      video: deviceIds.cameraId ? { deviceId: { exact: deviceIds.cameraId } } : true,
+      audio: false,
+    }
+    const micConstraints = {
+      audio: deviceIds.micId ? { deviceId: { exact: deviceIds.micId } } : true,
+      video: false,
+    }
+
+    navigator.mediaDevices.getUserMedia(camConstraints)
       .then((s) => {
         streamRef.current = s
         if (videoRef.current) videoRef.current.srcObject = s
@@ -55,52 +86,71 @@ export default function RealInterviewPage() {
             } catch { setFaceStatus('detected') }
           }, 800)
         } else {
-          setTimeout(() => setFaceStatus('detected'), 1500)
+          setTimeout(() => setFaceStatus('detected'), 1000)
         }
       })
       .catch(() => setFaceStatus('lost'))
 
-    navigator.mediaDevices?.getUserMedia({ audio: true, video: false })
+    navigator.mediaDevices.getUserMedia(micConstraints)
       .then((audioStream) => {
         const ctx = new (window.AudioContext || window.webkitAudioContext)()
-        // 브라우저 자동재생 정책으로 suspended 상태일 경우 resume
         if (ctx.state === 'suspended') ctx.resume()
         const analyser = ctx.createAnalyser()
         analyser.fftSize = 512
         analyser.smoothingTimeConstant = 0.4
         ctx.createMediaStreamSource(audioStream).connect(analyser)
         const data = new Uint8Array(analyser.frequencyBinCount)
-        let rafId
         const check = () => {
           analyser.getByteFrequencyData(data)
           const avg = data.slice(0, 60).reduce((a, b) => a + b, 0) / 60
           setMicActive(avg > 30)
-          rafId = requestAnimationFrame(check)
+          micRafRef.current = requestAnimationFrame(check)
         }
         check()
-        // 언마운트 시 정리
-        return () => { cancelAnimationFrame(rafId); ctx.close() }
       })
       .catch(() => {})
 
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
       clearInterval(detectionRef.current)
-      clearInterval(timerRef.current)
-      clearInterval(totalRef.current)
+      cancelAnimationFrame(micRafRef.current)
     }
-  }, [])
+  }, [sessionStarted]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const startQTimer = () => {
+  // Use a ref so the timer interval can always call the latest handleNext
+  const handleNextRef = useRef(null)
+
+  const startQTimer = useCallback(() => {
     clearInterval(timerRef.current)
     setRemaining(Q_LIMIT)
     timerRef.current = setInterval(() => {
       setRemaining((p) => {
-        if (p <= 1) { clearInterval(timerRef.current); handleNext(); return 0 }
+        if (p <= 1) { clearInterval(timerRef.current); handleNextRef.current?.(); return 0 }
         return p - 1
       })
     }, 1000)
-  }
+  }, [])
+
+  const handleNext = useCallback(() => {
+    stopSTT()
+    clearInterval(timerRef.current)
+    setAnswers((prev) => {
+      const newAnswers = [...prev, { q: currentQ, a: answer }]
+      if (qIndex + 1 >= QUESTIONS.length) {
+        clearInterval(totalRef.current)
+        addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: newAnswers })
+        setPhase('result')
+      }
+      return newAnswers
+    })
+    setAnswer('')
+    if (qIndex + 1 < QUESTIONS.length) {
+      setQIndex((p) => p + 1)
+      startQTimer()
+    }
+  }, [answer, currentQ, qIndex, totalSec, resumeId, stopSTT, startQTimer, addInterviewRecord])
+
+  handleNextRef.current = handleNext
 
   const handleStart = () => {
     setPhase('interview')
@@ -108,26 +158,16 @@ export default function RealInterviewPage() {
     startQTimer()
   }
 
-  const handleNext = () => {
-    clearInterval(timerRef.current)
-    const newAnswers = [...answers, { q: currentQ, a: answer }]
-    setAnswers(newAnswers)
-    setAnswer('')
-    if (qIndex + 1 >= QUESTIONS.length) {
-      clearInterval(totalRef.current)
-      addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: newAnswers })
-      setPhase('result')
-    } else {
-      setQIndex((p) => p + 1)
-      startQTimer()
-    }
-  }
-
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
   const handleExit = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
     navigate('/resume')
+  }
+
+  // Setup screen
+  if (phase === 'setup') {
+    return <InterviewSetup resumeInfo={resume} onReady={handleSetupReady} />
   }
 
   if (!resume) return (
@@ -153,9 +193,11 @@ export default function RealInterviewPage() {
         .ri-result-item { background:#1a1d2e; border-radius:10px; padding:14px; margin-bottom:10px; }
         .ri-result-q { font-size:13px; color:#4f6ef7; margin-bottom:6px; font-weight:600; }
         .ri-result-a { font-size:13px; color:rgba(255,255,255,.7); line-height:1.5; }
+        @keyframes stt-pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+        .stt-active { animation:stt-pulse 1s infinite; }
       `}</style>
 
-      {/* 상단 바 */}
+      {/* Top bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
         <div>
           <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>🎯 실전 면접</span>
@@ -169,14 +211,14 @@ export default function RealInterviewPage() {
         <button onClick={() => setExitConfirm(true)} style={{ background: '#ef4444', border: 'none', borderRadius: 8, padding: '6px 16px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>나가기</button>
       </div>
 
-      {/* 진행바 */}
+      {/* Progress bar */}
       {phase === 'interview' && (
         <div style={{ height: 3, background: '#1a1d2e', flexShrink: 0 }}>
           <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / QUESTIONS.length) * 100}%`, transition: 'width .4s' }} />
         </div>
       )}
 
-      {/* 인트로 */}
+      {/* Intro */}
       {phase === 'intro' && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 20 }}>
           <div style={{ fontSize: 56 }}>🎯</div>
@@ -193,14 +235,12 @@ export default function RealInterviewPage() {
         </div>
       )}
 
-      {/* ── 면접 진행 — 하나의 무대 ── */}
+      {/* Interview stage */}
       {phase === 'interview' && (
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-
-          {/* 배경 */}
           <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 40%, #1a2040 0%, #0a0d1a 70%)', pointerEvents: 'none' }} />
 
-          {/* 질문 (AI 면접관 위) */}
+          {/* Question */}
           <div key={qIndex} className="fade-up-center" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>Q{qIndex + 1} 질문</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '16px 24px', backdropFilter: 'blur(8px)' }}>
@@ -208,13 +248,13 @@ export default function RealInterviewPage() {
             </div>
           </div>
 
-          {/* AI 면접관 (가운데 살짝 위) */}
+          {/* AI Interviewer */}
           <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -54%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
             <div style={{ width: 130, height: 130, borderRadius: '50%', background: 'linear-gradient(135deg,#4f6ef7,#10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 64, boxShadow: '0 0 48px rgba(79,110,247,.35)' }}>🤖</div>
             <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(255,255,255,.4)', fontWeight: 500 }}>AI 면접관</div>
           </div>
 
-          {/* 원형 타이머 (오른쪽 상단) */}
+          {/* Circular timer (top right) */}
           <div style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
             <div style={{ background: 'rgba(17,20,34,.85)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 14, padding: '12px 14px', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>답변 시간</div>
@@ -236,32 +276,64 @@ export default function RealInterviewPage() {
             </div>
           </div>
 
-          {/* 면접자 카메라 (오른쪽 하단) */}
-          <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 440, height: 320 }}>
+          {/* Camera (bottom right) */}
+          <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
             <div style={{
               width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative',
-              border: micActive ? '2.5px solid #22c55e' : '2px solid rgba(255,255,255,.12)',
+              border: micActive ? '2.5px solid #22c55e' : '2px solid rgba(255,255,255,.1)',
               boxShadow: micActive ? '0 0 16px rgba(34,197,94,.4)' : '0 4px 20px rgba(0,0,0,.5)',
-              transition: 'border-color .15s, box-shadow .15s',
-              background: '#111827',
+              transition: 'border-color .15s, box-shadow .15s', background: '#111827',
             }}>
               <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
               {faceStatus === 'detecting' && <div className="face-badge detecting"><span className="face-dot" />인식 중...</div>}
-              {faceStatus === 'detected'  && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
-              {faceStatus === 'lost'      && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
+              {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
+              {faceStatus === 'lost' && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
             </div>
           </div>
 
-          {/* 하단 답변 입력 */}
-          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '58%', maxWidth: 620 }}>
+          {/* Bottom answer panel */}
+          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
             <div className="fade-up" key={qIndex}>
+              {/* STT toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                {sttSupported ? (
+                  <button
+                    onClick={toggleSTT}
+                    className={listening ? 'stt-active' : ''}
+                    style={{
+                      background: listening ? 'rgba(239,68,68,.15)' : 'rgba(79,110,247,.12)',
+                      border: `1.5px solid ${listening ? '#ef4444' : 'rgba(79,110,247,.5)'}`,
+                      borderRadius: 8, padding: '7px 16px',
+                      color: listening ? '#ef4444' : '#6d85f8',
+                      fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 6,
+                    }}
+                  >
+                    {listening ? '🔴 인식 중지' : '🎤 음성 입력'}
+                  </button>
+                ) : (
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,.25)' }}>이 브라우저는 음성 인식을 지원하지 않습니다</span>
+                )}
+                {listening && (
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>
+                )}
+              </div>
+
               <textarea
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
-                placeholder="답변을 입력하거나 말씀해 주세요..."
+                placeholder={sttSupported ? '답변을 입력하거나 위 버튼으로 음성 입력하세요' : '답변을 입력하세요'}
                 style={{ width: '100%', background: 'rgba(17,20,34,.9)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 12, padding: '14px 16px', color: '#fff', fontSize: 14, resize: 'none', minHeight: 80, fontFamily: 'inherit', backdropFilter: 'blur(8px)', boxSizing: 'border-box' }}
               />
+
+              {/* Interim transcript */}
+              {interim && (
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', fontStyle: 'italic', marginTop: 5, padding: '0 4px' }}>
+                  💬 {interim}
+                </div>
+              )}
+
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
                 <button onClick={handleNext} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                   {qIndex + 1 >= QUESTIONS.length ? '면접 종료 →' : '다음 질문 →'}
@@ -272,16 +344,14 @@ export default function RealInterviewPage() {
         </div>
       )}
 
-      {/* 결과 */}
+      {/* Result */}
       {phase === 'result' && (
         <div style={{ flex: 1, overflow: 'auto', padding: '32px 40px' }}>
           <div style={{ maxWidth: 700, margin: '0 auto' }}>
             <div style={{ textAlign: 'center', marginBottom: 32 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
               <div style={{ fontSize: 22, fontWeight: 800, color: '#fff' }}>실전 면접 완료</div>
-              <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)', marginTop: 8 }}>
-                {QUESTIONS.length}개 질문 · 총 {fmt(totalSec)}
-              </div>
+              <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)', marginTop: 8 }}>{QUESTIONS.length}개 질문 · 총 {fmt(totalSec)}</div>
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '.05em' }}>답변 요약</div>
             {answers.map((item, i) => (
@@ -298,7 +368,7 @@ export default function RealInterviewPage() {
         </div>
       )}
 
-      {/* 나가기 확인 */}
+      {/* Exit confirm */}
       {exitConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 600 }}>
           <div style={{ background: '#111422', borderRadius: 14, padding: '28px 32px', minWidth: 300, textAlign: 'center', border: '1px solid rgba(255,255,255,.1)' }}>
