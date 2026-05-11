@@ -1,0 +1,19 @@
+[33ma64ccfc4[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m before git-flow init
+[33mf9f4b6d3[m STT 기능 수정 및 추가
+[33m7cd66a0f[m[33m ([m[1;32mfeature/test-ui[m[33m)[m requirements pip 버전
+[33m61261563[m feat: 면접 화면 레이아웃 개편 및 자기소개서 목록 개선
+[33m4747b5f1[m chore: interview.db gitignore 추가
+[33mc4393d82[m 카메라 인식, 마이크 인식 확인 표시 추가
+[33meda4687f[m mediapipie
+[33m23849ab7[m Update kobert_service.py
+[33m8b8a856f[m Update interview.py
+[33m9e9e62b1[m Update requirements.txt
+[33m88a5c1cb[m Update requirements.txt
+[33mfb049dc9[m Remove pycache and apply gitignore
+[33m0636a664[m Remove .venv from tracking
+[33m4941cb53[m 페이지 추가
+[33m16f9ed18[m 2026-04-21.강찬희
+[33m8c9e06b0[m librosa_model
+[33m40f3260d[m Update requirements.txt
+[33m42ae8e7a[m Create README.md
+[33m3d5b2650[m 아직 수정 중
