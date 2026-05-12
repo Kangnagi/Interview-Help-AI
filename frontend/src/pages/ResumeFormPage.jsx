@@ -1,23 +1,25 @@
-import { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { useResumeStore } from '@/store/resumeStore'
-import toast from 'react-hot-toast'
+import { useState, useEffect } from 'react'                  // 로컬 상태 관리 및 마운트 시 작업
+import { useNavigate, useParams } from 'react-router-dom'    // 라우팅
+import { useResumeStore } from '@/store/resumeStore'        // 자기소개서 상태 관리
+import toast from 'react-hot-toast'                          // 토스트 알림
 
 export default function ResumeFormPage() {
   const navigate = useNavigate()
-  const { id } = useParams()
+  const { id } = useParams()                                  // URL 파라미터에서 자기소개서 ID 추출
   const { addResume, updateResume, getResume } = useResumeStore()
-  const isEdit = Boolean(id)
+  const isEdit = Boolean(id)                                 // 수정 모드 여부
 
+  // 폼 데이터
   const [form, setForm] = useState({
-    title: '',
-    companyName: '',
-    jobTitle: '',
-    jobDescription: '',
-    idealCandidate: '',
+    title: '',                 // 자기소개서 제목
+    companyName: '',           // 회사명
+    jobTitle: '',              // 직무명
+    jobDescription: '',        // 직무 설명
+    idealCandidate: '',        // 인재상 (선택사항)
   })
-  const [errors, setErrors] = useState({})
+  const [errors, setErrors] = useState({})                    // 입력값 검증 에러
 
+  // 수정 모드일 때 기존 데이터 로드
   useEffect(() => {
     if (isEdit) {
       const r = getResume(id)
@@ -26,6 +28,7 @@ export default function ResumeFormPage() {
     }
   }, [id])
 
+  // 입력값 업데이트 헬퍼 함수
   const set = (field) => (e) => setForm((p) => ({ ...p, [field]: e.target.value }))
 
   const validate = () => {
