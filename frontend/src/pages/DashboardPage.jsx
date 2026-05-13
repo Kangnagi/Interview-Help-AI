@@ -1,18 +1,19 @@
-import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useAuthStore } from '@/store/authStore'
-import { useResumeStore } from '@/store/resumeStore'
+import { useEffect } from 'react'                            // 마운트 시 작업 실행
+import { useNavigate } from 'react-router-dom'              // 페이지 네비게이션
+import { useAuthStore } from '@/store/authStore'            // 사용자 정보
+import { useResumeStore } from '@/store/resumeStore'        // 자기소개서 데이터
 
 export default function DashboardPage() {
-  const { user } = useAuthStore()
-  const { resumes } = useResumeStore()
+  const { user } = useAuthStore()                           // 로그인한 사용자 정보
+  const { resumes } = useResumeStore()                      // 저장된 자기소개서 목록
   const navigate = useNavigate()
 
+  // 통계 계산 — 재렌더링될 때마다 계산
   const practiceCount = resumes.reduce((acc, r) =>
-    acc + (r.interviewRecords?.filter(rec => rec.type === 'practice').length || 0), 0)
+    acc + (r.interviewRecords?.filter(rec => rec.type === 'practice').length || 0), 0)  // 연습 면접 총 횟수
   const realCount = resumes.reduce((acc, r) =>
-    acc + (r.interviewRecords?.filter(rec => rec.type === 'real').length || 0), 0)
-  const totalCount = practiceCount + realCount
+    acc + (r.interviewRecords?.filter(rec => rec.type === 'real').length || 0), 0)       // 실전 면접 총 횟수
+  const totalCount = practiceCount + realCount                                           // 총 면접 횟수
 
   return (
     <div>
@@ -22,7 +23,7 @@ export default function DashboardPage() {
         <p style={{ color: 'var(--text-secondary)', marginTop: 4 }}>오늘도 면접 준비 열심히 해봐요!</p>
       </div>
 
-      {/* 통계 카드 */}
+      {/* 통계 카드 3열 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16, marginBottom: 28 }}>
         {[
           { label: '작성한 자기소개서', value: resumes.length,  color: 'var(--primary)', icon: '📄' },
@@ -37,7 +38,7 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* 빠른 시작 */}
+      {/* 빠른 시작 버튼 1 */}
       <div className="card" style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <h3 style={{ fontWeight: 600, fontSize: 16 }}>자기소개서 작성하기</h3>
@@ -50,6 +51,7 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {/* 빠른 시작 버튼 2 */}
       <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <h3 style={{ fontWeight: 600, fontSize: 16 }}>면접 시작하기</h3>
@@ -62,7 +64,7 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      {/* 최근 자기소개서 */}
+      {/* 최근 자기소개서 목록 */}
       {resumes.length > 0 && (
         <div className="card" style={{ marginTop: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -91,3 +93,4 @@ export default function DashboardPage() {
     </div>
   )
 }
+
