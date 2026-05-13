@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useInterviewStore } from '@/store/interviewStore'
+import { useResumeStore } from '@/store/resumeStore' // 로컬 저장용 추가
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition' // 음성 인식 추가
 import { interviewWS } from '@/services/websocket'
 import toast from 'react-hot-toast'
 
@@ -13,12 +15,18 @@ export default function InterviewPage() {
 
   const { questions, loadQuestions, currentQuestionIdx, nextQuestion, submitAnswer, finishInterview, startAnalysis } = useInterviewStore()
 
+  const { addInterviewRecord } = useResumeStore() // 대시보드 통계 동기화용
+
   const [answer, setAnswer]       = useState('')
   const [recording, setRecording] = useState(false)
   const [timeLeft, setTimeLeft]   = useState(120)     // 질문당 2분
   const [camReady, setCamReady]   = useState(false)
   const [feedback, setFeedback]   = useState(null)    // 실시간 WS 피드백
 
+  // 음성 인식 훅 연결
+  const { listening, interim, toggle: toggleSTT, stop: stopSTT } = useSpeechRecognition({
+    onFinal: (text) => setAnswer((prev) => prev + " " + text)
+  })
   const currentQ = questions[currentQuestionIdx]
   const isLast   = currentQuestionIdx === questions.length - 1
 
