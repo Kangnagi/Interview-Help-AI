@@ -11,21 +11,18 @@ from fastapi import FastAPI                             # FastAPI 메인 클래�
 from fastapi.middleware.cors import CORSMiddleware      # 브라우저 CORS 허용 미들웨어
 from fastapi.staticfiles import StaticFiles             # 정적 파일 서빙 (업로드 폴더)
 
-<<<<<<< Updated upstream
 from core.config import settings
 from core.database import init_db
 from routers import auth, interview, analysis, websocket
 from services.llm.kobert_service import kobert_service
 from services.voice.whisper_service import whisper_service
 from services.vision.mediapipe_service import mediapipe_service
-=======
 from core.config import settings                        # 환경 변수 / 앱 설정 객체
 from core.database import init_db                       # 앱 시작 시 DB 테이블 생성 함수
 from routers import auth, interview, analysis, websocket, stt   # 각 기능별 라우터
 from services.llm.kobert_service import kobert_service          # KoBERT 답변 분석 서비스
 from services.voice.whisper_service import whisper_service      # Whisper STT 서비스
 from services.vision.mediapipe_service import mediapipe_service # MediaPipe 비전 분석 서비스
->>>>>>> Stashed changes
 
 # 로그 레벨: DEBUG 모드면 INFO, 아니면 WARNING
 logging.basicConfig(
@@ -79,16 +76,13 @@ app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads"
 
 # REST 라우터 등록 — 모두 /api/v1 prefix 아래에 묶음
 API_PREFIX = "/api/v1"
-<<<<<<< Updated upstream
 app.include_router(auth.router,      prefix=API_PREFIX)
 app.include_router(interview.router, prefix=API_PREFIX)
 app.include_router(analysis.router,  prefix=API_PREFIX)
-=======
 app.include_router(auth.router,      prefix=API_PREFIX)   # /api/v1/auth
 app.include_router(interview.router, prefix=API_PREFIX)   # /api/v1/interviews
 app.include_router(analysis.router,  prefix=API_PREFIX)   # /api/v1/analysis
 app.include_router(stt.router,       prefix=API_PREFIX)   # /api/v1/stt
->>>>>>> Stashed changes
 
 # WebSocket은 별도 prefix 없이 /ws/... 경로 사용
 app.include_router(websocket.router)
