@@ -16,6 +16,7 @@ from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
 from services.voice.whisper_service import whisper_service
 from services.vision.mediapipe_service import mediapipe_service
+from services.llm.gemini_service import gemini_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["분석"])
@@ -39,6 +40,26 @@ async def _run_analysis_pipeline(interview_id: int):
             .where(Interview.id == interview_id)
         )
         interview = result.scalar_one_or_none()
+        
+        # 2) Gemini에 보낼 Q&A 리스트 만들기
+        qa_data = [
+            {"question": q.question_text, "answer": q.answer_text or "답변 없음"}
+            for q in interview.questions
+        ]
+
+        # 3) Gemini API 호출하여 피드백 생성
+        ai_feedback = await gemini_service.generate_interview_feedback(qa_data)
+
+        # 4) DB 모델에 결과 반영
+        # (기존 MediaPipe/Whisper 분석 점수 아래에 추가)
+        analysis.feedback_summary = ai_feedback["feedback_summary"]
+        analysis.strengths = ai_feedback["strengths"]
+        analysis.improvements = ai_feedback["improvements"]
+
+        db.add(analysis)
+        await db.commit()
+    
+        logger.info(f"[Analysis] interview_id={interview_id} Gemini 분석 완료")
         if not interview:
             logger.error(f"[Analysis] interview {interview_id} 없음")
             return

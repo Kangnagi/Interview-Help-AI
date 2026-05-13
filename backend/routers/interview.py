@@ -170,7 +170,11 @@ async def submit_answer(
         raise HTTPException(status_code=404, detail="질문을 찾을 수 없습니다")
 
     question.answer_text = body.answer_text  # 재제출 시 덮어쓰기
-    return {"message": "답변이 저장되었습니다"}
+    
+    # 변경 사항 명시적 등록 및 커밋 (저장 보장)
+    db.add(question)
+    await db.commit()
+    return {"message": "답변이 저장되었습니다", "question_id": question_id}
 
 
 @router.patch("/{interview_id}/finish")

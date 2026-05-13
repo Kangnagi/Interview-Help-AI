@@ -5,6 +5,7 @@ python-multipart==0.0.9
 python-dotenv==1.0.1
 pydantic==2.7.1
 pydantic-settings==2.2.1
+google-generativeai==0.8.6  # Gemini API 사용 시 필수
 
 # DB
 sqlalchemy==2.0.30
@@ -28,6 +29,8 @@ tokenizers==0.14.1
 sentencepiece==0.1.99
 accelerate==0.25.0
 protobuf==4.25.3
+# KoBERT 핵심: 아래 주소가 없으면 KoBERT 모델 로드 시 에러남.
+git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
 
 # Vision
 mediapipe==0.10.33
@@ -36,7 +39,7 @@ numpy==1.26.4
 Pillow==10.3.0
 
 # Voice
-openai-whisper==20231117
+#openai-whisper==20231117
 ffmpeg-python==0.2.0
 
 # Audio

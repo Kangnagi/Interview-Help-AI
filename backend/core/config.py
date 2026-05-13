@@ -39,7 +39,8 @@ class Settings(BaseSettings):
     WHISPER_MODEL_SIZE: str = "base"                        # Whisper 모델 크기 (tiny/base/small/medium/large)
     WHISPER_LANGUAGE: str = "ko"                            # Whisper 인식 언어 (한국어 고정)
     MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5        # MediaPipe 얼굴 감지 최소 신뢰도 (0~1)
-
+    
+    
     class Config:
         env_file = ".env"          # 프로젝트 루트의 .env 파일에서 환경 변수 로드
         case_sensitive = True      # 환경 변수 이름 대소문자 구분
