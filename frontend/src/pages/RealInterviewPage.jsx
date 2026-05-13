@@ -30,6 +30,7 @@ export default function RealInterviewPage() {
   const [exitConfirm, setExitConfirm] = useState(false)
   const [faceStatus, setFaceStatus] = useState('waiting')
   const [micActive, setMicActive] = useState(false)
+  const [deviceError, setDeviceError] = useState(null) // null | 'camera' | 'mic' | 'both'
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -89,7 +90,10 @@ export default function RealInterviewPage() {
           setTimeout(() => setFaceStatus('detected'), 1000)
         }
       })
-      .catch(() => setFaceStatus('lost'))
+      .catch(() => {
+        setFaceStatus('lost')
+        setDeviceError('camera')
+      })
 
     navigator.mediaDevices.getUserMedia(micConstraints)
       .then((audioStream) => {
@@ -108,7 +112,9 @@ export default function RealInterviewPage() {
         }
         check()
       })
-      .catch(() => {})
+      .catch(() => {
+        setDeviceError((prev) => prev === 'camera' ? 'both' : 'mic')
+      })
 
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -210,6 +216,19 @@ export default function RealInterviewPage() {
         )}
         <button onClick={() => setExitConfirm(true)} style={{ background: '#ef4444', border: 'none', borderRadius: 8, padding: '6px 16px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>나가기</button>
       </div>
+
+      {/* 장치 오류 배너 */}
+      {deviceError && (
+        <div style={{ background: '#450a0a', borderBottom: '1px solid rgba(239,68,68,.3)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <span>⚠️</span>
+          <span style={{ fontSize: 13, color: '#fca5a5', flex: 1 }}>
+            {deviceError === 'camera' && '카메라에 연결하지 못했습니다. 브라우저 권한을 확인해 주세요.'}
+            {deviceError === 'mic' && '마이크에 연결하지 못했습니다. 텍스트로 답변을 입력할 수 있습니다.'}
+            {deviceError === 'both' && '카메라와 마이크에 연결하지 못했습니다. 브라우저 권한 설정을 확인해 주세요.'}
+          </span>
+          <button onClick={() => setDeviceError(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.3)', cursor: 'pointer', fontSize: 16 }}>✕</button>
+        </div>
+      )}
 
       {/* Progress bar */}
       {phase === 'interview' && (
