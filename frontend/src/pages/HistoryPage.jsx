@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { interviewAPI } from '@/services/api'
+import axios from 'axios'
 
 /**
  * 면접 이력 페이지
@@ -16,8 +16,15 @@ export default function HistoryPage() {
     let mounted = true
     ;(async () => {
       try {
-        const { data } = await interviewAPI.list()
-        if (mounted) setItems(data)
+        const token = localStorage.getItem('auth_token') || localStorage.getItem('token') || ''
+        const headers = token ? { Authorization: `Bearer ${token}` } : {}
+        
+        // 백엔드 API를 직접 호출하여 면접 이력 조회
+        const { data } = await axios.get('/api/v1/interviews', { headers })
+        
+        // 날짜와 시간을 기준으로 최신순(내림차순) 정렬
+        const sortedData = data.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        if (mounted) setItems(sortedData)
       } catch (e) {
         if (mounted) setError(e.response?.data?.detail || '이력을 불러오지 못했습니다')
       } finally {
@@ -52,11 +59,11 @@ export default function HistoryPage() {
               <tr key={iv.id}>
                 <td>{iv.title}</td>
                 <td>{iv.category}</td>
-                <td>{iv.status}</td>
+                <td>{iv.status?.toLowerCase() === 'completed' ? '완료' : '진행중'}</td>
                 <td>{iv.total_questions}</td>
                 <td>{new Date(iv.created_at).toLocaleString('ko-KR')}</td>
                 <td>
-                  {iv.status === 'completed' ? (
+                  {iv.status?.toLowerCase() === 'completed' ? (
                     <Link to={`/interview/${iv.id}/result`}>보기</Link>
                   ) : (
                     <span>—</span>

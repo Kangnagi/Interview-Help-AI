@@ -34,6 +34,9 @@ class TokenResponse(BaseModel):
 class InterviewCreate(BaseModel):
     title: str
     category: InterviewCategory = InterviewCategory.GENERAL
+    # [추가] 자기소개서 텍스트 필드
+    # Optional로 설정하여 자소서 없이 일반 면접을 볼 때의 유연함도 확보했습니다.
+    resume_text: Optional[str] = None
 
 class InterviewResponse(BaseModel):
     id: int

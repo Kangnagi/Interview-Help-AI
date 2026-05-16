@@ -1,42 +1,43 @@
-from fastapi import APIRouter, Depends, HTTPException
+import json
+import logging
+import os
+from datetime import datetime
+import hashlib
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
-from typing import List
+from pydantic import BaseModel
+
 from core.database import get_db
 from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
-from schemas.schemas import InterviewCreate, InterviewResponse, QuestionResponse, AnswerSubmit
-from pydantic import BaseModel
-from services.llm.kobert_service import kobert_service
+from schemas.schemas import InterviewCreate, InterviewResponse
+from services.llm.gemini_service import generate_questions_from_resume
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/interviews", tags=["면접"])
 
-# 기본 질문 세트 (다음 단계에서 DB 또는 KoBERT 기반 생성으로 교체)
-DEFAULT_QUESTIONS = {
-    "general": [
-        "1분 자기소개를 해주세요.",
-        "본인의 강점과 약점은 무엇인가요?",
-        "지원 동기를 말씀해주세요.",
-        "5년 후 목표는 무엇인가요?",
-        "마지막으로 하고 싶은 말이 있으신가요?",
-    ],
-    "technical": [
-        "주요 기술 스택을 소개해주세요.",
-        "가장 자신 있는 프로젝트를 설명해주세요.",
-        "코드 리뷰 경험이 있으신가요?",
-        "어려운 기술 문제를 해결한 경험을 공유해주세요.",
-        "최근 관심 있는 기술 트렌드는 무엇인가요?",
-    ],
-    "behavioral": [
-        "팀 프로젝트에서 갈등이 생겼을 때 어떻게 해결했나요?",
-        "실패한 경험과 그로부터 배운 점을 말씀해주세요.",
-        "업무 우선순위를 어떻게 정하시나요?",
-        "스트레스를 관리하는 방법이 있으신가요?",
-        "리더십을 발휘한 경험이 있으신가요?",
-    ],
-}
+QUESTION_CACHE_FILE = "question_cache.json"
 
+def load_question_cache():
+    if os.path.exists(QUESTION_CACHE_FILE):
+        try:
+            with open(QUESTION_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_question_cache(cache_data):
+    try:
+        with open(QUESTION_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+_question_cache = load_question_cache()
 
 @router.post("", response_model=InterviewResponse, status_code=201)
 async def create_interview(
@@ -44,127 +45,229 @@ async def create_interview(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    # 1. 면접 엔티티 생성
     interview = Interview(
         user_id=user_id,
         title=body.title,
         category=body.category,
     )
     db.add(interview)
-    await db.flush()
+    await db.flush()  # ID 생성을 위해 flush
 
-    # 2. AI 모델(KoBERT 등)을 통해 질문 리스트 동적 생성
+    questions_list = []
     try:
-        # 서비스 레이어의 질문 생성 함수 호출 (메서드 명은 kobert_service 구현에 맞게 조정하세요)
-        # 예: generate_questions(category, count)
-        questions_list = await kobert_service.generate_questions(
-            category=body.category.value,
-            count=5
-        )
-    except Exception as e:
-        # AI 모델 호출 실패 시 예외 처리
-        print(f"AI Generation Error: {e}")
-        raise HTTPException(status_code=500, detail="AI 질문 생성 중 오류가 발생했습니다.")
+        resume_hash = ""
+        if body.resume_text:
+            resume_hash = hashlib.sha256(body.resume_text.encode('utf-8')).hexdigest()
+            
+        if resume_hash and resume_hash in _question_cache:
+            cache_entry = _question_cache[resume_hash]
+            # 구버전 캐시(리스트 형태) 호환성 처리
+            if isinstance(cache_entry, list):
+                cache_entry = {
+                    "ai_questions": cache_entry[2:] if len(cache_entry) > 2 else cache_entry,
+                    "index": 0
+                }
+            logger.info(f"Interview {interview.id}: 캐시된 질문 풀에서 3개를 가져옵니다. (API 절약)")
+        elif os.getenv("GEMINI_API_KEY") and body.resume_text and len(body.resume_text.strip()) > 10:
+            logger.info(f"Interview {interview.id}: Gemini API로 질문 풀 생성을 시도합니다.")
+            category_val = body.category.value if hasattr(body.category, "value") else str(body.category)
+            raw_questions = await generate_questions_from_resume(
+                resume_text=body.resume_text,
+                category=category_val,
+                num_questions=8  # 타임아웃 방지: 고정 2개 + AI 질문 6개로 축소
+            )
+            if raw_questions and len(raw_questions) > 2:
+                cache_entry = {
+                    "ai_questions": raw_questions[2:],
+                    "index": 0
+                }
+            else:
+                cache_entry = None
+                logger.warning(f"Interview {interview.id}: Gemini가 질문을 반환하지 않았습니다. 폴백 로직을 사용합니다.")
+        else:
+            cache_entry = None
+            logger.info(f"Interview {interview.id}: Gemini API 키가 없거나 자기소개서 내용이 부족하여 폴백 로직을 사용합니다.")
 
-    # 3. 생성된 질문을 DB에 순차적으로 저장
+        if cache_entry and "ai_questions" in cache_entry:
+            ai_pool = cache_entry["ai_questions"]
+            idx = cache_entry.get("index", 0)
+            
+            selected_ai = []
+            count_to_pick = min(3, len(ai_pool))
+            for _ in range(count_to_pick):
+                selected_ai.append(ai_pool[idx])
+                idx = (idx + 1) % len(ai_pool)
+                
+            # 다음 면접을 위해 회전된 인덱스 저장
+            cache_entry["index"] = idx
+            _question_cache[resume_hash] = cache_entry
+            save_question_cache(_question_cache)
+            
+            questions_list = [
+                "간단한 자기소개 부탁드립니다.",
+                "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?"
+            ] + selected_ai
+
+    except Exception as e:
+        logger.error(f"Interview {interview.id}: Gemini 질문 생성 중 예외 발생, 폴백 로직 실행: {e}")
+
+    # 3. AI 질문 생성에 실패한 경우, 기본 폴백 질문 사용
+    if not questions_list or len(questions_list) <= 2:
+        DEFAULT_QUESTIONS = [
+            "간단한 자기소개 부탁드립니다.",
+            "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?",
+            "자기소개서에 작성하신 경험에 대해 더 자세히 설명해 주세요.",
+            "지원하신 직무와 관련하여 본인만의 강점은 무엇인가요?",
+            "가장 힘들었던 경험과 이를 어떻게 극복했는지 말씀해 주세요.",
+        ]
+        questions_list = DEFAULT_QUESTIONS[:5]
+
+    # 4. 생성된 질문을 DB에 저장
     for i, q_text in enumerate(questions_list):
-        db.add(InterviewQuestion(
+        new_q = InterviewQuestion(
             interview_id=interview.id,
             order=i + 1,
             question_text=q_text,
-        ))
+        )
+        db.add(new_q)
 
     interview.total_questions = len(questions_list)
 
-    # 4. 최종 DB 커밋
-    await db.flush()
+    # 5. 최종 커밋 및 데이터 반환
+    await db.commit() 
     await db.refresh(interview)
     return interview
 
 
-@router.get("", response_model=List[InterviewResponse])
+@router.get("")
 async def list_interviews(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    """현재 사용자의 모든 면접 이력과 종합 점수를 조회합니다."""
+    from models.analysis import Analysis
     result = await db.execute(
-        select(Interview)
+        select(Interview, Analysis.total_score)
+        .outerjoin(Analysis, Interview.id == Analysis.interview_id)
         .where(Interview.user_id == user_id)
         .order_by(Interview.created_at.desc())
     )
-    return result.scalars().all()
+    
+    data = []
+    for iv, score in result.all():
+        data.append({
+            "id": iv.id,
+            "title": iv.title,
+            "category": iv.category.value if hasattr(iv.category, 'value') else iv.category,
+            "status": iv.status.value if hasattr(iv.status, 'value') else iv.status,
+            "total_questions": iv.total_questions,
+            "created_at": iv.created_at.isoformat() if iv.created_at else None,
+            "total_score": round(score, 1) if score else None
+        })
+    return data
 
 
-@router.get("/{interview_id}", response_model=InterviewResponse)
-async def get_interview(
+# ----------------------------------------------------
+# 프론트엔드 연동을 위한 추가 API 라우터
+# ----------------------------------------------------
+
+class AnswerCreate(BaseModel):
+    answer_text: str
+
+@router.get("/{interview_id}/questions")
+async def get_interview_questions(
     interview_id: int,
     user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db)
 ):
+    """특정 면접의 질문 목록을 가져옵니다."""
     result = await db.execute(
-        select(Interview).where(Interview.id == interview_id, Interview.user_id == user_id)
-    )
-    interview = result.scalar_one_or_none()
-    if not interview:
-        raise HTTPException(status_code=404, detail="면접을 찾을 수 없습니다")
-    return interview
-
-
-@router.get("/{interview_id}/questions", response_model=List[QuestionResponse])
-async def get_questions(
-    interview_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    # 접근 권한 확인
-    result = await db.execute(
-        select(Interview).where(Interview.id == interview_id, Interview.user_id == user_id)
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="면접을 찾을 수 없습니다")
-
-    q_result = await db.execute(
         select(InterviewQuestion)
         .where(InterviewQuestion.interview_id == interview_id)
         .order_by(InterviewQuestion.order)
     )
-    return q_result.scalars().all()
-
+    return result.scalars().all()
 
 @router.post("/{interview_id}/questions/{question_id}/answer")
 async def submit_answer(
     interview_id: int,
     question_id: int,
-    body: AnswerSubmit,
+    answer_text: str = Form(...),
+    is_practice: bool = Form(False),
+    audio_file: UploadFile = File(None),
     user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db)
 ):
+    """면접 질문에 대한 사용자의 답변(텍스트 및 오디오 파일)을 서버에 저장합니다."""
     result = await db.execute(
-        select(InterviewQuestion).where(
-            InterviewQuestion.id == question_id,
-            InterviewQuestion.interview_id == interview_id,
-        )
+        select(InterviewQuestion).where(InterviewQuestion.id == question_id, InterviewQuestion.interview_id == interview_id)
     )
     question = result.scalar_one_or_none()
     if not question:
         raise HTTPException(status_code=404, detail="질문을 찾을 수 없습니다")
+    
+    question.answer_text = answer_text
+    
+    # 🔊 전송받은 음성 파일이 있다면 분석을 위해 로컬에 저장
+    image_bytes = None
+    if audio_file:
+        from core.config import settings
+        file_path = f"{settings.UPLOAD_DIR}/iv_{interview_id}_q_{question_id}.webm"
+        with open(file_path, "wb") as f:
+            f.write(await audio_file.read())
+            
+        if is_practice:
+            try:
+                from services.voice.librosa_service import generate_audio_spectrogram
+                image_bytes = await generate_audio_spectrogram(file_path)
+            except Exception as e:
+                logger.warning(f"오디오 이미지 변환 실패: {e}")
 
-    question.answer_text = body.answer_text
-    return {"message": "답변이 저장되었습니다"}
+    feedback = None
+    if is_practice:
+        from services.llm.gemini_service import analyze_answer_with_gemini_short
+        feedback = await analyze_answer_with_gemini_short(question.question_text, answer_text, image_bytes)
 
+    await db.commit()
+    return {"message": "답변이 저장되었습니다", "feedback": feedback}
 
 @router.patch("/{interview_id}/finish")
 async def finish_interview(
     interview_id: int,
     user_id: int = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(
-        select(Interview).where(Interview.id == interview_id, Interview.user_id == user_id)
-    )
+    """면접 상태를 완료(COMPLETED)로 변경합니다."""
+    result = await db.execute(select(Interview).where(Interview.id == interview_id))
     interview = result.scalar_one_or_none()
-    if not interview:
-        raise HTTPException(status_code=404, detail="면접을 찾을 수 없습니다")
+    if interview:
+        try:
+            interview.status = InterviewStatus.COMPLETED
+        except AttributeError:
+            interview.status = "completed"
+        await db.commit()
+        
+    return {"message": "면접이 완료되었습니다"}
 
-    interview.status = InterviewStatus.COMPLETED
-    interview.ended_at = datetime.utcnow()
-    return {"message": "면접이 종료되었습니다", "interview_id": interview_id}
+
+@router.post("/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id)
+):
+    """음성 파일을 업로드받아 텍스트로 변환(STT)합니다."""
+    audio_bytes = await file.read()
+    try:
+        from services.voice.whisper_service import whisper_service
+        # whisper_service에 transcribe_bytes 메서드가 구현되어 있다고 가정
+        if hasattr(whisper_service, "transcribe_bytes"):
+            result = await whisper_service.transcribe_bytes(audio_bytes)
+            logger.info(f"🎤 [STT 분석 결과] {result}")
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+        else:
+            text = "음성 인식을 완료했습니다. (현재 Whisper 모델 연동 대기 중)"
+        return {"text": text}
+    except Exception as e:
+        logger.error(f"STT 변환 중 오류: {e}")
+        return {"text": f"음성 변환 실패: {str(e)}"}

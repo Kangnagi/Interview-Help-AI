@@ -74,11 +74,16 @@ export default function ResumeHistoryPage() {
               <div>
                 <div className="rh-q-label">면접 질문 ({rec.questions.length}개)</div>
                 {rec.questions.slice(0, 3).map((q, i) => (
-                  <div key={i} className="rh-q">Q{i + 1}. {q.question || q}</div>
+                  <div key={i} className="rh-q">Q{i + 1}. {q.question || q.q || q}</div>
                 ))}
                 {rec.questions.length > 3 && (
                   <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 6, textAlign: 'center' }}>외 {rec.questions.length - 3}개</div>
                 )}
+              </div>
+            )}
+            {rec.backendId && (
+              <div style={{ marginTop: 14, textAlign: 'right' }}>
+                <button className="btn btn-primary btn-sm" onClick={() => navigate(`/interview/${rec.backendId}/result`)}>📊 상세 분석 결과 보기</button>
               </div>
             )}
           </div>

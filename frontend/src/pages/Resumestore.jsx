@@ -59,6 +59,7 @@ export const useResumeStore = create((set, get) => ({
                 duration: record.duration || 0,
                 questions: record.questions || [],
                 score: record.score || null,
+                backendId: record.backendId || null,
               },
               ...r.interviewRecords,
             ],

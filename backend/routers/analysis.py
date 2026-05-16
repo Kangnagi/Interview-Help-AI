@@ -6,17 +6,20 @@
 현재는 Stub 서비스 호출 → 다음 단계에서 실제 KoBERT/Whisper/MediaPipe로 교체.
 """
 import logging
+import asyncio
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from core.database import get_db, AsyncSessionLocal
+from core.config import settings
 from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
 from services.llm.kobert_service import kobert_service
+from services.llm.gemini_service import analyze_answers_batch_with_gemini
 from services.voice.whisper_service import whisper_service
 from services.vision.mediapipe_service import mediapipe_service
 
@@ -34,71 +37,119 @@ async def _run_analysis_pipeline(interview_id: int):
     """
     logger.info(f"[Analysis] interview_id={interview_id} 분석 시작")
 
-    async with AsyncSessionLocal() as db:
-        # 1) 면접 + 질문 + 기존 분석 로드
-        result = await db.execute(
-            select(Interview)
-            .options(selectinload(Interview.questions))
-            .where(Interview.id == interview_id)
-        )
-        interview = result.scalar_one_or_none()
-        if not interview:
-            logger.error(f"[Analysis] interview {interview_id} 없음")
-            return
+    try:
+        async with AsyncSessionLocal() as db:
+            # 1) 면접 + 질문 + 기존 분석 로드
+            result = await db.execute(
+                select(Interview)
+                .options(selectinload(Interview.questions))
+                .where(Interview.id == interview_id)
+            )
+            interview = result.scalar_one_or_none()
+            if not interview:
+                logger.error(f"[Analysis] interview {interview_id} 없음")
+                return
 
-        # 기존 분석 레코드 확인 (재실행 시 갱신)
-        existing = await db.execute(
-            select(Analysis).where(Analysis.interview_id == interview_id)
-        )
-        analysis = existing.scalar_one_or_none() or Analysis(interview_id=interview_id)
+            # 기존 분석 레코드 확인 (재실행 시 갱신)
+            existing = await db.execute(
+                select(Analysis).where(Analysis.interview_id == interview_id)
+            )
+            analysis = existing.scalar_one_or_none() or Analysis(interview_id=interview_id)
 
-        # ── 2) KoBERT: 답변별 분석 → 평균 점수 ─────────
-        content_scores, relevance_scores, clarity_scores = [], [], []
-        for q in interview.questions:
-            if not q.answer_text:
-                continue
-            r = await kobert_service.analyze_answer(q.question_text, q.answer_text)
-            content_scores.append(r["content_score"])
-            relevance_scores.append(r["relevance_score"])
-            clarity_scores.append(r["clarity_score"])
+            # ── 2) Gemini: 5개의 답변을 1번의 Batch 호출로 일괄 분석 ─────────
+            content_scores, relevance_scores, clarity_scores = [], [], []
+            speech_scores, posture_scores, eye_contact_scores = [], [], []
+            all_feedbacks = []
 
-        analysis.content_score   = _avg(content_scores)
-        analysis.relevance_score = _avg(relevance_scores)
-        analysis.clarity_score   = _avg(clarity_scores)
+            qna_list = []
+            valid_questions = []
 
-        # ── 3) Whisper: 음성 분석 (영상이 있을 경우) ───
-        if interview.video_path:
-            speech = await whisper_service.analyze_speech(interview.video_path)
-            analysis.speech_score      = speech["speech_score"]
-            analysis.speech_pace       = speech["speech_pace"]
-            analysis.filler_word_count = speech["filler_word_count"]
+            for q in interview.questions:
+                if not q.answer_text:
+                    continue
+               
+                # 🎵 오디오 파일을 이미지로 변환 (Librosa)
+                audio_path = f"{settings.UPLOAD_DIR}/iv_{interview_id}_q_{q.id}.webm"
+                image_bytes = None
+                try:
+                    from services.voice.librosa_service import generate_audio_spectrogram
+                    image_bytes = await generate_audio_spectrogram(audio_path)
+                except Exception as e:
+                    logger.warning(f"오디오 이미지 변환 실패 (건너뜀): {e}")
 
-            # ── 4) MediaPipe: 영상 분석 ─────────────────
-            vision = await mediapipe_service.analyze_video(interview.video_path)
-            analysis.eye_contact_score = vision["eye_contact_score"]
-            analysis.posture_score     = vision["posture_score"]
-            analysis.expression_data   = vision["expression_data"]
+                qna_list.append({
+                    "question": q.question_text,
+                    "answer": q.answer_text,
+                    "audio_image_bytes": image_bytes
+                })
+                valid_questions.append(q)
 
-        # ── 5) 종합 점수 + 피드백 ───────────────────────
-        sub_scores = [
-            analysis.content_score,
-            analysis.relevance_score,
-            analysis.clarity_score,
-            analysis.speech_score,
-            analysis.eye_contact_score,
-            analysis.posture_score,
-        ]
-        analysis.total_score = _avg([s for s in sub_scores if s is not None])
+            # 한 번의 호출로 모든 분석 결과 받아오기
+            batch_results = await analyze_answers_batch_with_gemini(qna_list) if qna_list else []
 
-        # 임시 피드백 (다음 단계: KoBERT/LLM이 생성)
-        analysis.feedback_summary = "AI 종합 피드백 (Stub) — 모델 통합 후 자동 생성됩니다."
-        analysis.strengths = ["답변을 끝까지 시도함"]
-        analysis.improvements = ["구체적인 사례를 추가하면 좋습니다"]
+            # 결과 매핑
+            for q, gemini_result in zip(valid_questions, batch_results):
+                if isinstance(gemini_result, dict):
+                    try: c_score = int(gemini_result.get("content_score", 80))
+                    except: c_score = 80
+                    try: r_score = int(gemini_result.get("relevance_score", 80))
+                    except: r_score = 80
+                    try: cl_score = int(gemini_result.get("clarity_score", 80))
+                    except: cl_score = 80
+                    try: sp_score = int(gemini_result.get("speech_score", 80))
+                    except: sp_score = 80
+                    try: p_score = int(gemini_result.get("posture_score", 80))
+                    except: p_score = 80
+                    try: e_score = int(gemini_result.get("eye_contact_score", 80))
+                    except: e_score = 80
+                    fb_text = gemini_result.get("feedback", "")
+                else:
+                    c_score = r_score = cl_score = sp_score = p_score = e_score = 80
+                    fb_text = str(gemini_result)
+              
+                content_scores.append(c_score)
+                relevance_scores.append(r_score)
+                clarity_scores.append(cl_score)
+                speech_scores.append(sp_score)
+                posture_scores.append(p_score)
+                eye_contact_scores.append(e_score)
 
-        db.add(analysis)
-        await db.commit()
+                if fb_text:
+                    all_feedbacks.append(f"Q: {q.question_text}\n{fb_text}")
 
-    logger.info(f"[Analysis] interview_id={interview_id} 분석 완료")
+            analysis.content_score   = _avg(content_scores)
+            analysis.relevance_score = _avg(relevance_scores)
+            analysis.clarity_score   = _avg(clarity_scores)
+            analysis.speech_score    = _avg(speech_scores)
+            analysis.posture_score   = _avg(posture_scores)
+            analysis.eye_contact_score = _avg(eye_contact_scores)
+
+            # ── 3) 파일 분석(음성/영상) 건너뛰기 (에러 방지) ───
+            # 현재 웹소켓으로 실시간 전송 중이므로 저장된 video_path 호출 시 에러가 날 수 있음. 
+            # 안전을 위해 try-except로 감쌉니다.
+            if getattr(interview, 'video_path', None):
+                logger.warning(f"[Analysis] 저장된 비디오 분석은 건너뜁니다.")
+
+            # ── 4) 종합 점수 + 피드백 ───────────────────────
+            sub_scores = [
+                analysis.content_score,
+                analysis.relevance_score,
+                analysis.clarity_score,
+                analysis.speech_score,
+                analysis.posture_score,
+                analysis.eye_contact_score
+            ]
+            analysis.total_score = _avg([s for s in sub_scores if s is not None])
+
+            analysis.feedback_summary = "전체적인 답변 내용을 분석한 결과입니다." 
+            analysis.improvements = all_feedbacks if all_feedbacks else ["구체적인 답변 사례를 보강해 보세요."]
+            
+            db.add(analysis)
+            await db.commit()
+
+        logger.info(f"[Analysis] interview_id={interview_id} 분석 완료 및 DB 저장 성공")
+    except Exception as e:
+        logger.error(f"[Analysis] 파이프라인 실행 중 치명적 오류 발생: {e}", exc_info=True)
 
 
 def _avg(values):

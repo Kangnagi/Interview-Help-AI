@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import AnyHttpUrl
-from typing import List
+from typing import List, Optional
 import os
 
 
@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     WHISPER_MODEL_SIZE: str = "base"
     WHISPER_LANGUAGE: str = "ko"
     MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5
+
+    GEMINI_API_KEY: Optional[str] = None
 
     class Config:
         env_file = ".env"
