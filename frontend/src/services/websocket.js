@@ -6,6 +6,8 @@
 class InterviewWebSocket {
   constructor() {
     this.ws = null
+    this.audioWs = null
+    this.mediaRecorder = null
     this.interviewId = null
     this.onFrameAnalysis = null   // (result) => void
     this.onStatusChange  = null   // (status) => void
@@ -18,11 +20,17 @@ class InterviewWebSocket {
     const url = `ws://${window.location.hostname}:8000/ws/interview/${interviewId}`
     this.ws = new WebSocket(url)
 
+    //추가: 신규 음성 전용 연결
+    const audioUrl = `ws://${window.location.hostname}:8000/ws/interview_audio/${interviewId}`
+    this.audioWs = new WebSocket(audioUrl)
+
     this.ws.onopen = () => {
       this.isConnected = true
       this.ws.send(JSON.stringify({ type: 'start' }))
       console.log('[WS] 연결됨:', interviewId)
     }
+    // 추가: 오디오 소켓 연결 확인 로그 
+    this.audioWs.onopen = () => console.log('[WS-Audio] 연결됨')
 
     this.ws.onmessage = (event) => {
       try {
@@ -47,6 +55,23 @@ class InterviewWebSocket {
     }
   }
 
+   // 추가: 외부에서 마이크 스트림을 전달받아 오디오 전송 시작
+    startAudioRecording(audioStream) {
+        // 이 함수를 호출하기 전에 브라우저에서 navigator.mediaDevices.getUserMedia({ audio: true }) 로 스트림을 받아와야 합니다.
+        this.mediaRecorder = new MediaRecorder(audioStream);
+        
+        this.mediaRecorder.ondataavailable = async (event) => {
+            if (event.data.size > 0 && this.audioWs && this.audioWs.readyState === WebSocket.OPEN) {
+                const buffer = await event.data.arrayBuffer();
+                this.audioWs.send(buffer);
+            }
+        };
+        
+        // 250ms(0.25초) 간격으로 잘라서 전송
+        this.mediaRecorder.start(250);
+    }
+
+
   /**
    * 캔버스 프레임을 JPEG Blob으로 변환 후 전송
    * @param {HTMLVideoElement} videoEl
@@ -70,6 +95,15 @@ class InterviewWebSocket {
       this.ws.send(JSON.stringify({ type: 'stop' }))
       this.ws.close()
     }
+
+    // 추가: 음성 소켓 및 녹음기 종료 처리 [5]
+        if (this.audioWs) {
+            this.audioWs.close()
+        }
+        if (this.mediaRecorder) {
+            this.mediaRecorder.stop()
+        }
+
     this.isConnected = false
   }
 }
