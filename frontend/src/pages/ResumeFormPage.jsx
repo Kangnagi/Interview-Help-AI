@@ -33,7 +33,7 @@ export default function ResumeFormPage() {
     if (!form.title.trim()) e.title = '제목을 입력해주세요'
     if (!form.companyName.trim()) e.companyName = '기업명을 입력해주세요'
     if (!form.jobTitle.trim()) e.jobTitle = '지원 업무명을 입력해주세요'
-    if (!form.jobDescription.trim()) e.jobDescription = '직무 수행 업무를 입력해주세요'
+    if (!form.jobDescription.trim()) e.jobDescription = '기업에서 제시한 직무 수행업무를 입력해주세요'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -98,9 +98,9 @@ export default function ResumeFormPage() {
           </div>
         </div>
 
-        {/* 직무 수행 업무 */}
+        {/* 기업에서 제시한 직무 수행 업무 */}
         <div className="rf-group">
-          <div className="rf-label">직무 수행 업무 <span className="rf-label-req">*</span></div>
+          <div className="rf-label">기업에서 제시한 직무 수행 업무 <span className="rf-label-req">*</span></div>
           <textarea
             className={`rf-input rf-textarea${errors.jobDescription ? ' err' : ''}`}
             placeholder="담당하게 될 주요 업무나, 지금까지 수행한 직무 경험을 상세히 작성해 주세요."

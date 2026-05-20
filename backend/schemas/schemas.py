@@ -53,12 +53,18 @@ class InterviewCreate(BaseModel):
     title: str
     # 카테고리를 지정하지 않으면 일반 면접(GENERAL)으로 생성
     category: InterviewCategory = InterviewCategory.GENERAL
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 
 =======
     interview_type: str = "practice"
     resume_ref_id: Optional[str] = None
 >>>>>>> Stashed changes
+=======
+    # [추가] 자기소개서 텍스트 필드
+    # Optional로 설정하여 자소서 없이 일반 면접을 볼 때의 유연함도 확보했습니다.
+    resume_text: Optional[str] = None
+>>>>>>> 4e522951 (feat: AI 인터뷰 분석 로직, WebSocket 및 음성/Gemini 서비스 구현)
 
 class InterviewResponse(BaseModel):
     """면접 단건 조회·목록 응답"""

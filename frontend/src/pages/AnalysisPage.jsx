@@ -9,6 +9,7 @@ const POLL_INTERVAL = 3000
 export default function AnalysisPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+<<<<<<< HEAD
   const { fetchAnalysis, analysis, loading, resetAnalysis } = useInterviewStore()
 
   const [polling, setPolling]   = useState(true)
@@ -29,6 +30,30 @@ export default function AnalysisPage() {
       const data = await fetchAnalysis(id)
       count++
       setElapsed(count * POLL_INTERVAL / 1000)
+=======
+  const { fetchAnalysis, analysis, loading, reset } = useInterviewStore()
+  const [polling, setPolling] = useState(true)
+
+  useEffect(() => {
+    reset() // 이전 면접 결과 완벽 초기화
+    setPolling(true)
+    
+    let count = 0
+    let timer
+    
+    const poll = async () => {
+      const data = await fetchAnalysis(id)
+      if (data || count > 60) {
+        clearInterval(timer)
+        setPolling(false)
+      }
+      count++
+    }
+    poll() // 2초 기다리지 않고 즉시 1회 호출
+    timer = setInterval(poll, 2000)
+    return () => clearInterval(timer)
+  }, [id])
+>>>>>>> 4e522951 (feat: AI 인터뷰 분석 로직, WebSocket 및 음성/Gemini 서비스 구현)
 
       if (cancelRef.current) return
 
@@ -183,6 +208,7 @@ export default function AnalysisPage() {
         </div>
       </div>
 
+<<<<<<< HEAD
       {/* 강점 / 개선점 */}
       <div className="grid-2" style={{ marginBottom: 20 }}>
         <div className="card" style={{ border: '1px solid #D1FAE5', background: '#F0FDF4' }}>
@@ -202,6 +228,37 @@ export default function AnalysisPage() {
             ))
             : <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 데이터가 없습니다</p>
           }
+=======
+      {/* AI 상세 피드백 */}
+      <div style={{ marginBottom: 20 }}>
+        <div className="card" style={{ border: '1px solid #C7D3FC', background: '#F5F7FF' }}>
+          <h3 style={{ fontWeight: 600, fontSize: 15, color: '#3A57E8', marginBottom: 16 }}>💡 AI 상세 피드백</h3>
+          {(analysis.improvements || []).map((feedback, i) => (
+            <div key={i} style={{ marginBottom: 20, paddingBottom: 20, borderBottom: i !== (analysis.improvements?.length - 1) ? '1px dashed #C7D3FC' : 'none' }}>
+              <div style={{ display: 'inline-block', background: '#E0E7FF', color: '#3A57E8', padding: '4px 10px', borderRadius: 6, fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
+                질문 {i + 1} 답변 분석
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {feedback.split('\n').filter(line => line.trim() !== '').map((line, idx) => {
+                  if (line.startsWith('Q:')) {
+                    return <div key={idx} style={{ fontWeight: 700, fontSize: 15, color: '#111827', marginBottom: 8 }}>{line}</div>;
+                  }
+                  if (line.includes('잘한 점')) {
+                    return <div key={idx} style={{ fontWeight: 700, color: '#059669', marginTop: 12 }}>🌟 {line}</div>;
+                  }
+                  if (line.includes('아쉬운 점') || line.includes('개선 방향')) {
+                    return <div key={idx} style={{ fontWeight: 700, color: '#E11D48', marginTop: 12 }}>⚠️ {line}</div>;
+                  }
+                  if (line.includes('모범 답변') || line.includes('방향성 제안')) {
+                    return <div key={idx} style={{ fontWeight: 700, color: '#2563EB', marginTop: 12 }}>💡 {line}</div>;
+                  }
+                  return <div key={idx} style={{ color: '#4B5563', fontSize: 14, lineHeight: 1.7, paddingLeft: 22 }}>{line}</div>;
+                })}
+              </div>
+            </div>
+          ))}
+          {!analysis.improvements?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 중...</p>}
+>>>>>>> 4e522951 (feat: AI 인터뷰 분석 로직, WebSocket 및 음성/Gemini 서비스 구현)
         </div>
       </div>
 

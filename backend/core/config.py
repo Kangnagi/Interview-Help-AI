@@ -1,7 +1,14 @@
+<<<<<<< HEAD
 from pydantic_settings import BaseSettings   # .env 파일을 자동으로 읽어주는 설정 베이스 클래스
 from pydantic import AnyHttpUrl              # HTTP URL 유효성 검사 타입
 from typing import List                      # 리스트 타입 힌트
 import os                                    # 디렉토리 생성 등 OS 작업
+=======
+from pydantic_settings import BaseSettings
+from pydantic import AnyHttpUrl
+from typing import List, Optional
+import os
+>>>>>>> 4e522951 (feat: AI 인터뷰 분석 로직, WebSocket 및 음성/Gemini 서비스 구현)
 
 
 class Settings(BaseSettings):
@@ -38,9 +45,13 @@ class Settings(BaseSettings):
     WHISPER_LANGUAGE: str = "ko"
     MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5
 
+<<<<<<< HEAD
     # ── Gemini ──────────────────────────────────────────────
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-1.5-flash"
+=======
+    GEMINI_API_KEY: Optional[str] = None
+>>>>>>> 4e522951 (feat: AI 인터뷰 분석 로직, WebSocket 및 음성/Gemini 서비스 구현)
 
     class Config:
         env_file = ".env"          # 프로젝트 루트의 .env 파일에서 환경 변수 로드
