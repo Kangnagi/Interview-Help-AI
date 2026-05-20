@@ -12,6 +12,7 @@ import ResumeFormPage from '@/pages/ResumeFormPage'                   // 자기�
 import ResumeHistoryPage from '@/pages/ResumeHistoryPage'             // 자기소개서별 면접 기록 페이지
 import PracticeInterviewPage from '@/pages/PracticeInterviewPage'     // 연습 면접 풀스크린 페이지
 import RealInterviewPage from '@/pages/RealInterviewPage'             // 실전 면접 풀스크린 페이지 (타이머·제한시간)
+import InterviewResultPage from '@/pages/InterviewResultPage'         // 면접 상세 분석 리포트 페이지
 
 // 보호된 라우트 — 로그인한 사용자만 접근 가능 (토큰 확인)
 function PrivateRoute({ children }) {
@@ -38,8 +39,10 @@ export default function App() {
         <Route path="resume/new"           element={<ResumeFormPage />} />                            {/* 자기소개서 작성 */}
         <Route path="resume/:id/edit"      element={<ResumeFormPage />} />                            {/* 자기소개서 수정 */}
         <Route path="resume/:id/history"   element={<ResumeHistoryPage />} />                         {/* 자기소개서별 면접 이력 */}
-        <Route path="interview/:id"        element={<InterviewPage />} />                             {/* 면접 상세 (미사용?) */}
-        <Route path="interview/:id/result" element={<AnalysisPage />} />                              {/* 면접 분석 결과 */}
+        <Route path="interview/:id"        element={<InterviewPage />} />
+        <Route path="interview/:id/result" element={<AnalysisPage />} />
+        <Route path="analysis/:id"         element={<AnalysisPage />} />                              {/* 실전 면접 후 AI 분석 결과 */}
+        <Route path="interview/:id/report" element={<InterviewResultPage />} />                       {/* 세부 분석 리포트 (4e522951) */}
         <Route path="history"              element={<HistoryPage />} />                               {/* 전체 면접 이력 (미사용?) */}
       </Route>
 
