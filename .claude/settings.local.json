@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); import main\")",
+      "Bash(dir C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\\\\backend\\\\services *)",
+      "Bash(.venv/Scripts/pip list *)",
+      "Bash(timeout 15 .venv/Scripts/uvicorn main:app --host 0.0.0.0 --port 8000)",
+      "Bash(.venv/Scripts/pip show *)",
+      "Bash(.venv/Scripts/pip install *)",
+      "Bash(start \"\" /B .venv/Scripts/uvicorn main:app --host 0.0.0.0 --port 8000 --reload)",
+      "Bash(.venv/Scripts/uvicorn main:app --host 0.0.0.0 --port 8000)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0,'.'\\); from services.llm.gemini_service import gemini_service, analyze_answers_batch_with_gemini; print\\('OK - model:', gemini_service.model\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0,'.'\\); import main; print\\('main.py import OK'\\)\")",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":8000\")",
+      "Bash(taskkill *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(netstat *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "mcp__ide__getDiagnostics",
+      "Bash(c:\\\\Users\\\\kch36\\\\anaconda3\\\\Scripts\\\\activate)",
+      "Bash(conda activate *)",
+      "PowerShell(conda activate *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" -Recurse -Depth 3)",
+      "Bash(Select-Object FullName)",
+      "Bash(Format-Table -AutoSize)"
+    ]
+  }
+}
