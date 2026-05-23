@@ -51,8 +51,10 @@ class TokenResponse(BaseModel):
 class InterviewCreate(BaseModel):
     """POST /interviews 요청 바디 — 면접 생성 입력값"""
     title: str
-    # 카테고리를 지정하지 않으면 일반 면접(GENERAL)으로 생성
     category: InterviewCategory = InterviewCategory.GENERAL
+    interview_type: str = "practice"          # 'practice' | 'real'
+    resume_ref_id: Optional[str] = None       # 프론트 localStorage 자기소개서 ID
+    resume_text: Optional[str] = None         # Gemini 질문 생성용 자기소개서 원문
 
 
 class InterviewResponse(BaseModel):
@@ -62,7 +64,9 @@ class InterviewResponse(BaseModel):
     category: InterviewCategory   # general / technical / behavioral / self_intro
     status: InterviewStatus       # pending / in_progress / completed / cancelled
     total_questions: int
-    duration_seconds: Optional[int]   # 면접 총 소요 시간 (종료 후 산출)
+    duration_seconds: Optional[int]
+    interview_type: Optional[str] = None
+    resume_ref_id: Optional[str] = None
     created_at: datetime
     ended_at: Optional[datetime]      # 면접 종료 시각 (진행 중이면 None)
 
@@ -77,6 +81,8 @@ class QuestionResponse(BaseModel):
     question_text: str
     answer_text: Optional[str]        # 아직 답변 안 했으면 None
     duration_seconds: Optional[int]   # 해당 질문 답변 소요 시간
+    ai_score: Optional[float] = None  # 분석 후 채워지는 AI 점수
+    ai_feedback: Optional[str] = None # 분석 후 채워지는 AI 피드백
 
     class Config:
         from_attributes = True
@@ -85,6 +91,26 @@ class QuestionResponse(BaseModel):
 class AnswerSubmit(BaseModel):
     """POST /interviews/{id}/questions/{qid}/answer 요청 바디 — 답변 저장"""
     answer_text: str   # Whisper STT 변환 텍스트 또는 프론트에서 직접 입력한 텍스트
+
+
+class QuestionFeedbackResponse(BaseModel):
+    """POST /interviews/{id}/questions/{qid}/feedback 응답 — 즉시 AI 피드백"""
+    score: int
+    feedback: str
+    tip: str
+
+
+class QuestionWithFeedback(BaseModel):
+    """분석 결과 내 질문별 상세 피드백"""
+    id: int
+    order: int
+    question_text: str
+    answer_text: Optional[str] = None
+    ai_score: Optional[float] = None
+    ai_feedback: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ─── Analysis (분석 결과) ─────────────────────────────────────────────────────
@@ -113,6 +139,9 @@ class AnalysisResponse(BaseModel):
     feedback_summary: Optional[str]        # AI 종합 피드백 요약
     strengths: Optional[List[str]]         # 잘한 점 목록
     improvements: Optional[List[str]]      # 개선할 점 목록
+
+    # 질문별 상세 피드백 (분석 파이프라인 완료 후 채워짐)
+    question_feedbacks: Optional[List[QuestionWithFeedback]] = None
 
     created_at: datetime
 

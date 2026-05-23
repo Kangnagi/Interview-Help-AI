@@ -46,11 +46,14 @@ class WhisperService:
         # return {"text": result["text"], "segments": result["segments"]}
 
         logger.info(f"Whisper STT (Stub): {audio_path}")
-        return {
-            "text": "(음성 인식 결과가 여기에 표시됩니다)",
-            "language": "ko",
-            "segments": [],
-        }
+        return {"text": "(음성 인식 결과가 여기에 표시됩니다)", "language": "ko", "segments": []}
+
+    async def transcribe_bytes(self, audio_bytes: bytes) -> dict:
+        """오디오 바이트를 받아 STT 결과를 반환. 실제 Whisper 연동 전 stub."""
+        if not audio_bytes:
+            return {"text": "", "error": "빈 오디오 데이터"}
+        logger.info(f"Whisper STT bytes (Stub): {len(audio_bytes)} bytes")
+        return {"text": "(음성 인식 결과가 여기에 표시됩니다)", "language": "ko", "segments": []}
 
     async def analyze_speech(self, audio_path: str) -> dict:
         """

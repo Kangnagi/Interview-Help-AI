@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import axios from 'axios';
+import { analysisAPI } from '@/services/api';
 
 export default function InterviewResultPage() {
-  const { id } = useParams(); // URL에서 interview_id 추출
+  const { id } = useParams();
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -12,11 +12,8 @@ export default function InterviewResultPage() {
     let mounted = true;
     const fetchAnalysis = async () => {
       try {
-        // 백엔드 분석 API 호출
-        const response = await axios.get(`/api/v1/analysis/${id}`);
-        if (mounted) {
-          setResult(response.data);
-        }
+        const { data } = await analysisAPI.get(id);
+        if (mounted) setResult(data);
       } catch (err) {
         if (mounted) {
           setError(err.response?.data?.detail || '분석 결과를 불러오지 못했습니다. 분석이 완료되었는지 확인해주세요.');

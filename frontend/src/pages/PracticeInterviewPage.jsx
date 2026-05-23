@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
+import { interviewAPI, analysisAPI } from '@/services/api'
 
 const PHASE = {
   SETUP: 'setup',
@@ -13,19 +14,12 @@ const PHASE = {
   DONE: 'done',
 }
 
-const SAMPLE_QUESTIONS = [
+const FALLBACK_QUESTIONS = [
   '자기소개를 간략하게 해주세요.',
   '해당 직무에 지원하게 된 이유가 무엇인가요?',
   '본인의 가장 큰 강점과 약점은 무엇인가요?',
   '이전 프로젝트에서 가장 힘들었던 상황과 어떻게 극복했는지 말씀해 주세요.',
   '5년 후 본인의 모습을 어떻게 생각하시나요?',
-]
-
-const SAMPLE_FEEDBACK = [
-  '답변이 구체적이고 명확했습니다. STAR 기법을 잘 활용하셨어요.',
-  '핵심을 잘 짚었지만, 구체적인 수치나 사례를 더 추가하면 좋겠습니다.',
-  '자신감 있게 답변하셨습니다. 조금 더 간결하게 정리하면 더욱 좋을 것 같습니다.',
-  '경험을 바탕으로 한 답변이 인상적입니다. 마무리 멘트를 더 강하게 하면 좋겠습니다.',
 ]
 
 export default function PracticeInterviewPage() {
@@ -46,7 +40,10 @@ export default function PracticeInterviewPage() {
   const [exitConfirm, setExitConfirm] = useState(false)
   const [faceStatus, setFaceStatus] = useState('waiting')
   const [feedback, setFeedback] = useState('')
-  const [deviceError, setDeviceError] = useState(null) // null | 'camera' | 'mic' | 'both'
+  const [deviceError, setDeviceError] = useState(null)
+  const [backendInterviewId, setBackendInterviewId] = useState(null)
+  const [backendQuestions, setBackendQuestions] = useState([])
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -54,25 +51,40 @@ export default function PracticeInterviewPage() {
   const answerTimer = useRef(null)
   const detectionRef = useRef(null)
 
-  const questions = SAMPLE_QUESTIONS.slice(0, 5)
-  const currentQ = questions[qIndex]
+  const currentQuestion = backendQuestions[qIndex]
+  const currentQ = currentQuestion?.question_text || ''
 
   const { listening, interim, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
     useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
 
-  // Stop STT when leaving ANSWERING
   useEffect(() => {
     if (phase !== PHASE.ANSWERING) stopSTT()
   }, [phase, stopSTT])
 
-  // Setup complete → start session
-  const handleSetupReady = useCallback(({ cameraId, micId }) => {
+  const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
     setDeviceIds({ cameraId, micId })
-    setPhase(PHASE.WAITING)
     setSessionStarted(true)
-  }, [])
 
-  // Init camera + face detection after setup
+    try {
+      const { data: interview } = await interviewAPI.create({
+        title: `${resume?.title || '연습'} 연습면접`,
+        category: 'general',
+        interview_type: 'practice',
+        resume_ref_id: resumeId,
+      })
+      setBackendInterviewId(interview.id)
+      const { data: questions } = await interviewAPI.getQuestions(interview.id)
+      setBackendQuestions(questions)
+    } catch (err) {
+      console.error('면접 세션 생성 실패:', err)
+      setBackendQuestions(
+        FALLBACK_QUESTIONS.map((q, i) => ({ id: null, order: i + 1, question_text: q }))
+      )
+    }
+
+    setPhase(PHASE.WAITING)
+  }, [resume, resumeId])
+
   useEffect(() => {
     if (!sessionStarted) return
     setFaceStatus('detecting')
@@ -118,14 +130,12 @@ export default function PracticeInterviewPage() {
     }
   }, [sessionStarted]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Total timer
   useEffect(() => {
     if ([PHASE.WAITING, PHASE.DONE, PHASE.SETUP].includes(phase)) return
     totalTimer.current = setInterval(() => setTotalSec((p) => p + 1), 1000)
     return () => clearInterval(totalTimer.current)
   }, [phase])
 
-  // Answer timer
   useEffect(() => {
     clearInterval(answerTimer.current)
     if (phase === PHASE.ANSWERING) {
@@ -137,18 +147,52 @@ export default function PracticeInterviewPage() {
 
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
-  const submitAnswer = () => {
+  const submitAnswer = async () => {
     stopSTT()
     clearInterval(answerTimer.current)
-    const fb = SAMPLE_FEEDBACK[Math.floor(Math.random() * SAMPLE_FEEDBACK.length)]
-    setFeedback(fb)
+    setFeedbackLoading(true)
     setPhase(PHASE.FEEDBACK)
+
+    let fb = '답변이 저장되었습니다.'
+    try {
+      if (backendInterviewId && currentQuestion?.id) {
+        await interviewAPI.submitAnswer(backendInterviewId, currentQuestion.id, { answer_text: answer })
+      }
+      const { data } = await analysisAPI.getFeedback({
+        question: currentQ,
+        answer: answer || '(답변 없음)',
+        company: resume?.companyName || '',
+        job: resume?.jobTitle || '',
+      })
+      fb = data.feedback
+    } catch (err) {
+      console.error('피드백 생성 실패:', err)
+      fb = answer.trim()
+        ? '답변 내용을 잘 전달하셨습니다. 더 구체적인 사례를 추가하면 더욱 좋겠습니다.'
+        : '답변이 저장되었습니다.'
+    }
+
+    setFeedback(fb)
+    setFeedbackLoading(false)
   }
 
-  const nextQuestion = () => {
+  const nextQuestion = async () => {
     setLog((prev) => [...prev, { q: currentQ, a: answer, feedback }])
-    if (qIndex + 1 >= questions.length) {
-      addInterviewRecord(resumeId, { type: 'practice', duration: totalSec, questions: questions.map((q) => ({ question: q })) })
+    if (qIndex + 1 >= backendQuestions.length) {
+      if (backendInterviewId) {
+        try {
+          await interviewAPI.finish(backendInterviewId)
+          await analysisAPI.start(backendInterviewId)
+        } catch (err) {
+          console.error('면접 종료/분석 시작 실패:', err)
+        }
+      }
+      addInterviewRecord(resumeId, {
+        type: 'practice',
+        duration: totalSec,
+        interviewId: backendInterviewId,
+        questions: backendQuestions.map((q) => ({ question: q.question_text })),
+      })
       setPhase(PHASE.DONE)
     } else {
       setQIndex((p) => p + 1)
@@ -195,9 +239,10 @@ export default function PracticeInterviewPage() {
         .fade-up { animation:fadeUp .35s ease; }
         @keyframes stt-pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
         .stt-active { animation:stt-pulse 1s infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .fb-spinner { width:18px; height:18px; border:2px solid rgba(255,255,255,.2); border-top-color:#22c55e; border-radius:50%; animation:spin .7s linear infinite; display:inline-block; }
       `}</style>
 
-      {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
         {/* Top bar */}
@@ -208,7 +253,7 @@ export default function PracticeInterviewPage() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {phase !== PHASE.WAITING && phase !== PHASE.DONE && (
-              <span style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>Q {qIndex + 1} / {questions.length}</span>
+              <span style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>Q {qIndex + 1} / {backendQuestions.length}</span>
             )}
             <button onClick={() => setLogOpen((p) => !p)} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, padding: '6px 14px', color: 'rgba(255,255,255,.6)', fontSize: 12, cursor: 'pointer' }}>
               📋 로그 {log.length > 0 ? `(${log.length})` : ''}
@@ -232,7 +277,7 @@ export default function PracticeInterviewPage() {
 
         {/* Progress bar */}
         <div style={{ height: 3, background: '#1a1d2e', flexShrink: 0 }}>
-          <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / questions.length) * 100}%`, transition: 'width .4s' }} />
+          <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${backendQuestions.length ? (qIndex / backendQuestions.length) * 100 : 0}%`, transition: 'width .4s' }} />
         </div>
 
         {/* Stage */}
@@ -269,7 +314,7 @@ export default function PracticeInterviewPage() {
             </div>
           </div>
 
-          {/* Camera (bottom right) */}
+          {/* Camera */}
           <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
             <div style={{ width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative', border: '2px solid rgba(255,255,255,.1)', boxShadow: '0 4px 20px rgba(0,0,0,.5)', background: '#111827' }}>
               <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
@@ -285,10 +330,16 @@ export default function PracticeInterviewPage() {
 
             {phase === PHASE.WAITING && (
               <div className="fade-up" style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 15, color: 'rgba(255,255,255,.5)', marginBottom: 16 }}>총 {questions.length}개 질문이 준비되었습니다</div>
-                <button onClick={() => setPhase(PHASE.QUESTION)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 40px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
-                  면접 시작 →
-                </button>
+                {backendQuestions.length === 0 ? (
+                  <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)' }}>AI 면접 준비 중...</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 15, color: 'rgba(255,255,255,.5)', marginBottom: 16 }}>총 {backendQuestions.length}개 질문이 준비되었습니다</div>
+                    <button onClick={() => setPhase(PHASE.QUESTION)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 40px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
+                      면접 시작 →
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
@@ -302,31 +353,20 @@ export default function PracticeInterviewPage() {
 
             {phase === PHASE.ANSWERING && (
               <div className="fade-up">
-                {/* STT toggle */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                   {sttSupported ? (
                     <button
                       onClick={toggleSTT}
                       className={listening ? 'stt-active' : ''}
-                      style={{
-                        background: listening ? 'rgba(239,68,68,.15)' : 'rgba(79,110,247,.12)',
-                        border: `1.5px solid ${listening ? '#ef4444' : 'rgba(79,110,247,.5)'}`,
-                        borderRadius: 8, padding: '7px 16px',
-                        color: listening ? '#ef4444' : '#6d85f8',
-                        fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', gap: 6,
-                      }}
+                      style={{ background: listening ? 'rgba(239,68,68,.15)' : 'rgba(79,110,247,.12)', border: `1.5px solid ${listening ? '#ef4444' : 'rgba(79,110,247,.5)'}`, borderRadius: 8, padding: '7px 16px', color: listening ? '#ef4444' : '#6d85f8', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
                     >
                       {listening ? '🔴 인식 중지' : '🎤 음성 입력'}
                     </button>
                   ) : (
                     <span style={{ fontSize: 12, color: 'rgba(255,255,255,.25)' }}>이 브라우저는 음성 인식을 지원하지 않습니다</span>
                   )}
-                  {listening && (
-                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>
-                  )}
+                  {listening && <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>}
                 </div>
-
                 <textarea
                   value={answer}
                   onChange={(e) => setAnswer(e.target.value)}
@@ -334,14 +374,9 @@ export default function PracticeInterviewPage() {
                   autoFocus
                   style={{ width: '100%', background: 'rgba(17,20,34,.9)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 12, padding: '14px 16px', color: '#fff', fontSize: 14, resize: 'none', minHeight: 90, fontFamily: 'inherit', backdropFilter: 'blur(8px)', boxSizing: 'border-box' }}
                 />
-
-                {/* Interim transcript */}
                 {interim && (
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', fontStyle: 'italic', marginTop: 5, padding: '0 4px' }}>
-                    💬 {interim}
-                  </div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', fontStyle: 'italic', marginTop: 5, padding: '0 4px' }}>💬 {interim}</div>
                 )}
-
                 <div style={{ display: 'flex', gap: 10, marginTop: 10, justifyContent: 'center' }}>
                   <button onClick={() => { stopSTT(); setPhase(PHASE.QUESTION); setAnswer('') }} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>재시작</button>
                   <button onClick={submitAnswer} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✅ 답변 완료</button>
@@ -352,14 +387,23 @@ export default function PracticeInterviewPage() {
             {phase === PHASE.FEEDBACK && (
               <div className="fade-up">
                 <div style={{ background: 'rgba(16,185,129,.12)', border: '1.5px solid rgba(34,197,94,.4)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', marginBottom: 6 }}>💡 AI 피드백</div>
-                  <div style={{ fontSize: 14, color: 'rgba(255,255,255,.85)', lineHeight: 1.6 }}>{feedback}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    💡 AI 피드백
+                    {feedbackLoading && <span className="fb-spinner" />}
+                  </div>
+                  {feedbackLoading ? (
+                    <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>AI가 답변을 분석하고 있습니다...</div>
+                  ) : (
+                    <div style={{ fontSize: 14, color: 'rgba(255,255,255,.85)', lineHeight: 1.6 }}>{feedback}</div>
+                  )}
                 </div>
-                <div style={{ textAlign: 'center' }}>
-                  <button onClick={nextQuestion} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
-                    {qIndex + 1 >= questions.length ? '🎉 면접 종료' : '다음 질문 →'}
-                  </button>
-                </div>
+                {!feedbackLoading && (
+                  <div style={{ textAlign: 'center' }}>
+                    <button onClick={nextQuestion} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                      {qIndex + 1 >= backendQuestions.length ? '🎉 면접 종료' : '다음 질문 →'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -367,9 +411,12 @@ export default function PracticeInterviewPage() {
               <div className="fade-up" style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 42, marginBottom: 10 }}>🎉</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', marginBottom: 6 }}>면접 완료!</div>
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)', marginBottom: 20 }}>{questions.length}개 질문 · {fmt(totalSec)} 소요</div>
+                <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)', marginBottom: 20 }}>{backendQuestions.length}개 질문 · {fmt(totalSec)} 소요</div>
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
                   <button onClick={handleExit} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>목록으로</button>
+                  {backendInterviewId && (
+                    <button onClick={() => navigate(`/interview/${backendInterviewId}/result`)} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>📊 AI 분석 보기</button>
+                  )}
                   <button onClick={() => { setPhase(PHASE.WAITING); setQIndex(0); setLog([]); setTotalSec(0) }} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>다시 시작</button>
                 </div>
               </div>

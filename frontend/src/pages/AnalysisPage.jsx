@@ -6,27 +6,33 @@ import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tool
 export default function AnalysisPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { fetchAnalysis, analysis, loading } = useInterviewStore()
+  const { fetchAnalysis, analysis, loading, resetAnalysis } = useInterviewStore()
   const [polling, setPolling] = useState(true)
+
+  // Clear stale analysis from a previous interview on mount
+  useEffect(() => {
+    resetAnalysis()
+  }, [id])
 
   useEffect(() => {
     let count = 0
     const timer = setInterval(async () => {
       const data = await fetchAnalysis(id)
       count++
-      if (data || count > 10) {
+      if (data || count > 20) {
         clearInterval(timer)
         setPolling(false)
       }
-    }, 2000)
+    }, 3000)
     return () => clearInterval(timer)
   }, [id])
 
-  if (loading || polling && !analysis) {
+  if (loading || (polling && !analysis)) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <div className="spinner" style={{ margin: '0 auto 16px' }} />
         <p style={{ color: 'var(--text-secondary)' }}>AI가 면접을 분석하고 있습니다...</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>최대 60초 소요될 수 있습니다</p>
       </div>
     )
   }
@@ -35,9 +41,10 @@ export default function AnalysisPage() {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <p>분석 결과를 불러올 수 없습니다</p>
-        <button className="btn btn-outline btn-sm" style={{ marginTop: 12 }} onClick={() => navigate('/dashboard')}>
-          대시보드로
-        </button>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 12 }}>
+          <button className="btn btn-outline btn-sm" onClick={() => window.location.reload()}>다시 시도</button>
+          <button className="btn btn-outline btn-sm" onClick={() => navigate('/dashboard')}>대시보드로</button>
+        </div>
       </div>
     )
   }
@@ -52,6 +59,7 @@ export default function AnalysisPage() {
   ]
 
   const totalColor = analysis.total_score >= 80 ? 'var(--secondary)' : analysis.total_score >= 60 ? 'var(--warning)' : 'var(--danger)'
+  const answeredQuestions = (analysis.question_feedbacks || []).filter((q) => q.answer_text)
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto' }}>
@@ -126,7 +134,61 @@ export default function AnalysisPage() {
         </div>
       </div>
 
-      <button className="btn btn-primary w-full btn-lg" onClick={() => navigate('/interview/setup')}>
+      {/* 질문별 상세 분석 */}
+      {answeredQuestions.length > 0 && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h3 style={{ fontWeight: 600, fontSize: 14, marginBottom: 20 }}>📝 질문별 상세 분석</h3>
+          {answeredQuestions.map((q, i) => {
+            const scoreColor = q.ai_score >= 80 ? 'var(--secondary)' : q.ai_score >= 60 ? 'var(--warning)' : 'var(--danger)'
+            const isLast = i === answeredQuestions.length - 1
+            return (
+              <div
+                key={q.id}
+                style={{
+                  marginBottom: isLast ? 0 : 24,
+                  paddingBottom: isLast ? 0 : 24,
+                  borderBottom: isLast ? 'none' : '1px solid var(--border)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10, gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--primary)', marginRight: 8 }}>Q{q.order}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{q.question_text}</span>
+                  </div>
+                  {q.ai_score != null && (
+                    <span style={{ fontSize: 17, fontWeight: 800, color: scoreColor, flexShrink: 0 }}>
+                      {Math.round(q.ai_score)}점
+                    </span>
+                  )}
+                </div>
+
+                {q.answer_text && (
+                  <div style={{ background: 'var(--bg-secondary, rgba(0,0,0,.04))', borderRadius: 8, padding: '10px 14px', marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5 }}>내 답변</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.65 }}>{q.answer_text}</div>
+                  </div>
+                )}
+
+                {q.ai_feedback ? (
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, paddingLeft: 2 }}>
+                    💬 {q.ai_feedback}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>피드백 없음</div>
+                )}
+
+                {q.ai_score != null && (
+                  <div style={{ marginTop: 10, height: 5, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div style={{ width: `${q.ai_score}%`, height: '100%', background: scoreColor, borderRadius: 99, transition: 'width 1.2s' }} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <button className="btn btn-primary w-full btn-lg" onClick={() => navigate('/resume')}>
         🎤 다시 면접하기
       </button>
     </div>

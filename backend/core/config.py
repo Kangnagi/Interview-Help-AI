@@ -1,7 +1,7 @@
-from pydantic_settings import BaseSettings   # .env 파일을 자동으로 읽어주는 설정 베이스 클래스
-from pydantic import AnyHttpUrl              # HTTP URL 유효성 검사 타입
-from typing import List                      # 리스트 타입 힌트
-import os                                    # 디렉토리 생성 등 OS 작업
+from pydantic_settings import BaseSettings
+from pydantic import AnyHttpUrl
+from typing import List, Optional
+import os
 
 
 class Settings(BaseSettings):

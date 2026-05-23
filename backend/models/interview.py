@@ -8,7 +8,7 @@ cascade="all, delete-orphan":
   부모(Interview) 삭제 시 자식(InterviewQuestion)도 자동 삭제됨.
   DB 레벨 ON DELETE CASCADE 없이도 ORM이 처리함.
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Text, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -42,16 +42,18 @@ class Interview(Base):
     """
     __tablename__ = "interviews"
 
-    id              = Column(Integer, primary_key=True, index=True)
-    user_id         = Column(Integer, ForeignKey("users.id"), nullable=False)  # 소유자 (외래키)
-    title           = Column(String, nullable=False)                           # 면접 제목 (예: "카카오 백엔드 모의면접")
-    category        = Column(Enum(InterviewCategory), default=InterviewCategory.GENERAL)
-    status          = Column(Enum(InterviewStatus), default=InterviewStatus.PENDING)
-    total_questions = Column(Integer, default=0)          # 질문 총 개수 (생성 시 자동 설정)
-    duration_seconds = Column(Integer, nullable=True)     # 면접 총 소요 시간 (종료 후 계산)
-    video_path      = Column(String, nullable=True)       # 녹화 파일 경로 (없으면 음성만 분석)
-    created_at      = Column(DateTime, default=datetime.utcnow)
-    ended_at        = Column(DateTime, nullable=True)     # PATCH /finish 호출 시 기록
+    id               = Column(Integer, primary_key=True, index=True)
+    user_id          = Column(Integer, ForeignKey("users.id"), nullable=False)  # 소유자 (외래키)
+    title            = Column(String, nullable=False)                           # 면접 제목 (예: "카카오 백엔드 모의면접")
+    category         = Column(Enum(InterviewCategory), default=InterviewCategory.GENERAL)
+    status           = Column(Enum(InterviewStatus), default=InterviewStatus.PENDING)
+    total_questions  = Column(Integer, default=0)          # 질문 총 개수 (생성 시 자동 설정)
+    duration_seconds = Column(Integer, nullable=True)      # 면접 총 소요 시간 (종료 후 계산)
+    video_path       = Column(String, nullable=True)       # 녹화 파일 경로 (없으면 음성만 분석)
+    interview_type   = Column(String, default="practice", nullable=True)  # 'practice' | 'real'
+    resume_ref_id    = Column(String, nullable=True)       # 프론트 localStorage 자기소개서 ID
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    ended_at         = Column(DateTime, nullable=True)     # PATCH /finish 호출 시 기록
 
     # ORM 관계 — 직접 쿼리 없이 interview.user, interview.questions 접근 가능
     user      = relationship("User", back_populates="interviews")
@@ -77,13 +79,15 @@ class InterviewQuestion(Base):
     """
     __tablename__ = "interview_questions"
 
-    id           = Column(Integer, primary_key=True, index=True)
-    interview_id = Column(Integer, ForeignKey("interviews.id"), nullable=False)
-    order        = Column(Integer, nullable=False)          # 질문 순서 (1-based)
-    question_text = Column(Text, nullable=False)
-    answer_text   = Column(Text, nullable=True)             # 답변 저장 전까지 None
-    audio_path    = Column(String, nullable=True)           # 답변 오디오 파일 (Whisper 변환용)
-    duration_seconds = Column(Integer, nullable=True)       # 해당 질문 답변에 걸린 시간
-    created_at    = Column(DateTime, default=datetime.utcnow)
+    id               = Column(Integer, primary_key=True, index=True)
+    interview_id     = Column(Integer, ForeignKey("interviews.id"), nullable=False)
+    order            = Column(Integer, nullable=False)          # 질문 순서 (1-based)
+    question_text    = Column(Text, nullable=False)
+    answer_text      = Column(Text, nullable=True)             # 답변 저장 전까지 None
+    audio_path       = Column(String, nullable=True)           # 답변 오디오 파일 (Whisper 변환용)
+    duration_seconds = Column(Integer, nullable=True)          # 해당 질문 답변에 걸린 시간
+    ai_score         = Column(Float, nullable=True)            # 분석 파이프라인 AI 채점 (0~100)
+    ai_feedback      = Column(Text, nullable=True)             # 분석 파이프라인 AI 피드백 텍스트
+    created_at       = Column(DateTime, default=datetime.utcnow)
 
     interview = relationship("Interview", back_populates="questions")

@@ -3,8 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
+import { interviewAPI, analysisAPI } from '@/services/api'
 
-const QUESTIONS = [
+const FALLBACK_QUESTIONS = [
   '자기소개를 1분 이내로 해주세요.',
   '지원 동기를 말씀해 주세요.',
   '본인의 강점과 이를 업무에 어떻게 활용했는지 말씀해 주세요.',
@@ -19,7 +20,7 @@ export default function RealInterviewPage() {
   const resume = useResumeStore((s) => s.getResume(resumeId))
   const { addInterviewRecord } = useResumeStore()
 
-  const [phase, setPhase] = useState('setup')   // setup | intro | interview | result
+  const [phase, setPhase] = useState('setup')
   const [deviceIds, setDeviceIds] = useState({ cameraId: '', micId: '' })
   const [sessionStarted, setSessionStarted] = useState(false)
   const [qIndex, setQIndex] = useState(0)
@@ -30,7 +31,15 @@ export default function RealInterviewPage() {
   const [exitConfirm, setExitConfirm] = useState(false)
   const [faceStatus, setFaceStatus] = useState('waiting')
   const [micActive, setMicActive] = useState(false)
-  const [deviceError, setDeviceError] = useState(null) // null | 'camera' | 'mic' | 'both'
+  const [deviceError, setDeviceError] = useState(null)
+
+  const [backendInterviewId, setBackendInterviewId] = useState(null)
+  const [backendQuestions, setBackendQuestions] = useState([])
+  const [isCreating, setIsCreating] = useState(false)
+
+  const [showFeedback, setShowFeedback] = useState(false)
+  const [feedbackLoading, setFeedbackLoading] = useState(false)
+  const [aiFeedback, setAiFeedback] = useState(null)
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -38,8 +47,14 @@ export default function RealInterviewPage() {
   const totalRef = useRef(null)
   const detectionRef = useRef(null)
   const micRafRef = useRef(null)
+  const handleNextRef = useRef(null)
+  const feedbackDismissRef = useRef(null)
 
-  const currentQ = QUESTIONS[qIndex]
+  const activeQuestions = backendQuestions.length > 0
+    ? backendQuestions.map((q) => q.question_text)
+    : FALLBACK_QUESTIONS
+  const currentQ = activeQuestions[qIndex]
+
   const pct = Math.round(((Q_LIMIT - remaining) / Q_LIMIT) * 100)
   const r = 44, circ = 2 * Math.PI * r
   const timerColor = remaining > 60 ? '#10b981' : remaining > 30 ? '#f59e0b' : '#ef4444'
@@ -47,19 +62,34 @@ export default function RealInterviewPage() {
   const { listening, interim, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
     useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
 
-  // Stop STT when leaving interview phase
   useEffect(() => {
     if (phase !== 'interview') stopSTT()
   }, [phase, stopSTT])
 
-  // Setup complete
-  const handleSetupReady = useCallback(({ cameraId, micId }) => {
+  const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
     setDeviceIds({ cameraId, micId })
-    setPhase('intro')
     setSessionStarted(true)
-  }, [])
 
-  // Init camera + mic after setup
+    try {
+      const { data: interview } = await interviewAPI.create({
+        title: `${resume?.title || '실전'} 실전면접`,
+        category: 'general',
+        interview_type: 'real',
+        resume_ref_id: resumeId,
+      })
+      setBackendInterviewId(interview.id)
+      const { data: questions } = await interviewAPI.getQuestions(interview.id)
+      setBackendQuestions(questions)
+    } catch (err) {
+      console.error('면접 세션 생성 실패:', err)
+      setBackendQuestions(
+        FALLBACK_QUESTIONS.map((q, i) => ({ id: null, order: i + 1, question_text: q }))
+      )
+    }
+
+    setPhase('intro')
+  }, [resume, resumeId])
+
   useEffect(() => {
     if (!sessionStarted) return
     setFaceStatus('detecting')
@@ -123,9 +153,6 @@ export default function RealInterviewPage() {
     }
   }, [sessionStarted]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Use a ref so the timer interval can always call the latest handleNext
-  const handleNextRef = useRef(null)
-
   const startQTimer = useCallback(() => {
     clearInterval(timerRef.current)
     setRemaining(Q_LIMIT)
@@ -137,28 +164,113 @@ export default function RealInterviewPage() {
     }, 1000)
   }, [])
 
-  const handleNext = useCallback(() => {
+  const handleNext = useCallback(async () => {
     stopSTT()
     clearInterval(timerRef.current)
-    setAnswers((prev) => {
-      const newAnswers = [...prev, { q: currentQ, a: answer }]
-      if (qIndex + 1 >= QUESTIONS.length) {
-        clearInterval(totalRef.current)
-        addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: newAnswers })
+
+    const currentAnswer = answer
+    const currentAnswers = [...answers, { q: currentQ, a: currentAnswer }]
+    const isLast = qIndex + 1 >= activeQuestions.length
+    const currentBackendQ = backendQuestions[qIndex]
+
+    setAnswers(currentAnswers)
+    setAnswer('')
+
+    if (isLast) {
+      clearInterval(totalRef.current)
+      if (backendInterviewId && currentBackendQ) {
+        try {
+          await interviewAPI.submitAnswer(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer })
+        } catch (e) { console.error(e) }
+      }
+      if (backendInterviewId) {
+        try {
+          await interviewAPI.finish(backendInterviewId)
+          await analysisAPI.start(backendInterviewId)
+          addInterviewRecord(resumeId, {
+            type: 'real',
+            duration: totalSec,
+            questions: currentAnswers,
+            interviewId: backendInterviewId,
+          })
+          navigate(`/analysis/${backendInterviewId}`)
+        } catch (err) {
+          console.error('분석 시작 실패:', err)
+          addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: currentAnswers })
+          setPhase('result')
+        }
+      } else {
+        addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: currentAnswers })
         setPhase('result')
       }
-      return newAnswers
-    })
-    setAnswer('')
-    if (qIndex + 1 < QUESTIONS.length) {
+      return
+    }
+
+    // 중간 질문: 답변 저장 후 AI 피드백 표시
+    if (backendInterviewId && currentBackendQ && currentAnswer.trim()) {
+      try {
+        await interviewAPI.submitAnswer(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer })
+        setShowFeedback(true)
+        setFeedbackLoading(true)
+        setAiFeedback(null)
+        interviewAPI.getQuestionFeedback(backendInterviewId, currentBackendQ.id)
+          .then(({ data }) => {
+            setAiFeedback(data)
+            setFeedbackLoading(false)
+          })
+          .catch(() => {
+            setFeedbackLoading(false)
+            setShowFeedback(false)
+            setQIndex((p) => p + 1)
+            startQTimer()
+          })
+      } catch (e) {
+        console.error(e)
+        setQIndex((p) => p + 1)
+        startQTimer()
+      }
+    } else {
+      if (backendInterviewId && currentBackendQ) {
+        interviewAPI.submitAnswer(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer }).catch(console.error)
+      }
       setQIndex((p) => p + 1)
       startQTimer()
     }
-  }, [answer, currentQ, qIndex, totalSec, resumeId, stopSTT, startQTimer, addInterviewRecord])
+  }, [qIndex, answers, currentQ, answer, activeQuestions.length, backendInterviewId, backendQuestions, resumeId, addInterviewRecord, navigate, stopSTT, totalSec, startQTimer])
 
   handleNextRef.current = handleNext
 
-  const handleStart = () => {
+  const handleFeedbackDismiss = useCallback(() => {
+    setShowFeedback(false)
+    setAiFeedback(null)
+    setFeedbackLoading(false)
+    setQIndex((p) => p + 1)
+    startQTimer()
+  }, [startQTimer])
+
+  feedbackDismissRef.current = handleFeedbackDismiss
+
+  useEffect(() => {
+    if (!showFeedback) return
+    const t = setTimeout(() => feedbackDismissRef.current?.(), 8000)
+    return () => clearTimeout(t)
+  }, [showFeedback])
+
+  const handleStart = async () => {
+    setIsCreating(true)
+    try {
+      const { data: interviewData } = await interviewAPI.create({
+        title: resume?.title || '실전 면접',
+        category: 'general',
+      })
+      setBackendInterviewId(interviewData.id)
+      const { data: questions } = await interviewAPI.getQuestions(interviewData.id)
+      setBackendQuestions(questions)
+    } catch (err) {
+      console.error('면접 생성 실패 (오프라인 모드로 진행):', err)
+    } finally {
+      setIsCreating(false)
+    }
     setPhase('interview')
     totalRef.current = setInterval(() => setTotalSec((p) => p + 1), 1000)
     startQTimer()
@@ -171,7 +283,6 @@ export default function RealInterviewPage() {
     navigate('/resume')
   }
 
-  // Setup screen
   if (phase === 'setup') {
     return <InterviewSetup resumeInfo={resume} onReady={handleSetupReady} />
   }
@@ -211,7 +322,7 @@ export default function RealInterviewPage() {
         </div>
         {phase === 'interview' && (
           <span style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>
-            Q {qIndex + 1} / {QUESTIONS.length} &nbsp;·&nbsp; 총 {fmt(totalSec)}
+            Q {qIndex + 1} / {activeQuestions.length} &nbsp;·&nbsp; 총 {fmt(totalSec)}
           </span>
         )}
         <button onClick={() => setExitConfirm(true)} style={{ background: '#ef4444', border: 'none', borderRadius: 8, padding: '6px 16px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>나가기</button>
@@ -233,7 +344,7 @@ export default function RealInterviewPage() {
       {/* Progress bar */}
       {phase === 'interview' && (
         <div style={{ height: 3, background: '#1a1d2e', flexShrink: 0 }}>
-          <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / QUESTIONS.length) * 100}%`, transition: 'width .4s' }} />
+          <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / activeQuestions.length) * 100}%`, transition: 'width .4s' }} />
         </div>
       )}
 
@@ -245,11 +356,17 @@ export default function RealInterviewPage() {
           <div style={{ fontSize: 14, color: 'rgba(255,255,255,.5)', lineHeight: 1.9, textAlign: 'center' }}>
             각 질문당 <b style={{ color: '#fff' }}>{Q_LIMIT}초</b>의 답변 시간이 주어집니다.<br />
             시간이 지나면 자동으로 다음 질문으로 넘어갑니다.<br />
-            총 <b style={{ color: '#fff' }}>{QUESTIONS.length}개</b>의 질문이 준비되어 있습니다.
+            총 <b style={{ color: '#fff' }}>{activeQuestions.length}개</b>의 질문이 준비되어 있습니다.
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             <button onClick={() => navigate('/resume')} style={{ background: 'transparent', color: 'rgba(255,255,255,.5)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '12px 24px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
-            <button onClick={handleStart} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 36px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>면접 시작</button>
+            <button
+              onClick={handleStart}
+              disabled={isCreating}
+              style={{ background: isCreating ? '#334' : '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 36px', fontSize: 15, fontWeight: 700, cursor: isCreating ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: isCreating ? 0.6 : 1 }}
+            >
+              {isCreating ? '준비 중...' : '면접 시작'}
+            </button>
           </div>
         </div>
       )}
@@ -273,7 +390,7 @@ export default function RealInterviewPage() {
             <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(255,255,255,.4)', fontWeight: 500 }}>AI 면접관</div>
           </div>
 
-          {/* Circular timer (top right) */}
+          {/* Circular timer */}
           <div style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
             <div style={{ background: 'rgba(17,20,34,.85)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 14, padding: '12px 14px', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>답변 시간</div>
@@ -295,7 +412,7 @@ export default function RealInterviewPage() {
             </div>
           </div>
 
-          {/* Camera (bottom right) */}
+          {/* Camera */}
           <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
             <div style={{
               width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative',
@@ -314,48 +431,32 @@ export default function RealInterviewPage() {
           {/* Bottom answer panel */}
           <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
             <div className="fade-up" key={qIndex}>
-              {/* STT toggle */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                 {sttSupported ? (
                   <button
                     onClick={toggleSTT}
                     className={listening ? 'stt-active' : ''}
-                    style={{
-                      background: listening ? 'rgba(239,68,68,.15)' : 'rgba(79,110,247,.12)',
-                      border: `1.5px solid ${listening ? '#ef4444' : 'rgba(79,110,247,.5)'}`,
-                      borderRadius: 8, padding: '7px 16px',
-                      color: listening ? '#ef4444' : '#6d85f8',
-                      fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', gap: 6,
-                    }}
+                    style={{ background: listening ? 'rgba(239,68,68,.15)' : 'rgba(79,110,247,.12)', border: `1.5px solid ${listening ? '#ef4444' : 'rgba(79,110,247,.5)'}`, borderRadius: 8, padding: '7px 16px', color: listening ? '#ef4444' : '#6d85f8', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
                   >
                     {listening ? '🔴 인식 중지' : '🎤 음성 입력'}
                   </button>
                 ) : (
                   <span style={{ fontSize: 12, color: 'rgba(255,255,255,.25)' }}>이 브라우저는 음성 인식을 지원하지 않습니다</span>
                 )}
-                {listening && (
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>
-                )}
+                {listening && <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>}
               </div>
-
               <textarea
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
                 placeholder={sttSupported ? '답변을 입력하거나 위 버튼으로 음성 입력하세요' : '답변을 입력하세요'}
                 style={{ width: '100%', background: 'rgba(17,20,34,.9)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 12, padding: '14px 16px', color: '#fff', fontSize: 14, resize: 'none', minHeight: 80, fontFamily: 'inherit', backdropFilter: 'blur(8px)', boxSizing: 'border-box' }}
               />
-
-              {/* Interim transcript */}
               {interim && (
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', fontStyle: 'italic', marginTop: 5, padding: '0 4px' }}>
-                  💬 {interim}
-                </div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', fontStyle: 'italic', marginTop: 5, padding: '0 4px' }}>💬 {interim}</div>
               )}
-
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
                 <button onClick={handleNext} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                  {qIndex + 1 >= QUESTIONS.length ? '면접 종료 →' : '다음 질문 →'}
+                  {qIndex + 1 >= activeQuestions.length ? '면접 종료 →' : '다음 질문 →'}
                 </button>
               </div>
             </div>
@@ -363,14 +464,14 @@ export default function RealInterviewPage() {
         </div>
       )}
 
-      {/* Result */}
+      {/* Result (fallback when backend unavailable) */}
       {phase === 'result' && (
         <div style={{ flex: 1, overflow: 'auto', padding: '32px 40px' }}>
           <div style={{ maxWidth: 700, margin: '0 auto' }}>
             <div style={{ textAlign: 'center', marginBottom: 32 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
               <div style={{ fontSize: 22, fontWeight: 800, color: '#fff' }}>실전 면접 완료</div>
-              <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)', marginTop: 8 }}>{QUESTIONS.length}개 질문 · 총 {fmt(totalSec)}</div>
+              <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)', marginTop: 8 }}>{activeQuestions.length}개 질문 · 총 {fmt(totalSec)}</div>
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '.05em' }}>답변 요약</div>
             {answers.map((item, i) => (
@@ -381,7 +482,77 @@ export default function RealInterviewPage() {
             ))}
             <div style={{ display: 'flex', gap: 12, marginTop: 24, justifyContent: 'center' }}>
               <button onClick={handleExit} style={{ background: 'transparent', color: 'rgba(255,255,255,.6)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '12px 24px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>목록으로</button>
+              {backendInterviewId && (
+                <button onClick={() => navigate(`/interview/${backendInterviewId}/result`)} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>📊 AI 분석 보기</button>
+              )}
               <button onClick={() => navigate(`/resume/${resumeId}/history`)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>기록 보기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI 피드백 오버레이 */}
+      {showFeedback && phase === 'interview' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 550, backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: '#111422', borderRadius: 18, padding: '32px 36px', width: 460, maxWidth: '90vw', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 32px 80px rgba(0,0,0,.7)' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#4f6ef7', letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 20 }}>
+              Q{qIndex + 1} · AI 답변 피드백
+            </div>
+
+            {feedbackLoading ? (
+              <div style={{ textAlign: 'center', padding: '28px 0' }}>
+                <div style={{ fontSize: 36, marginBottom: 14 }}>🤖</div>
+                <div style={{ fontSize: 14, color: 'rgba(255,255,255,.55)' }}>AI가 답변을 분석하고 있습니다...</div>
+              </div>
+            ) : aiFeedback ? (
+              <>
+                {aiFeedback.score != null && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 22 }}>
+                    <div style={{
+                      width: 68, height: 68, borderRadius: '50%', flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 22, fontWeight: 800,
+                      background: aiFeedback.score >= 80 ? 'rgba(16,185,129,.15)' : aiFeedback.score >= 60 ? 'rgba(245,158,11,.15)' : 'rgba(239,68,68,.15)',
+                      color: aiFeedback.score >= 80 ? '#10b981' : aiFeedback.score >= 60 ? '#f59e0b' : '#ef4444',
+                      border: `2.5px solid ${aiFeedback.score >= 80 ? '#10b981' : aiFeedback.score >= 60 ? '#f59e0b' : '#ef4444'}`,
+                    }}>
+                      {aiFeedback.score}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginBottom: 3 }}>답변 점수</div>
+                      <div style={{ fontSize: 17, fontWeight: 700, color: '#fff' }}>
+                        {aiFeedback.score >= 80 ? '훌륭한 답변!' : aiFeedback.score >= 60 ? '좋은 시도입니다!' : '조금 더 구체적으로'}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ background: 'rgba(255,255,255,.05)', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,.4)', letterSpacing: '.05em', marginBottom: 7 }}>💬 피드백</div>
+                  <div style={{ fontSize: 14, color: '#e8eaf0', lineHeight: 1.7 }}>{aiFeedback.feedback}</div>
+                </div>
+
+                {aiFeedback.tip && (
+                  <div style={{ background: 'rgba(79,110,247,.09)', border: '1px solid rgba(79,110,247,.25)', borderRadius: 10, padding: '12px 16px', marginBottom: 22 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: '#6d85f8', letterSpacing: '.05em', marginBottom: 6 }}>💡 다음 답변을 위한 팁</div>
+                    <div style={{ fontSize: 13, color: 'rgba(255,255,255,.7)', lineHeight: 1.65 }}>{aiFeedback.tip}</div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '20px 0 24px' }}>
+                <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>피드백을 불러올 수 없습니다</div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,.22)' }}>8초 후 자동으로 다음 질문</div>
+              <button
+                onClick={handleFeedbackDismiss}
+                style={{ background: '#4f6ef7', border: 'none', borderRadius: 10, padding: '11px 28px', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                다음 질문 →
+              </button>
             </div>
           </div>
         </div>

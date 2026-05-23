@@ -1,8 +1,37 @@
+import io
+import os
 import librosa
 import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+async def generate_audio_spectrogram(audio_path: str):
+    """오디오 파일을 멜 스펙트로그램 PNG bytes로 변환. 파일 없거나 오류 시 None 반환."""
+    if not os.path.exists(audio_path):
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import librosa.display
+
+        y, sr = librosa.load(audio_path, duration=30)
+        S = librosa.feature.melspectrogram(y=y, sr=sr)
+        S_db = librosa.power_to_db(S, ref=np.max)
+
+        fig, ax = plt.subplots(figsize=(6, 3))
+        librosa.display.specshow(S_db, sr=sr, ax=ax)
+        ax.axis("off")
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
+        plt.close(fig)
+        return buf.getvalue()
+    except Exception as e:
+        logger.error(f"스펙트로그램 생성 실패: {e}")
+        return None
 
 class AudioAnalyzer:
     @staticmethod
