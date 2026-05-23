@@ -40,14 +40,17 @@ export const interviewAPI = {
   list:        ()              => api.get('/interviews'),                                            // GET — 내 면접 목록
   get:         (id)            => api.get(`/interviews/${id}`),                                      // GET — 면접 상세 조회
   getQuestions:(id)            => api.get(`/interviews/${id}/questions`),                            // GET — 질문 목록 조회
-  submitAnswer:(id, qId, data) => api.post(`/interviews/${id}/questions/${qId}/answer`, data),      // POST — 질문 답변 저장
-  finish:      (id)            => api.patch(`/interviews/${id}/finish`),                             // PATCH — 면접 종료 (분석 가능 상태로)
+  submitAnswer:       (id, qId, data) => api.post(`/interviews/${id}/questions/${qId}/answer`, data),      // POST — 질문 답변 저장
+  getQuestionFeedback:(id, qId)      => api.post(`/interviews/${id}/questions/${qId}/feedback`),           // POST — 즉시 AI 피드백 요청
+  finish:             (id)           => api.patch(`/interviews/${id}/finish`),                             // PATCH — 면접 종료 (분석 가능 상태로)
+  delete:             (id)           => api.delete(`/interviews/${id}`),                                   // DELETE — 면접 기록 삭제
 }
 
 // ── Analysis API (분석 결과 엔드포인트) ────────────────────────────
 export const analysisAPI = {
-  start: (id) => api.post(`/analysis/${id}/start`),                   // POST — 면접 분석 시작 (백그라운드 작업)
-  get:   (id) => api.get(`/analysis/${id}`),                          // GET — 분석 결과 조회 (폴링으로 반복 호출)
+  start:       (id)   => api.post(`/analysis/${id}/start`),
+  get:         (id)   => api.get(`/analysis/${id}`),
+  getFeedback: (data) => api.post('/analysis/feedback', data),        // POST — 질문별 즉시 AI 피드백
 }
 
 export default api

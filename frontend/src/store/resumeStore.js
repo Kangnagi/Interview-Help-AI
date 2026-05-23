@@ -23,11 +23,11 @@ export const useResumeStore = create((set, get) => ({
   // 자기소개서 추가
   addResume: (resumeData) => {
     const newResume = {
-      id: Date.now().toString(),                                      // 타임스탬프 기반 고유 ID
-      createdAt: new Date().toISOString(),                            // 생성 시각 (ISO 8601)
+      id: Date.now().toString(),
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      interviewHistory: [],                                           // 면접 기록 (초기값: 빈 배열)
-      ...resumeData,                                                  // 사용자 입력 데이터 병합
+      interviewRecords: [],
+      ...resumeData,
     }
     const resumes = [newResume, ...get().resumes]                     // 최신순으로 앞에 배치
     saveToStorage(resumes)                                            // 로컬스토리지 저장
@@ -60,9 +60,9 @@ export const useResumeStore = create((set, get) => ({
       r.id === resumeId
         ? {
             ...r,
-            interviewHistory: [
-              { id: Date.now().toString(), createdAt: new Date().toISOString(), ...record },  // 새 기록 추가
-              ...(r.interviewHistory || []),                          // 기존 기록 뒤에 배치
+            interviewRecords: [
+              { id: Date.now().toString(), createdAt: new Date().toISOString(), ...record },
+              ...(r.interviewRecords || r.interviewHistory || []),
             ],
           }
         : r

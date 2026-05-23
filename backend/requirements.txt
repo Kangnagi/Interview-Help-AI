@@ -5,7 +5,14 @@ python-multipart==0.0.9
 python-dotenv==1.0.1
 pydantic==2.7.1
 pydantic-settings==2.2.1
+<<<<<<< HEAD
+<<<<<<< Updated upstream
+=======
+google-generativeai==0.8.6
+>>>>>>> Stashed changes
+=======
 google-generativeai==0.8.6  # Gemini API 사용 시 필수
+>>>>>>> develop
 
 # DB
 sqlalchemy==2.0.30
@@ -29,8 +36,15 @@ tokenizers==0.14.1
 sentencepiece==0.1.99
 accelerate==0.25.0
 protobuf==4.25.3
+<<<<<<< HEAD
+<<<<<<< Updated upstream
+=======
+git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
+>>>>>>> Stashed changes
+=======
 # KoBERT 핵심: 아래 주소가 없으면 KoBERT 모델 로드 시 에러남.
 git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
+>>>>>>> develop
 
 # Vision
 mediapipe==0.10.33
@@ -39,12 +53,23 @@ numpy==1.26.4
 Pillow==10.3.0
 
 # Voice
+<<<<<<< HEAD
+<<<<<<< Updated upstream
+openai-whisper==20231117
+=======
+faster-whisper==1.0.1
+>>>>>>> Stashed changes
+=======
 #openai-whisper==20231117
+>>>>>>> develop
 ffmpeg-python==0.2.0
 
 # Audio
 librosa==0.10.2
 
+# API
+google-generativeai>=0.5.2
+python-dotenv>=1.0.1
 
 
 # absl-py               2.4.0                                                             
@@ -143,3 +168,12 @@ librosa==0.10.2
 # urllib3               2.6.3
 # uvicorn               0.46.0
 # wheel                 0.47.0
+librosa
+matplotlib
+soundfile
+numpy
+argon2-cffi
+openai-whisper
+torch
+transformers
+sentencepiece

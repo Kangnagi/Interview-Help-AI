@@ -88,7 +88,10 @@ export const useInterviewStore = create((set, get) => ({
     }
   },
 
-  // 상태 초기화
+  // 분석 결과만 초기화 (새 면접 분석 화면 진입 시 stale 데이터 제거)
+  resetAnalysis: () => set({ analysis: null }),
+
+  // 전체 상태 초기화
   reset: () => set({ current: null, questions: [], currentQuestionIdx: 0, analysis: null }),
 }))
 
