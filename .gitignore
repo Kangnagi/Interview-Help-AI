@@ -19,5 +19,13 @@ Thumbs.db
 
 # Logs
 *.log
-backend/interview.db 
+backend/interview.db
+
+# Node.js
+node_modules/
+frontend/node_modules/
+
+# Vite cache
+frontend/.vite/
+**/.vite/
 
