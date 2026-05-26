@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"   # JWT 서명 비밀키 (운영 시 반드시 교체)
     ALGORITHM: str = "HS256"                     # JWT 서명 알고리즘
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60        # 액세스 토큰 유효 시간 (분)
-    GEMINI_API_KEY: str = "AIzaSyAn6zhl2cm0tiZUoURwJ866DGLccdqjbCg"
-    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_API_KEY: str = ""   # .env 파일에 GEMINI_API_KEY= 로 설정
+    GEMINI_MODEL: str = "gemini-2.0-flash"
 
     # ── DB ─────────────────────────────────────────────────
     DATABASE_URL: str = "sqlite+aiosqlite:///./interview.db"   # 비동기 SQLite DB 경로

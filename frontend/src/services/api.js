@@ -19,7 +19,8 @@ api.interceptors.response.use(
   (err) => {
     const url = err.config?.url || ''                                 // 요청한 엔드포인트 경로
     const isAuthRoute = url.includes('/auth/login') || url.includes('/auth/register')   // 인증 관련 엔드포인트인지 확인
-    if (err.response?.status === 401 && !isAuthRoute) {               // 401 에러이고 인증 엔드포인트가 아닐 때 (토큰 만료)
+    const status = err.response?.status
+    if ((status === 401 || status === 403) && !isAuthRoute) {         // 401(토큰 만료) 또는 403(토큰 없음) 모두 처리
       localStorage.removeItem('token')                                // 로컬스토리지 토큰 삭제
       localStorage.removeItem('user')                                 // 사용자 정보도 삭제
       window.location.href = '/login'                                 // 로그인 페이지로 이동

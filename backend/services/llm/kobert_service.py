@@ -1,15 +1,15 @@
 """
 KoBERT 답변 분석 서비스
 
-역할: 면접 답변 텍스트를 KoBERT로 임베딩하여 내용·관련성·명확성 점수 산출.
+역할: 면접 답변 텍스트를 KoBERT로 임베딩하여 관련성·내용·명확성 점수 산출.
 
-현재 상태:
-  - 모델 로드 및 임베딩 추출까지 실제 구현됨
-  - 점수 산출은 torch.rand() 임시값 사용 (TODO: 실제 분류 헤드 학습 필요)
+점수 산출 방식:
+  relevance_score — 질문·답변 임베딩 코사인 유사도 기반
+  content_score   — 답변 길이 휴리스틱 (30~400자 기준)
+  clarity_score   — 어휘 다양성 (unique ratio)
 
 싱글톤 패턴:
   서버 전체에서 모델을 1개만 유지 (메모리 절약).
-  __new__에서 인스턴스를 1번만 생성하고 이후 호출은 같은 객체를 반환.
 """
 import logging
 import torch
@@ -50,10 +50,9 @@ class KoBERTService:
 
         logger.info("KoBERT 모델 로딩 중...")
         try:
-            # use_fast=False: KoBERT는 SentencePiece 기반 — fast tokenizer 미지원
+            # use_fast=False: KoBERT는 SentencePiece 기반 XLNetTokenizer — fast tokenizer 미지원
             self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                use_fast=False,
+                self.model_name, use_fast=False
             )
             self.model = AutoModel.from_pretrained(self.model_name).to(self.device)
             self.model.eval()   # 드롭아웃·배치정규화를 추론 모드로 전환
@@ -63,18 +62,37 @@ class KoBERTService:
             self.model = None
             self.tokenizer = None
 
+    def _encode(self, text: str) -> "torch.Tensor":
+        """텍스트를 KoBERT 임베딩 벡터(평균 풀링)로 변환."""
+        encoding = self.tokenizer.encode_plus(
+            text,
+            max_length=128,
+            truncation=True,
+            padding="max_length",
+            return_tensors="pt",
+        )
+        input_ids = encoding["input_ids"].to(self.device)
+        attention_mask = encoding["attention_mask"].to(self.device)
+        # KoBERT의 token_type 임베딩 테이블은 크기 2 (0 또는 1) —
+        # XLNetTokenizer가 반환하는 token_type_ids가 범위를 벗어나므로 0으로 강제.
+        token_type_ids = torch.zeros_like(input_ids)
+
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+            )
+        return outputs.last_hidden_state.mean(dim=1)  # [1, hidden_dim]
+
     async def analyze_answer(self, question: str, answer: str) -> dict:
         """
         질문-답변 쌍을 분석하여 점수 딕셔너리를 반환.
 
-        현재 흐름:
-          1) answer를 토크나이징
-          2) KoBERT forward pass → last_hidden_state 추출
-          3) 평균 풀링으로 문장 임베딩 생성
-          4) (TODO) 임베딩을 분류 헤드에 통과시켜 실제 점수 산출
-             현재는 torch.rand()로 임시 점수 반환
-
-        question 파라미터는 향후 질문-답변 관련성 계산에 사용 예정.
+        점수 산출 방식:
+          relevance_score — 질문·답변 임베딩 간 코사인 유사도 (0~1 → 0~100 변환)
+          content_score   — 답변 길이 기반 휴리스틱 (짧으면 감점, 너무 길어도 감점)
+          clarity_score   — 어휘 다양성 (unique tokens / total tokens × 100)
         """
         if not answer.strip():
             return self._empty_result()
@@ -83,31 +101,41 @@ class KoBERTService:
             return self._empty_result("모델이 아직 로드되지 않았습니다.")
 
         try:
-            # 답변 텍스트 토크나이징 — 최대 길이 초과 시 자동 truncate
-            inputs = self.tokenizer(
-                answer,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-            ).to(self.device)
+            q_emb = self._encode(question)
+            a_emb = self._encode(answer)
 
-            # 그래디언트 계산 비활성화 — 추론 전용이므로 메모리·속도 최적화
-            with torch.no_grad():
-                outputs = self.model(**inputs)
+            # 코사인 유사도: [-1, 1] → 선형 변환으로 [0, 100]
+            cos_sim = torch.nn.functional.cosine_similarity(q_emb, a_emb).item()
+            relevance_score = round(min(100.0, max(0.0, (cos_sim - 0.3) / 0.7 * 100)), 1)
 
-            # [batch, seq_len, hidden_dim] → [batch, hidden_dim] 평균 풀링
-            embedding = outputs.last_hidden_state.mean(dim=1)
+            # 답변 길이 기반 내용 충실도 (한국어 기준 100~400자가 적절)
+            char_len = len(answer)
+            if char_len < 30:
+                content_score = 30.0
+            elif char_len < 100:
+                content_score = round(30.0 + (char_len - 30) / 70.0 * 40.0, 1)
+            elif char_len < 400:
+                content_score = round(70.0 + (char_len - 100) / 300.0 * 20.0, 1)
+            else:
+                content_score = round(min(95.0, 90.0 + (char_len - 400) / 600.0 * 5.0), 1)
+
+            # 어휘 다양성 (명확성 지표)
+            tokens = answer.split()
+            unique_ratio = len(set(tokens)) / max(len(tokens), 1)
+            clarity_score = round(min(90.0, max(40.0, unique_ratio * 100.0)), 1)
+
+            # 대표 키워드: 길이 1 이하 토큰 제외
+            keywords = [w for w in tokens if len(w) > 1][:5]
 
             return {
                 "status": "success",
-                # TODO: 실제 분류 헤드(Linear + Softmax)로 교체
-                "content_score":   float(torch.rand(1).item() * 100),
-                "relevance_score": float(torch.rand(1).item() * 100),
-                "clarity_score":   float(torch.rand(1).item() * 100),
-                "keywords":        answer.split()[:5],   # 임시: 단순 앞 5단어
+                "content_score":   content_score,
+                "relevance_score": relevance_score,
+                "clarity_score":   clarity_score,
+                "keywords":        keywords,
                 "sentiment":       "neutral",
-                "feedback":        "분석 완료",
-                "embedding_shape": list(embedding.shape),
+                "feedback":        f"관련성 {relevance_score:.0f}점 / 내용 {content_score:.0f}점 / 명확성 {clarity_score:.0f}점",
+                "embedding_shape": list(a_emb.shape),
             }
 
         except Exception as e:

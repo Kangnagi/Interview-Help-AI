@@ -110,7 +110,9 @@ async def _run_analysis_pipeline(interview_id: int):
             })
             valid_questions.append(q)
 
-        # 4) Gemini 배치 분석
+        # 4) Gemini 배치 분석 → 실패 시 KoBERT 점수로 폴백
+        from services.llm.kobert_service import kobert_service
+
         content_scores, relevance_scores, clarity_scores = [], [], []
         speech_scores, posture_scores, eye_contact_scores = [], [], []
         all_feedbacks = []
@@ -118,7 +120,15 @@ async def _run_analysis_pipeline(interview_id: int):
         batch_results = await analyze_answers_batch_with_gemini(qna_list) if qna_list else []
 
         for q, gemini_result in zip(valid_questions, batch_results):
-            if isinstance(gemini_result, dict):
+            # Gemini 스텁(70점 고정)인지 확인: content_score가 정확히 70이면 API 실패로 판단
+            is_gemini_stub = (
+                not isinstance(gemini_result, dict)
+                or gemini_result.get("content_score") == 70
+                and gemini_result.get("relevance_score") == 70
+            )
+
+            if isinstance(gemini_result, dict) and not is_gemini_stub:
+                # Gemini 실제 결과 사용
                 c_score  = _safe_int(gemini_result, "content_score")
                 r_score  = _safe_int(gemini_result, "relevance_score")
                 cl_score = _safe_int(gemini_result, "clarity_score")
@@ -127,8 +137,27 @@ async def _run_analysis_pipeline(interview_id: int):
                 e_score  = _safe_int(gemini_result, "eye_contact_score")
                 fb_text  = gemini_result.get("feedback", "")
             else:
-                c_score = r_score = cl_score = sp_score = p_score = e_score = 80
-                fb_text = str(gemini_result)
+                # Gemini 실패 → KoBERT 임베딩 기반 실제 점수 사용
+                logger.info(f"[Analysis] Q{q.id}: Gemini 스텁 감지 → KoBERT 폴백")
+                try:
+                    kobert_result = await kobert_service.analyze_answer(
+                        q.question_text, q.answer_text or ""
+                    )
+                    if kobert_result.get("status") == "success":
+                        c_score  = int(kobert_result["content_score"])
+                        r_score  = int(kobert_result["relevance_score"])
+                        cl_score = int(kobert_result["clarity_score"])
+                    else:
+                        c_score = r_score = cl_score = 60
+                except Exception as ke:
+                    logger.warning(f"KoBERT 폴백 실패: {ke}")
+                    c_score = r_score = cl_score = 60
+
+                sp_score = p_score = e_score = 70
+                fb_text = (
+                    gemini_result.get("feedback", "") if isinstance(gemini_result, dict)
+                    else f"내용 {c_score}점 / 관련성 {r_score}점 / 명확성 {cl_score}점"
+                )
 
             content_scores.append(c_score)
             relevance_scores.append(r_score)
@@ -138,7 +167,7 @@ async def _run_analysis_pipeline(interview_id: int):
             eye_contact_scores.append(e_score)
 
             # 질문별 점수·피드백 저장 (분석 결과 페이지 상세 표시용)
-            q.ai_score = round((c_score + r_score + cl_score + sp_score + p_score + e_score) / 6, 1)
+            q.ai_score = round((c_score + r_score + cl_score) / 3, 1)
             q.ai_feedback = fb_text
 
             if fb_text:
