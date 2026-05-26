@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """
 Whisper 음성 인식 서비스
 
@@ -13,7 +12,6 @@ Librosa를 통해 음성 특징(무음 비율, 에너지)도 함께 분석.
 import logging
 import os
 import tempfile
-=======
 import io
 import logging
 import asyncio
@@ -24,7 +22,6 @@ import ffmpeg
 import tempfile
 import os
 from concurrent.futures import ThreadPoolExecutor
->>>>>>> origin/feature/AI_model_error_v2
 from typing import Optional
 from core.config import settings
 from services.voice.librosa_service import AudioAnalyzer
@@ -32,10 +29,7 @@ from services.voice.librosa_service import AudioAnalyzer
 logger = logging.getLogger(__name__)
 
 class WhisperService:
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/feature/AI_model_error_v2
     _instance: Optional["WhisperService"] = None
     _model = None
     # CPU 집약적 작업을 위한 스레드 풀 (동시 분석 제한)
@@ -47,7 +41,6 @@ class WhisperService:
         return cls._instance
 
     async def load_model(self):
-<<<<<<< HEAD
         if self._model is not None:
             return
         logger.info(f"Whisper '{settings.WHISPER_MODEL_SIZE}' 모델 로딩 중...")
@@ -132,7 +125,6 @@ class WhisperService:
             "silence_ratio": 0.0,
             "speech_score": 70.0,
         }
-=======
         """서버 시작 시 모델 로드"""
         if self._model is None:
             # 설정값에 따라 모델 사이즈 결정 (base, small 등)
@@ -199,7 +191,6 @@ class WhisperService:
         except Exception as e:
             logger.error(f"Whisper 추론 중 오류 발생: {e}")
             return {"text": "", "error": str(e)}
->>>>>>> origin/feature/AI_model_error_v2
 
     async def analyze_speech_bytes(self, audio_bytes: bytes) -> dict:
         """전체 오디오의 음성 특징 분석 (Librosa 활용)"""

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import logging
 import json
 import warnings
@@ -190,7 +189,6 @@ def _stub_score() -> dict:
         "eye_contact_score": 70,
         "feedback": "답변이 저장되었습니다.",
     }
-=======
 import os
 import google.generativeai as genai
 import json
@@ -431,4 +429,3 @@ async def generate_questions_from_resume(resume_text: str, category: str, num_qu
     except Exception as e:
         print(f"Gemini 질문 생성 또는 JSON 파싱 중 오류 발생: {e}")
         return [] # 실패 시 빈 리스트 반환
->>>>>>> origin/feature/AI_model_error_v2

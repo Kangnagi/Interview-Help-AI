@@ -41,16 +41,14 @@ opencv-python==4.9.0.80
 numpy==1.26.4
 Pillow==10.3.0
 
-<<<<<<< HEAD
 # Voice / STT
-openai-whisper==20231117
+openai-whisper
 ffmpeg-python==0.2.0
 
 # Audio analysis
-librosa==0.10.2
 soundfile
 matplotlib
-=======
+
 # Voice & Audio
 faster-whisper==1.2.0
 soundfile==0.13.1
@@ -61,5 +59,3 @@ ffmpeg-python==0.2.0
 google-generativeai>=0.5.2
 matplotlib==3.8.4
 argon2-cffi==23.1.0
-
->>>>>>> origin/feature/AI_model_error_v2

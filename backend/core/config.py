@@ -34,7 +34,6 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"               # 업로드 파일 저장 디렉토리
     MAX_UPLOAD_SIZE_MB: int = 100               # 최대 업로드 파일 크기 (MB)
 
-<<<<<<< HEAD
     # ── AI 모델 설정 ────────────────────────────────────────
     KOBERT_MODEL_PATH: str = "./models/kobert"              # KoBERT 로컬 모델 경로 (미사용 시 HuggingFace 자동 다운)
     WHISPER_MODEL_SIZE: str = "base"                        # Whisper 모델 크기 (tiny/base/small/medium/large)
@@ -42,10 +41,8 @@ class Settings(BaseSettings):
     MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5        # MediaPipe 얼굴 감지 최소 신뢰도 (0~1)
     
     
-=======
     GEMINI_API_KEY: Optional[str] = None
 
->>>>>>> origin/feature/AI_model_error_v2
     class Config:
         env_file = ".env"          # 프로젝트 루트의 .env 파일에서 환경 변수 로드
         case_sensitive = True      # 환경 변수 이름 대소문자 구분
