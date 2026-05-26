@@ -10,11 +10,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+#from services.llm import korbert_service
 
 from core.config import settings
 from core.database import init_db
 from routers import auth, interview, analysis, websocket
-from services.llm.kobert_service import kobert_service
 from services.voice.whisper_service import whisper_service
 from services.vision.mediapipe_service import mediapipe_service
 
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     logger.info("DB 초기화 완료")
 
     # 2) AI 모델 사전 로딩 (현재 모두 Stub)
-    await kobert_service.load_model()
+    #await kobert_service.load_model()
     await whisper_service.load_model()
     await mediapipe_service.initialize()
     logger.info("AI 모델 준비 완료 (Stub)")
