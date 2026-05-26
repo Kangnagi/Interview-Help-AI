@@ -169,8 +169,5 @@ async def process_final_audio_analysis(interview_id: int, full_audio: bytes):
         await _run_analysis_pipeline(interview_id)
 
     except Exception as e:
-<<<<<<< HEAD
         logger.error(f"[Analysis] 사후 분석 중 치명적 오류: {e}")
-=======
         logger.error(f"[Analysis] 사후 분석 중 치명적 오류: {e}")
->>>>>>> origin/feature/AI_model_error_v2

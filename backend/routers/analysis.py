@@ -19,11 +19,8 @@ from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
-<<<<<<< HEAD
-=======
 from services.llm.kobert_service import kobert_service
 from services.llm.gemini_service import analyze_answers_batch_with_gemini
->>>>>>> origin/feature/AI_model_error_v2
 from services.voice.whisper_service import whisper_service
 from services.vision.mediapipe_service import mediapipe_service
 from services.llm.gemini_service import gemini_service, analyze_answers_batch_with_gemini
@@ -74,7 +71,6 @@ async def _run_analysis_pipeline(interview_id: int):
     """
     logger.info(f"[Analysis] interview_id={interview_id} 분석 시작")
 
-<<<<<<< HEAD
     async with AsyncSessionLocal() as db:
         # 1) 면접 + 질문 로드
         result = await db.execute(
@@ -206,7 +202,6 @@ async def _run_analysis_pipeline(interview_id: int):
         analysis.feedback_summary = ai_feedback["feedback_summary"]
         analysis.strengths        = ai_feedback["strengths"]
         analysis.improvements     = ai_feedback["improvements"]
-=======
     try:
         async with AsyncSessionLocal() as db:
             # 1) 면접 + 질문 + 기존 분석 로드
@@ -285,7 +280,6 @@ async def _run_analysis_pipeline(interview_id: int):
               
                 if fb_text:
                     all_feedbacks.append(f"Q: {q.question_text}\n{fb_text}")
->>>>>>> origin/feature/AI_model_error_v2
 
             analysis.content_score   = _avg(content_scores)
             analysis.relevance_score = _avg(relevance_scores)
