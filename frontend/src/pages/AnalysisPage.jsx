@@ -19,7 +19,9 @@ export default function AnalysisPage() {
     const timer = setInterval(async () => {
       const data = await fetchAnalysis(id)
       count++
-      if (data || count > 20) {
+      // strengths가 채워졌거나(완전한 결과), 40회(120s) 이상 대기 시 종료
+      const isComplete = data?.strengths?.length > 0 || data?.improvements?.length > 0
+      if (isComplete || count > 40) {
         clearInterval(timer)
         setPolling(false)
       }
@@ -27,12 +29,12 @@ export default function AnalysisPage() {
     return () => clearInterval(timer)
   }, [id])
 
-  if (loading || (polling && !analysis)) {
+  if (loading || polling) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <div className="spinner" style={{ margin: '0 auto 16px' }} />
         <p style={{ color: 'var(--text-secondary)' }}>AI가 면접을 분석하고 있습니다...</p>
-        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>최대 60초 소요될 수 있습니다</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>최대 2분 소요될 수 있습니다</p>
       </div>
     )
   }
@@ -123,14 +125,14 @@ export default function AnalysisPage() {
           {(analysis.strengths || []).map((s, i) => (
             <p key={i} style={{ fontSize: 13, color: '#047857', marginBottom: 6, lineHeight: 1.6 }}>· {s}</p>
           ))}
-          {!analysis.strengths?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 중...</p>}
+          {!analysis.strengths?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>총평 생성 완료 후 표시됩니다</p>}
         </div>
         <div className="card" style={{ border: '1px solid #FED7AA', background: '#FFF7ED' }}>
           <h3 style={{ fontWeight: 600, fontSize: 14, color: '#92400E', marginBottom: 12 }}>📈 개선점</h3>
           {(analysis.improvements || []).map((s, i) => (
             <p key={i} style={{ fontSize: 13, color: '#B45309', marginBottom: 6, lineHeight: 1.6 }}>· {s}</p>
           ))}
-          {!analysis.improvements?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 중...</p>}
+          {!analysis.improvements?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>총평 생성 완료 후 표시됩니다</p>}
         </div>
       </div>
 

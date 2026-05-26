@@ -41,7 +41,18 @@
       "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/register -H 'Content-Type: application/json' -d '{\"email\":\"test_check@example.com\",\"username\":\"testuser\",\"password\":\"test1234\"}')",
       "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"test_check@example.com\",\"password\":\"test1234\"}')",
       "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); print\\(f'면접 목록 {len\\(data\\)}건 조회 OK'\\); [print\\(f'  [{d[\\\\\"id\\\\\"]}] {d[\\\\\"title\\\\\"]} | {d[\\\\\"status\\\\\"]} | score={d[\\\\\"total_score\\\\\"]}'\\) for d in data[:5]]\")",
-      "PowerShell(Get-Process -Id 23068 -ErrorAction SilentlyContinue)"
+      "PowerShell(Get-Process -Id 23068 -ErrorAction SilentlyContinue)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" log --oneline feature/AI_model_error_v2)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" log --oneline remotes/origin/feature/AI_model_error_v2)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" log --oneline feature/release)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" diff feature/release..remotes/origin/feature/AI_model_error_v2 --name-only)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" diff feature/release..remotes/origin/feature/AI_model_error_v2 -- backend/main.py backend/routers/websocket.py backend/services/voice/whisper_service.py backend/services/llm/kobert_service.py)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" diff feature/release..remotes/origin/feature/AI_model_error_v2 -- backend/routers/stt.py backend/services/voice/whisper_service.py backend/services/vision/mediapipe_service.py backend/services/voice/librosa_service.py)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" show 6decdbbd --stat)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" show 6decdbbd -- backend/main.py)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" show 9ee3c0aa)",
+      "Read(//mnt/c/Users/kch36/Desktop/Interview-Help-AI/**)",
+      "Bash(grep -v \"KEY\\\\|SECRET\\\\|PASSWORD\" .env)"
     ]
   }
 }

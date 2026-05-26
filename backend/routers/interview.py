@@ -237,7 +237,8 @@ async def get_question_feedback(
         from services.llm.gemini_service import analyze_answer_with_gemini
         result_data = await analyze_answer_with_gemini(question.question_text, question.answer_text)
         feedback_text = result_data.get("feedback", "") if isinstance(result_data, dict) else str(result_data)
-        score = result_data.get("content_score", 75) if isinstance(result_data, dict) else 75
+        tip_text = result_data.get("tip", "") if isinstance(result_data, dict) else ""
+        score = result_data.get("score", 75) if isinstance(result_data, dict) else 75
         try:
             score = int(score)
         except Exception:
@@ -245,9 +246,14 @@ async def get_question_feedback(
     except Exception as e:
         logger.error(f"즉시 피드백 생성 오류: {e}")
         feedback_text = "피드백을 생성할 수 없습니다."
+        tip_text = ""
         score = 75
 
-    return {"score": score, "feedback": feedback_text, "tip": ""}
+    question.ai_score = score
+    question.ai_feedback = feedback_text
+    await db.commit()
+
+    return {"score": score, "feedback": feedback_text, "tip": tip_text}
 
 @router.patch("/{interview_id}/finish")
 async def finish_interview(
@@ -266,6 +272,36 @@ async def finish_interview(
         await db.commit()
         
     return {"message": "면접이 완료되었습니다"}
+
+
+@router.delete("/{interview_id}", status_code=204)
+async def delete_interview(
+    interview_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """면접 기록과 관련된 분석 결과를 함께 삭제합니다."""
+    from models.analysis import Analysis
+    result = await db.execute(
+        select(Interview).where(
+            Interview.id == interview_id,
+            Interview.user_id == user_id,
+        )
+    )
+    interview = result.scalar_one_or_none()
+    if not interview:
+        raise HTTPException(status_code=404, detail="면접을 찾을 수 없습니다")
+
+    # Analysis has no ORM cascade, so delete it explicitly first
+    analysis_result = await db.execute(
+        select(Analysis).where(Analysis.interview_id == interview_id)
+    )
+    analysis = analysis_result.scalar_one_or_none()
+    if analysis:
+        await db.delete(analysis)
+
+    await db.delete(interview)
+    await db.commit()
 
 
 @router.post("/transcribe")

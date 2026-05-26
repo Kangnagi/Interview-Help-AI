@@ -36,12 +36,12 @@ export const authAPI = {
 
 // ── Interview API (면접 관련 엔드포인트) ────────────────────────────
 export const interviewAPI = {
-  create:      (data)          => api.post('/interviews', data),                                      // POST — 면접 생성 + 질문 할당
+  create:      (data)          => api.post('/interviews', data, { timeout: 90000 }),                 // POST — 면접 생성 + 질문 할당 (Gemini 질문 생성 최대 90초)
   list:        ()              => api.get('/interviews'),                                            // GET — 내 면접 목록
   get:         (id)            => api.get(`/interviews/${id}`),                                      // GET — 면접 상세 조회
   getQuestions:(id)            => api.get(`/interviews/${id}/questions`),                            // GET — 질문 목록 조회
   submitAnswer:       (id, qId, data) => api.post(`/interviews/${id}/questions/${qId}/answer`, data),      // POST — 질문 답변 저장
-  getQuestionFeedback:(id, qId)      => api.post(`/interviews/${id}/questions/${qId}/feedback`),           // POST — 즉시 AI 피드백 요청
+  getQuestionFeedback:(id, qId)      => api.post(`/interviews/${id}/questions/${qId}/feedback`, null, { timeout: 60000 }), // POST — 즉시 AI 피드백 (Gemini 최대 60초)
   finish:             (id)           => api.patch(`/interviews/${id}/finish`),                             // PATCH — 면접 종료 (분석 가능 상태로)
   delete:             (id)           => api.delete(`/interviews/${id}`),                                   // DELETE — 면접 기록 삭제
 }

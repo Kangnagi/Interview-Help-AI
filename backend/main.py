@@ -3,12 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
 
 from core.config import settings
-from core.database import init_db, engine
+from core.database import init_db
 from routers import auth, interview, analysis, websocket, stt
-from services.llm.kobert_service import kobert_service
 from services.voice.whisper_service import whisper_service
 from services.vision.mediapipe_service import mediapipe_service
 
@@ -24,21 +22,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} 시작")
 
     await init_db()
-
-    _new_columns = [
-        "ALTER TABLE interview_questions ADD COLUMN ai_score REAL",
-        "ALTER TABLE interview_questions ADD COLUMN ai_feedback TEXT",
-    ]
-    async with engine.begin() as _conn:
-        for _stmt in _new_columns:
-            try:
-                await _conn.execute(text(_stmt))
-            except Exception:
-                pass
-
     logger.info("DB 초기화 완료")
 
-    await kobert_service.load_model()
+    # KoBERT는 로딩 시간이 길고 현재 Gemini로 대체되어 비활성화
+    # await kobert_service.load_model()
     await whisper_service.load_model()
     await mediapipe_service.initialize()
     logger.info("AI 모델 준비 완료")

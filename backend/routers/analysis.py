@@ -19,7 +19,7 @@ from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
 from services.llm.kobert_service import kobert_service
-from services.llm.gemini_service import analyze_answers_batch_with_gemini
+from services.llm.gemini_service import analyze_answers_batch_with_gemini, generate_overall_summary_with_gemini
 from services.voice.whisper_service import whisper_service
 from services.vision.mediapipe_service import mediapipe_service
 
@@ -84,8 +84,24 @@ async def _run_analysis_pipeline(interview_id: int):
                 })
                 valid_questions.append(q)
 
-            # 한 번의 호출로 모든 분석 결과 받아오기
-            batch_results = await analyze_answers_batch_with_gemini(qna_list) if qna_list else []
+            # 저장된 실시간 피드백이 있으면 배치 Gemini 호출 건너뜀
+            all_have_feedback = bool(valid_questions) and all(q.ai_feedback for q in valid_questions)
+            if all_have_feedback:
+                logger.info(f"[Analysis] 저장된 실시간 피드백 사용 (Gemini 배치 생략)")
+                batch_results = [
+                    {
+                        "content_score": int(q.ai_score or 80),
+                        "relevance_score": int(q.ai_score or 80),
+                        "clarity_score": int(q.ai_score or 80),
+                        "speech_score": int(q.ai_score or 80),
+                        "posture_score": int(q.ai_score or 80),
+                        "eye_contact_score": int(q.ai_score or 80),
+                        "feedback": q.ai_feedback or "",
+                    }
+                    for q in valid_questions
+                ]
+            else:
+                batch_results = await analyze_answers_batch_with_gemini(qna_list) if qna_list else []
 
             # ── Gemini 피드백 결과 매핑 ──
             for q, gemini_result in zip(valid_questions, batch_results):
@@ -120,19 +136,15 @@ async def _run_analysis_pipeline(interview_id: int):
             analysis.content_score   = _avg(content_scores)
             analysis.relevance_score = _avg(relevance_scores)
             analysis.clarity_score   = _avg(clarity_scores)
-            
+
             analysis.speech_score    = _avg(speech_scores)
             analysis.posture_score   = _avg(posture_scores)
             analysis.eye_contact_score = _avg(eye_contact_scores)
 
-
-            # ── 3) 파일 분석(음성/영상) 건너뛰기 (에러 방지) ───
-            # 현재 웹소켓으로 실시간 전송 중이므로 저장된 video_path 호출 시 에러가 날 수 있음. 
-            # 안전을 위해 try-except로 감쌉니다.
             if getattr(interview, 'video_path', None):
                 logger.warning(f"[Analysis] 저장된 비디오 분석은 건너뜁니다.")
 
-            # ── 4) 종합 점수 + 피드백 ───────────────────────
+            # ── 4) 종합 점수 계산 ───────────────────────────
             sub_scores = [
                 analysis.content_score,
                 analysis.relevance_score,
@@ -143,9 +155,22 @@ async def _run_analysis_pipeline(interview_id: int):
             ]
             analysis.total_score = _avg([s for s in sub_scores if s is not None])
 
-            analysis.feedback_summary = "전체적인 답변 내용을 분석한 결과입니다." 
-            analysis.improvements = all_feedbacks if all_feedbacks else ["구체적인 답변 사례를 보강해 보세요."]
-            
+            # ── 5) 종합 총평 / 강점 / 개선점 생성 ─────
+            # qna_feedbacks는 db.commit() 이전에 구성 (커밋 후 ORM 객체 만료됨)
+            qna_feedbacks = [
+                {
+                    "question": q.question_text,
+                    "answer": q.answer_text or "",
+                    "feedback": r.get("feedback", "") if isinstance(r, dict) else str(r),
+                }
+                for q, r in zip(valid_questions, batch_results)
+            ]
+            summary_result = await generate_overall_summary_with_gemini(qna_feedbacks)
+            analysis.feedback_summary = summary_result.get("feedback_summary", "")
+            analysis.strengths    = summary_result.get("strengths", []) or []
+            analysis.improvements = summary_result.get("improvements", []) or []
+
+            # 점수 + 총평을 한 번에 저장 (중간 커밋 제거 — 부분 저장 시 프론트 polling이 조기 종료됨)
             db.add(analysis)
             await db.commit()
 
@@ -214,7 +239,12 @@ async def get_analysis(
         raise HTTPException(status_code=404, detail="면접을 찾을 수 없습니다")
 
     result = await db.execute(
-        select(Analysis).where(Analysis.interview_id == interview_id)
+        select(Analysis)
+        .options(
+            selectinload(Analysis.interview)
+            .selectinload(Interview.questions)
+        )
+        .where(Analysis.interview_id == interview_id)
     )
     analysis = result.scalar_one_or_none()
     if not analysis:
@@ -222,4 +252,9 @@ async def get_analysis(
             status_code=404,
             detail="분석 결과가 아직 없습니다. 먼저 분석을 시작하세요.",
         )
+
+    analysis.question_feedbacks = sorted(
+        [q for q in analysis.interview.questions if q.answer_text],
+        key=lambda q: q.order,
+    )
     return analysis
