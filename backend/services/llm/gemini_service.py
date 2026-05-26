@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai.errors import APIError
 
-load_dotenv()
+load_dotenv(override=True)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # .env의 GEMINI_MODEL을 우선 사용, 없으면 gemini-2.0-flash 기본값
@@ -156,7 +156,19 @@ async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
 
 # ── 3) 종합 총평 생성 (파이프라인 마지막 단계) ────────────────────────────────────
 async def generate_overall_summary_with_gemini(qna_feedbacks: list[dict]) -> dict:
-    default = {"feedback_summary": "분석 결과를 생성할 수 없습니다.", "strengths": [], "improvements": []}
+    default = {
+        "feedback_summary": "AI 서비스 일시 오류로 총평을 생성할 수 없습니다. 질문별 피드백을 참고하세요.",
+        "strengths": [
+            "모든 질문에 성실하게 답변하셨습니다",
+            "면접에 끝까지 적극적으로 참여하셨습니다",
+            "자기소개서 기반 맞춤 질문에 빠짐없이 응하셨습니다",
+        ],
+        "improvements": [
+            "구체적인 경험과 수치를 활용해 답변하면 더욱 설득력이 높아집니다",
+            "STAR 기법(상황→과제→행동→결과)으로 답변을 구조화해 보세요",
+            "스토리텔링 방식으로 답변하면 면접관에게 더 인상적으로 전달됩니다",
+        ],
+    }
 
     if not GEMINI_API_KEY or not qna_feedbacks:
         return default
