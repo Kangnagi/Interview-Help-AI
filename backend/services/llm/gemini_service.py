@@ -41,10 +41,10 @@ async def analyze_answer_with_gemini(question: str, answer: str, audio_image_byt
     면접 질문과 지원자의 답변을 받아 Gemini API를 통해 면접 피드백을 비동기로 생성합니다.
     """
     if not GEMINI_API_KEY:
-        return {"feedback": "서버 오류: Gemini API 키가 설정되지 않았습니다.", "content_score": 0, "relevance_score": 0, "clarity_score": 0, "speech_score": 0, "posture_score": 0, "eye_contact_score": 0}
+        return {"feedback": "서버 오류: Gemini API 키가 설정되지 않았습니다."}
 
     if not answer or answer.strip() == "답변 없음" or len(answer.strip()) < 5:
-        return {"feedback": "답변 내용이 너무 짧거나 입력되지 않아 피드백을 생성할 수 없었습니다.", "content_score": 0, "relevance_score": 0, "clarity_score": 0, "speech_score": 0, "posture_score": 0, "eye_contact_score": 0}
+        return {"feedback": "답변 내용이 너무 짧거나 입력되지 않아 피드백을 생성할 수 없었습니다."}
 
     prompt_text = f"""
     당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.
@@ -52,12 +52,6 @@ async def analyze_answer_with_gemini(question: str, answer: str, audio_image_byt
     
     아래 항목들을 포함하여 반드시 JSON 형식으로만 응답해 주세요:
     {{
-      "content_score": 0~100 사이의 숫자 (내용 및 논리성),
-      "relevance_score": 0~100 사이의 숫자 (질문 적합성),
-      "clarity_score": 0~100 사이의 숫자 (명확성 및 전달력),
-      "speech_score": 0~100 사이의 숫자 (음성 품질 및 톤 안정성. 음성 파형 참고),
-      "posture_score": 0~100 사이의 숫자 (자세 및 태도. 영상이 없으면 텍스트의 정중함으로 추론),
-      "eye_contact_score": 0~100 사이의 숫자 (눈맞춤 및 시선. 영상이 없으면 텍스트의 자신감으로 추론),
       "feedback": "1. 잘한 점\\n2. 아쉬운 점 / 개선 방향 (음성 이미지가 있다면 파형을 분석해 목소리 톤/안정성 피드백 포함)\\n3. 모범 답변 방향성 제안"
     }}
 
@@ -85,15 +79,15 @@ async def analyze_answer_with_gemini(question: str, answer: str, audio_image_byt
             return json.loads(text.strip())
         except Exception as e:
             print(f"Gemini API 피드백 생성 오류 (시도 {attempt+1}/3): {e}")
-            await asyncio.sleep(2) # 제한(Rate Limit) 방지를 위한 2초 대기
+            await asyncio.sleep(10) # 제한(Rate Limit) 방지를 위한 2초 대기
             
-    return {"feedback": "API 요청 제한으로 인해 피드백을 생성하지 못했습니다.", "content_score": 0, "relevance_score": 0, "clarity_score": 0, "speech_score": 0, "posture_score": 0, "eye_contact_score": 0}
+    return {"feedback": "API 요청 제한으로 인해 피드백을 생성하지 못했습니다."}
 
 async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
     """
     여러 개의 면접 질문과 답변을 한 번의 API 호출로 묶어서(Batch) 분석합니다. (API 호출 횟수 최적화)
     """
-    fallback_result = [{"feedback": "API 요청 제한으로 인해 피드백을 생성하지 못했습니다.", "content_score": 0, "relevance_score": 0, "clarity_score": 0, "speech_score": 0, "posture_score": 0, "eye_contact_score": 0} for _ in qna_list]
+    fallback_result = [{"feedback": "API 요청 제한으로 인해 피드백을 생성하지 못했습니다."} for _ in qna_list]
     
     if not GEMINI_API_KEY or not qna_list:
         return fallback_result
@@ -138,7 +132,7 @@ async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
             if isinstance(result_json, dict) and len(result_json) == 1: result_json = list(result_json.values())[0]
             if isinstance(result_json, list) and len(result_json) == len(qna_list): return result_json
         except Exception as e:
-            wait_time = 3 + (attempt * 2)  # 3초, 5초, 7초 점진적 대기
+            wait_time = 15 + (attempt * 15)  # # 무료 API 제한을 피하기 위해 15초, 30초, 45초로 대기 시간을 길게 잡습니다.
             print(f"Gemini API 일괄(Batch) 분석 오류 (시도 {attempt+1}/4): {e} -> {wait_time}초 대기...")
             await asyncio.sleep(wait_time)
             
@@ -177,7 +171,7 @@ async def analyze_answer_with_gemini_short(question: str, answer: str, audio_ima
         except Exception as e:
             last_error = str(e)
             print(f"Gemini API 짧은 피드백 생성 오류 (시도 {attempt+1}/2): {e}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)
             
     return f"피드백 생성 실패 (에러: {last_error})"
 

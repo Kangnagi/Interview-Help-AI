@@ -56,7 +56,7 @@ async def _run_analysis_pipeline(interview_id: int):
             )
             analysis = existing.scalar_one_or_none() or Analysis(interview_id=interview_id)
 
-            # ── 2) Gemini: 5개의 답변을 1번의 Batch 호출로 일괄 분석 ─────────
+            # ── 2) KoBERT(점수 평가) 및 Gemini(피드백 생성) 분석 ─────────
             content_scores, relevance_scores, clarity_scores = [], [], []
             speech_scores, posture_scores, eye_contact_scores = [], [], []
             all_feedbacks = []
@@ -87,7 +87,7 @@ async def _run_analysis_pipeline(interview_id: int):
             # 한 번의 호출로 모든 분석 결과 받아오기
             batch_results = await analyze_answers_batch_with_gemini(qna_list) if qna_list else []
 
-            # 결과 매핑
+            # ── Gemini 피드백 결과 매핑 ──
             for q, gemini_result in zip(valid_questions, batch_results):
                 if isinstance(gemini_result, dict):
                     try: c_score = int(gemini_result.get("content_score", 80))
@@ -106,23 +106,24 @@ async def _run_analysis_pipeline(interview_id: int):
                 else:
                     c_score = r_score = cl_score = sp_score = p_score = e_score = 80
                     fb_text = str(gemini_result)
+                    content_scores.append(c_score)
+                    relevance_scores.append(r_score)
+                    clarity_scores.append(cl_score)
+                    speech_scores.append(sp_score)
+                    posture_scores.append(p_score)
+                    eye_contact_scores.append(e_score)
               
-                content_scores.append(c_score)
-                relevance_scores.append(r_score)
-                clarity_scores.append(cl_score)
-                speech_scores.append(sp_score)
-                posture_scores.append(p_score)
-                eye_contact_scores.append(e_score)
-
                 if fb_text:
                     all_feedbacks.append(f"Q: {q.question_text}\n{fb_text}")
 
             analysis.content_score   = _avg(content_scores)
             analysis.relevance_score = _avg(relevance_scores)
             analysis.clarity_score   = _avg(clarity_scores)
+            
             analysis.speech_score    = _avg(speech_scores)
             analysis.posture_score   = _avg(posture_scores)
             analysis.eye_contact_score = _avg(eye_contact_scores)
+
 
             # ── 3) 파일 분석(음성/영상) 건너뛰기 (에러 방지) ───
             # 현재 웹소켓으로 실시간 전송 중이므로 저장된 video_path 호출 시 에러가 날 수 있음. 
