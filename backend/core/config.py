@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"   # JWT 서명 비밀키 (운영 시 반드시 교체)
     ALGORITHM: str = "HS256"                     # JWT 서명 알고리즘
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60        # 액세스 토큰 유효 시간 (분)
-    GEMINI_API_KEY: str = ""   # .env 파일에 GEMINI_API_KEY= 로 설정
+    GEMINI_API_KEY: Optional[str] = None        # .env 파일에 GEMINI_API_KEY= 로 설정
     GEMINI_MODEL: str = "gemini-2.0-flash"
 
     # ── DB ─────────────────────────────────────────────────
@@ -39,9 +39,6 @@ class Settings(BaseSettings):
     WHISPER_MODEL_SIZE: str = "base"                        # Whisper 모델 크기 (tiny/base/small/medium/large)
     WHISPER_LANGUAGE: str = "ko"                            # Whisper 인식 언어 (한국어 고정)
     MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5        # MediaPipe 얼굴 감지 최소 신뢰도 (0~1)
-    
-    
-    GEMINI_API_KEY: Optional[str] = None
 
     class Config:
         env_file = ".env"          # 프로젝트 루트의 .env 파일에서 환경 변수 로드

@@ -175,8 +175,8 @@ export default function PracticeInterviewPage() {
         text: answer.trim()
           ? '답변 내용을 잘 전달하셨습니다. 더 구체적인 사례를 추가하면 더욱 좋겠습니다.'
           : '답변이 저장되었습니다.',
-        score: null,
-        tip: '',
+        score: answer.trim() ? 70 : 30,
+        tip: '구체적인 경험과 수치를 활용해 답변해 보세요.',
       }
     }
 
@@ -394,6 +394,12 @@ export default function PracticeInterviewPage() {
 
             {phase === PHASE.FEEDBACK && (
               <div className="fade-up">
+                {answer && (
+                  <div style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 10, padding: '10px 14px', marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 5 }}>내 답변</div>
+                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,.65)', lineHeight: 1.65 }}>{answer}</div>
+                  </div>
+                )}
                 <div style={{ background: 'rgba(16,185,129,.08)', border: '1.5px solid rgba(34,197,94,.35)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
                     💡 AI 피드백

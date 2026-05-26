@@ -6,7 +6,7 @@ import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tool
 export default function AnalysisPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { fetchAnalysis, analysis, loading, resetAnalysis } = useInterviewStore()
+  const { fetchAnalysis, analysis, resetAnalysis } = useInterviewStore()
   const [polling, setPolling] = useState(true)
 
   // Clear stale analysis from a previous interview on mount
@@ -29,7 +29,7 @@ export default function AnalysisPage() {
     return () => clearInterval(timer)
   }, [id])
 
-  if (loading || polling) {
+  if (polling && !analysis) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <div className="spinner" style={{ margin: '0 auto 16px' }} />

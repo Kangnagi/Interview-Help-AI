@@ -75,15 +75,13 @@ export const useInterviewStore = create((set, get) => ({
     await analysisAPI.start(interviewId)                               // 백엔드 분석 시작 (202 응답 후 백그라운드 진행)
   },
 
-  // 분석 결과 조회
+  // 분석 결과 조회 (폴링용 — loading 플래그 변경 없음, 결과 있으면 화면 유지)
   fetchAnalysis: async (interviewId) => {
-    set({ loading: true })
     try {
-      const { data } = await analysisAPI.get(interviewId)              // 분석 결과 조회 (폴링용)
-      set({ analysis: data, loading: false })
+      const { data } = await analysisAPI.get(interviewId)
+      set({ analysis: data })
       return data
     } catch {
-      set({ loading: false })
       return null
     }
   },
