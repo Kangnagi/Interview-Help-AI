@@ -70,12 +70,21 @@ export default function RealInterviewPage() {
     setDeviceIds({ cameraId, micId })
     setSessionStarted(true)
 
+    const resumeText = resume ? [
+      resume.title         && `제목: ${resume.title}`,
+      resume.companyName   && `지원 회사: ${resume.companyName}`,
+      resume.jobTitle      && `지원 직무: ${resume.jobTitle}`,
+      resume.jobDescription && `직무 설명: ${resume.jobDescription}`,
+      resume.idealCandidate && `인재상: ${resume.idealCandidate}`,
+    ].filter(Boolean).join('\n') : ''
+
     try {
       const { data: interview } = await interviewAPI.create({
         title: `${resume?.title || '실전'} 실전면접`,
         category: 'general',
         interview_type: 'real',
         resume_ref_id: resumeId,
+        resume_text: resumeText || undefined,
       })
       setBackendInterviewId(interview.id)
       const { data: questions } = await interviewAPI.getQuestions(interview.id)
@@ -152,6 +161,13 @@ export default function RealInterviewPage() {
       cancelAnimationFrame(micRafRef.current)
     }
   }, [sessionStarted]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // phase가 'interview'로 바뀔 때 video 요소에 스트림 재할당 (요소가 그 전엔 미렌더링)
+  useEffect(() => {
+    if (phase === 'interview' && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current
+    }
+  }, [phase])
 
   const startQTimer = useCallback(() => {
     clearInterval(timerRef.current)
@@ -257,19 +273,22 @@ export default function RealInterviewPage() {
   }, [showFeedback])
 
   const handleStart = async () => {
-    setIsCreating(true)
-    try {
-      const { data: interviewData } = await interviewAPI.create({
-        title: resume?.title || '실전 면접',
-        category: 'general',
-      })
-      setBackendInterviewId(interviewData.id)
-      const { data: questions } = await interviewAPI.getQuestions(interviewData.id)
-      setBackendQuestions(questions)
-    } catch (err) {
-      console.error('면접 생성 실패 (오프라인 모드로 진행):', err)
-    } finally {
-      setIsCreating(false)
+    // handleSetupReady에서 이미 생성된 경우 중복 생성 방지
+    if (!backendInterviewId) {
+      setIsCreating(true)
+      try {
+        const { data: interviewData } = await interviewAPI.create({
+          title: resume?.title || '실전 면접',
+          category: 'general',
+        })
+        setBackendInterviewId(interviewData.id)
+        const { data: questions } = await interviewAPI.getQuestions(interviewData.id)
+        setBackendQuestions(questions)
+      } catch (err) {
+        console.error('면접 생성 실패 (오프라인 모드로 진행):', err)
+      } finally {
+        setIsCreating(false)
+      }
     }
     setPhase('interview')
     totalRef.current = setInterval(() => setTotalSec((p) => p + 1), 1000)

@@ -39,7 +39,7 @@ export default function PracticeInterviewPage() {
   const [answerSec, setAnswerSec] = useState(0)
   const [exitConfirm, setExitConfirm] = useState(false)
   const [faceStatus, setFaceStatus] = useState('waiting')
-  const [feedback, setFeedback] = useState('')
+  const [feedback, setFeedback] = useState(null)
   const [deviceError, setDeviceError] = useState(null)
   const [backendInterviewId, setBackendInterviewId] = useState(null)
   const [backendQuestions, setBackendQuestions] = useState([])
@@ -65,12 +65,21 @@ export default function PracticeInterviewPage() {
     setDeviceIds({ cameraId, micId })
     setSessionStarted(true)
 
+    const resumeText = resume ? [
+      resume.title         && `제목: ${resume.title}`,
+      resume.companyName   && `지원 회사: ${resume.companyName}`,
+      resume.jobTitle      && `지원 직무: ${resume.jobTitle}`,
+      resume.jobDescription && `직무 설명: ${resume.jobDescription}`,
+      resume.idealCandidate && `인재상: ${resume.idealCandidate}`,
+    ].filter(Boolean).join('\n') : ''
+
     try {
       const { data: interview } = await interviewAPI.create({
         title: `${resume?.title || '연습'} 연습면접`,
         category: 'general',
         interview_type: 'practice',
         resume_ref_id: resumeId,
+        resume_text: resumeText || undefined,
       })
       setBackendInterviewId(interview.id)
       const { data: questions } = await interviewAPI.getQuestions(interview.id)
@@ -153,31 +162,30 @@ export default function PracticeInterviewPage() {
     setFeedbackLoading(true)
     setPhase(PHASE.FEEDBACK)
 
-    let fb = '답변이 저장되었습니다.'
+    let feedbackData = { text: '답변이 저장되었습니다.', score: null, tip: '' }
     try {
       if (backendInterviewId && currentQuestion?.id) {
         await interviewAPI.submitAnswer(backendInterviewId, currentQuestion.id, { answer_text: answer })
+        const { data } = await interviewAPI.getQuestionFeedback(backendInterviewId, currentQuestion.id)
+        feedbackData = { text: data.feedback || '', score: data.score ?? null, tip: data.tip || '' }
       }
-      const { data } = await analysisAPI.getFeedback({
-        question: currentQ,
-        answer: answer || '(답변 없음)',
-        company: resume?.companyName || '',
-        job: resume?.jobTitle || '',
-      })
-      fb = data.feedback
     } catch (err) {
       console.error('피드백 생성 실패:', err)
-      fb = answer.trim()
-        ? '답변 내용을 잘 전달하셨습니다. 더 구체적인 사례를 추가하면 더욱 좋겠습니다.'
-        : '답변이 저장되었습니다.'
+      feedbackData = {
+        text: answer.trim()
+          ? '답변 내용을 잘 전달하셨습니다. 더 구체적인 사례를 추가하면 더욱 좋겠습니다.'
+          : '답변이 저장되었습니다.',
+        score: null,
+        tip: '',
+      }
     }
 
-    setFeedback(fb)
+    setFeedback(feedbackData)
     setFeedbackLoading(false)
   }
 
   const nextQuestion = async () => {
-    setLog((prev) => [...prev, { q: currentQ, a: answer, feedback }])
+    setLog((prev) => [...prev, { q: currentQ, a: answer, feedback: feedback?.text || '' }])
     if (qIndex + 1 >= backendQuestions.length) {
       if (backendInterviewId) {
         try {
@@ -386,16 +394,35 @@ export default function PracticeInterviewPage() {
 
             {phase === PHASE.FEEDBACK && (
               <div className="fade-up">
-                <div style={{ background: 'rgba(16,185,129,.12)', border: '1.5px solid rgba(34,197,94,.4)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ background: 'rgba(16,185,129,.08)', border: '1.5px solid rgba(34,197,94,.35)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
                     💡 AI 피드백
                     {feedbackLoading && <span className="fb-spinner" />}
                   </div>
                   {feedbackLoading ? (
                     <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>AI가 답변을 분석하고 있습니다...</div>
-                  ) : (
-                    <div style={{ fontSize: 14, color: 'rgba(255,255,255,.85)', lineHeight: 1.6 }}>{feedback}</div>
-                  )}
+                  ) : feedback ? (
+                    <>
+                      {feedback.score != null && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                          <span style={{
+                            fontSize: 22, fontWeight: 800,
+                            color: feedback.score >= 80 ? '#10b981' : feedback.score >= 60 ? '#f59e0b' : '#ef4444',
+                          }}>{feedback.score}점</span>
+                          <span style={{ fontSize: 12, color: 'rgba(255,255,255,.45)' }}>
+                            {feedback.score >= 80 ? '훌륭한 답변!' : feedback.score >= 60 ? '좋은 시도입니다!' : '더 구체적으로'}
+                          </span>
+                        </div>
+                      )}
+                      <div style={{ fontSize: 13, color: 'rgba(255,255,255,.82)', lineHeight: 1.65 }}>{feedback.text}</div>
+                      {feedback.tip && (
+                        <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(79,110,247,.1)', border: '1px solid rgba(79,110,247,.25)', borderRadius: 8 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#6d85f8', marginBottom: 4 }}>💡 다음 답변 팁</div>
+                          <div style={{ fontSize: 12, color: 'rgba(255,255,255,.65)', lineHeight: 1.6 }}>{feedback.tip}</div>
+                        </div>
+                      )}
+                    </>
+                  ) : null}
                 </div>
                 {!feedbackLoading && (
                   <div style={{ textAlign: 'center' }}>

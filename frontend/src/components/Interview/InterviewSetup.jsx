@@ -129,7 +129,7 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
         tick()
         cleanup = () => {
           cancelAnimationFrame(rafRef.current)
-          ctx.close()
+          if (ctx.state !== 'closed') ctx.close()
           s.getTracks().forEach((t) => t.stop())
         }
         micCleanupRef.current = cleanup
