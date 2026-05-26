@@ -52,10 +52,16 @@ class InterviewCreate(BaseModel):
     """POST /interviews 요청 바디 — 면접 생성 입력값"""
     title: str
     category: InterviewCategory = InterviewCategory.GENERAL
+<<<<<<< HEAD
     interview_type: str = "practice"          # 'practice' | 'real'
     resume_ref_id: Optional[str] = None       # 프론트 localStorage 자기소개서 ID
     resume_text: Optional[str] = None         # Gemini 질문 생성용 자기소개서 원문
 
+=======
+    # [추가] 자기소개서 텍스트 필드
+    # Optional로 설정하여 자소서 없이 일반 면접을 볼 때의 유연함도 확보했습니다.
+    resume_text: Optional[str] = None
+>>>>>>> origin/feature/AI_model_error_v2
 
 class InterviewResponse(BaseModel):
     """면접 단건 조회·목록 응답"""

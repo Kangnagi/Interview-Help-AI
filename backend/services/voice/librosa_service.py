@@ -1,10 +1,14 @@
 import io
 import os
+<<<<<<< HEAD
+=======
+import asyncio
+import matplotlib
+matplotlib.use('Agg') # GUI가 없는 서버 환경에서 오류 방지
+import matplotlib.pyplot as plt
+>>>>>>> origin/feature/AI_model_error_v2
 import librosa
-import numpy as np
-import logging
-
-logger = logging.getLogger(__name__)
+import librosa.display
 
 
 async def generate_audio_spectrogram(audio_path: str):
@@ -35,32 +39,59 @@ async def generate_audio_spectrogram(audio_path: str):
 
 class AudioAnalyzer:
     @staticmethod
-    def analyze_features(audio_path: str):
-        """
-        Librosa를 사용하여 음성 신호의 특징(피치, 에너지, 무음 비율)을 추출합니다.
-        """
+    def analyze_features_from_bytes(audio_bytes: bytes) -> dict:
+        """오디오 바이트 데이터에서 목소리 특징(음량, 길이 등)을 분석합니다."""
         try:
-            y, sr = librosa.load(audio_path)
-
-            # 1. 피치(Pitch) 추출
-            pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
-            pitch = np.mean(pitches[pitches > 0]) if np.any(pitches > 0) else 0
-
-            # 2. 에너지(RMS): 목소리 크기
+            import soundfile as sf
+            import numpy as np
+            with io.BytesIO(audio_bytes) as f:
+                y, sr = sf.read(f)
+            if len(y) == 0:
+                return {}
+            
+            # 간단한 RMS(음량) 계산
             rms = librosa.feature.rms(y=y)
-            energy = np.mean(rms)
-
-            # 3. 무음 구간 비율 (Silence)
-            intervals = librosa.effects.split(y, top_db=30)
-            total_duration = len(y) / sr
-            speech_duration = sum([(end - start) for start, end in intervals]) / sr
-            silence_ratio = (total_duration - speech_duration) / total_duration if total_duration > 0 else 0
-
             return {
-                "avg_pitch": round(float(pitch), 2),
-                "avg_energy": round(float(energy), 4),
-                "silence_ratio": round(silence_ratio, 2)
+                "duration_sec": len(y) / sr,
+                "avg_volume": float(np.mean(rms))
             }
         except Exception as e:
-            logger.error(f"Librosa 분석 오류: {e}")
+            print(f"AudioAnalyzer 분석 중 오류 발생: {e}")
+            return {}
+
+def _create_spectrogram_sync(audio_path: str) -> bytes:
+    """동기적으로 스펙트로그램 이미지를 생성하는 내부 함수"""
+    if not os.path.exists(audio_path):
+        return None
+        
+    try:
+        # 1. 오디오 로드
+        y, sr = librosa.load(audio_path, sr=None)
+        
+        if len(y) == 0:
             return None
+
+        # 2. 멜 스펙트로그램 생성
+        plt.figure(figsize=(10, 4))
+        S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
+        S_dB = librosa.power_to_db(S, ref=max)
+        
+        # 3. 이미지 그리기 및 바이트 데이터로 추출
+        librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel')
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+        plt.close()
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        print(f"Librosa 스펙트로그램 생성 중 오류: {e}")
+        return None
+
+async def generate_audio_spectrogram(audio_path: str) -> bytes:
+    """
+    저장된 오디오 파일을 읽어들여 멜 스펙트로그램 이미지로 변환합니다.
+    (서버 멈춤을 방지하기 위해 비동기 논블로킹 스레드에서 실행됩니다.)
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _create_spectrogram_sync, audio_path)
