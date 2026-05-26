@@ -66,25 +66,9 @@ export default function RealInterviewPage() {
     if (phase !== 'interview') stopSTT()
   }, [phase, stopSTT])
 
-  // intro→interview 전환 시 카메라 스트림을 video 요소에 연결
-  // (video 요소는 interview phase에서만 렌더링되므로 여기서 srcObject를 재할당해야 함)
-  useEffect(() => {
-    if (phase === 'interview' && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current
-    }
-  }, [phase])
-
   const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
     setDeviceIds({ cameraId, micId })
     setSessionStarted(true)
-
-    // 자기소개서 내용을 텍스트로 변환해서 백엔드로 전달 (Gemini 맞춤 질문 생성용)
-    const resumeText = [
-      resume?.companyName && `지원 회사: ${resume.companyName}`,
-      resume?.jobTitle    && `지원 직무: ${resume.jobTitle}`,
-      resume?.jobDescription && `직무 내용:\n${resume.jobDescription}`,
-      resume?.idealCandidate && `인재상:\n${resume.idealCandidate}`,
-    ].filter(Boolean).join('\n\n')
 
     try {
       const { data: interview } = await interviewAPI.create({
@@ -92,7 +76,6 @@ export default function RealInterviewPage() {
         category: 'general',
         interview_type: 'real',
         resume_ref_id: resumeId,
-        resume_text: resumeText || null,
       })
       setBackendInterviewId(interview.id)
       const { data: questions } = await interviewAPI.getQuestions(interview.id)
@@ -273,8 +256,21 @@ export default function RealInterviewPage() {
     return () => clearTimeout(t)
   }, [showFeedback])
 
-  const handleStart = () => {
-    // 면접 세션은 handleSetupReady에서 이미 생성됨 — 여기서는 타이머·단계 전환만 처리
+  const handleStart = async () => {
+    setIsCreating(true)
+    try {
+      const { data: interviewData } = await interviewAPI.create({
+        title: resume?.title || '실전 면접',
+        category: 'general',
+      })
+      setBackendInterviewId(interviewData.id)
+      const { data: questions } = await interviewAPI.getQuestions(interviewData.id)
+      setBackendQuestions(questions)
+    } catch (err) {
+      console.error('면접 생성 실패 (오프라인 모드로 진행):', err)
+    } finally {
+      setIsCreating(false)
+    }
     setPhase('interview')
     totalRef.current = setInterval(() => setTotalSec((p) => p + 1), 1000)
     startQTimer()
@@ -366,9 +362,10 @@ export default function RealInterviewPage() {
             <button onClick={() => navigate('/resume')} style={{ background: 'transparent', color: 'rgba(255,255,255,.5)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '12px 24px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
             <button
               onClick={handleStart}
-              style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 36px', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+              disabled={isCreating}
+              style={{ background: isCreating ? '#334' : '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 36px', fontSize: 15, fontWeight: 700, cursor: isCreating ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: isCreating ? 0.6 : 1 }}
             >
-              면접 시작
+              {isCreating ? '준비 중...' : '면접 시작'}
             </button>
           </div>
         </div>

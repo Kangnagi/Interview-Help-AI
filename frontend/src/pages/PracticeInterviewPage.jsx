@@ -65,20 +65,12 @@ export default function PracticeInterviewPage() {
     setDeviceIds({ cameraId, micId })
     setSessionStarted(true)
 
-    const resumeText = [
-      resume?.companyName && `지원 회사: ${resume.companyName}`,
-      resume?.jobTitle    && `지원 직무: ${resume.jobTitle}`,
-      resume?.jobDescription && `직무 내용:\n${resume.jobDescription}`,
-      resume?.idealCandidate && `인재상:\n${resume.idealCandidate}`,
-    ].filter(Boolean).join('\n\n')
-
     try {
       const { data: interview } = await interviewAPI.create({
         title: `${resume?.title || '연습'} 연습면접`,
         category: 'general',
         interview_type: 'practice',
         resume_ref_id: resumeId,
-        resume_text: resumeText || null,
       })
       setBackendInterviewId(interview.id)
       const { data: questions } = await interviewAPI.getQuestions(interview.id)
