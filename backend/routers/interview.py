@@ -29,6 +29,7 @@ from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import InterviewCreate, InterviewResponse, QuestionResponse, AnswerSubmit
+from core.config import settings
 from services.llm.gemini_service import generate_questions_from_resume
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ async def create_interview(
                     "index": 0
                 }
             logger.info(f"Interview {interview.id}: 캐시된 질문 풀에서 가져옵니다. (API 절약)")
-        elif os.getenv("GEMINI_API_KEY") and body.resume_text and len(body.resume_text.strip()) > 10:
+        elif settings.GEMINI_API_KEY and body.resume_text and len(body.resume_text.strip()) > 10:
             logger.info(f"Interview {interview.id}: Gemini API로 질문 풀 생성을 시도합니다.")
             category_val = body.category.value if hasattr(body.category, "value") else str(body.category)
             raw_questions = await generate_questions_from_resume(

@@ -5,14 +5,6 @@ python-multipart==0.0.9
 python-dotenv==1.0.1
 pydantic==2.7.1
 pydantic-settings==2.2.1
-<<<<<<< HEAD
-<<<<<<< Updated upstream
-=======
-google-generativeai==0.8.6
->>>>>>> Stashed changes
-=======
-google-generativeai==0.8.6  # Gemini API 사용 시 필수
->>>>>>> develop
 
 # DB
 sqlalchemy==2.0.30
@@ -22,6 +14,7 @@ aiosqlite==0.20.0
 # Auth
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+argon2-cffi
 
 # HTTP
 httpx==0.27.0
@@ -29,22 +22,17 @@ httpx==0.27.0
 # WebSocket
 websockets==12.0
 
-# AI
+# LLM
+google-generativeai>=0.5.2
+
+# AI (KoBERT)
 torch==2.1.2
 transformers==4.35.2
 tokenizers==0.14.1
 sentencepiece==0.1.99
 accelerate==0.25.0
 protobuf==4.25.3
-<<<<<<< HEAD
-<<<<<<< Updated upstream
-=======
 git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
->>>>>>> Stashed changes
-=======
-# KoBERT 핵심: 아래 주소가 없으면 KoBERT 모델 로드 시 에러남.
-git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
->>>>>>> develop
 
 # Vision
 mediapipe==0.10.33
@@ -52,128 +40,11 @@ opencv-python==4.9.0.80
 numpy==1.26.4
 Pillow==10.3.0
 
-# Voice
-<<<<<<< HEAD
-<<<<<<< Updated upstream
+# Voice / STT
 openai-whisper==20231117
-=======
-faster-whisper==1.0.1
->>>>>>> Stashed changes
-=======
-#openai-whisper==20231117
->>>>>>> develop
 ffmpeg-python==0.2.0
 
-# Audio
+# Audio analysis
 librosa==0.10.2
-
-# API
-google-generativeai>=0.5.2
-python-dotenv>=1.0.1
-
-
-# absl-py               2.4.0                                                             
-# accelerate            0.30.1                                                            
-# aiosqlite             0.22.1                                                                                                                                                    
-# alembic               1.18.4                                                            
-# annotated-doc         0.0.4                                                             
-# annotated-types       0.7.0                                                             
-# anyio                 4.13.0
-# argon2-cffi           25.1.0
-# argon2-cffi-bindings  25.1.0
-# audioread             3.1.0
-# bcrypt                5.0.0
-# certifi               2026.4.22
-# cffi                  2.0.0
-# charset-normalizer    3.4.7
-# click                 8.3.3
-# colorama              0.4.6
-# contourpy             1.3.3
-# cryptography          48.0.0
-# cycler                0.12.1
-# decorator             5.2.1
-# dnspython             2.8.0
-# ecdsa                 0.19.2
-# email-validator       2.3.0
-# fastapi               0.136.1
-# ffmpeg-python         0.2.0
-# filelock              3.29.0
-# flatbuffers           25.12.19
-# fonttools             4.62.1
-# fsspec                2026.4.0
-# future                1.0.0
-# greenlet              3.5.0
-# h11                   0.16.0
-# huggingface_hub       0.36.2
-# idna                  3.13
-# Jinja2                3.1.6
-# joblib                1.5.3
-# kiwisolver            1.5.0
-# lazy-loader           0.5
-# librosa               0.11.0
-# llvmlite              0.47.0
-# Mako                  1.3.12
-# MarkupSafe            3.0.3
-# matplotlib            3.10.9
-# mediapipe             0.10.35
-# more-itertools        11.0.2
-# mpmath                1.3.0
-# msgpack               1.1.2
-# networkx              3.6.1
-# numba                 0.65.1
-# numpy                 2.4.4
-# openai-whisper        20231117
-# opencv-contrib-python 4.13.0.92
-# opencv-python         4.13.0.92
-# packaging             26.2
-# passlib               1.7.4
-# pillow                12.2.0
-# pip                   24.0
-# platformdirs          4.9.6
-# pooch                 1.9.0
-# psutil                7.2.2
-# pyasn1                0.6.3
-# pycparser             3.0
-# pydantic              2.13.3
-# pydantic_core         2.46.3
-# pydantic-settings     2.14.0
-# pyparsing             3.3.2
-# python-dateutil       2.9.0.post0
-# python-dotenv         1.2.2
-# python-jose           3.5.0
-# PyYAML                6.0.3
-# regex                 2026.4.4
-# requests              2.33.1
-# rsa                   4.9.1
-# safetensors           0.7.0
-# scikit-learn          1.8.0
-# scipy                 1.17.1
-# sentencepiece         0.1.99
-# setuptools            68.2.2
-# six                   1.17.0
-# sounddevice           0.5.5
-# soundfile             0.13.1
-# soxr                  1.1.0
-# SQLAlchemy            2.0.49
-# starlette             1.0.0
-# sympy                 1.14.0
-# threadpoolctl         3.6.0
-# tiktoken              0.12.0
-# tokenizers            0.19.1
-# torch                 2.11.0
-# tqdm                  4.67.3
-# transformers          4.41.2
-# typing_extensions     4.15.0
-# typing-inspection     0.4.2
-# urllib3               2.6.3
-# uvicorn               0.46.0
-# wheel                 0.47.0
-librosa
-matplotlib
 soundfile
-numpy
-argon2-cffi
-openai-whisper
-torch
-transformers
-sentencepiece
+matplotlib

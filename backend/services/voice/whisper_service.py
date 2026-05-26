@@ -1,11 +1,17 @@
 """
 Whisper 음성 인식 서비스
-현재는 Stub — 다음 단계에서 실제 모델 로딩 구현
 
-사용 예정: openai/whisper (base 또는 small 모델, 한국어)
-나중에 추가: Librosa (발화 속도, 음높이, 에너지 분석)
+openai-whisper 모델을 사용해 WebM/WAV 오디오를 한국어 텍스트로 변환.
+Librosa를 통해 음성 특징(무음 비율, 에너지)도 함께 분석.
+
+모델 크기(WHISPER_MODEL_SIZE):
+  tiny   ~ 39M  파라미터 — 빠르지만 정확도 낮음
+  base   ~ 74M  파라미터 — 속도/정확도 균형 (기본값)
+  small  ~ 244M 파라미터 — 한국어 정확도 높음
 """
 import logging
+import os
+import tempfile
 from typing import Optional
 from pathlib import Path
 from core.config import settings
@@ -14,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 class WhisperService:
-    """Whisper STT + 음성 분석 서비스"""
 
     _instance: Optional["WhisperService"] = None
     _model = None
@@ -25,50 +30,88 @@ class WhisperService:
         return cls._instance
 
     async def load_model(self):
-        """
-        다음 단계에서 구현:
-        import whisper
-        self._model = whisper.load_model(settings.WHISPER_MODEL_SIZE)
-        """
-        logger.info(f"Whisper: {settings.WHISPER_MODEL_SIZE} 모델 로드 준비 (현재 Stub)")
+        if self._model is not None:
+            return
+        logger.info(f"Whisper '{settings.WHISPER_MODEL_SIZE}' 모델 로딩 중...")
+        try:
+            import whisper
+            self._model = whisper.load_model(settings.WHISPER_MODEL_SIZE)
+            logger.info("Whisper 로딩 완료")
+        except Exception as e:
+            logger.error(f"Whisper 로딩 실패 (ffmpeg 설치 여부 확인): {e}")
+            self._model = None
 
     async def transcribe(self, audio_path: str) -> dict:
-        """
-        오디오 파일 → 텍스트 변환
-        다음 단계에서 실제 Whisper 추론으로 교체
-        """
+        """오디오 파일 경로를 받아 한국어 텍스트로 변환."""
         path = Path(audio_path)
         if not path.exists():
-            return {"text": "", "error": "파일을 찾을 수 없습니다"}
+            return {"text": "", "error": f"파일 없음: {audio_path}"}
 
-        # TODO:
-        # result = self._model.transcribe(audio_path, language=settings.WHISPER_LANGUAGE)
-        # return {"text": result["text"], "segments": result["segments"]}
+        if self._model is None:
+            logger.warning("Whisper 모델 미로드 상태 — transcribe 건너뜀")
+            return {"text": "", "language": "ko", "segments": []}
 
-        logger.info(f"Whisper STT (Stub): {audio_path}")
-        return {"text": "(음성 인식 결과가 여기에 표시됩니다)", "language": "ko", "segments": []}
+        try:
+            result = self._model.transcribe(
+                str(path),
+                language=settings.WHISPER_LANGUAGE,
+                fp16=False,  # CPU 환경에서는 fp16 비활성화 필수
+            )
+            return {
+                "text": result["text"].strip(),
+                "language": result.get("language", "ko"),
+                "segments": result.get("segments", []),
+            }
+        except Exception as e:
+            logger.error(f"Whisper 변환 실패: {e}")
+            return {"text": "", "error": str(e)}
 
     async def transcribe_bytes(self, audio_bytes: bytes) -> dict:
-        """오디오 바이트를 받아 STT 결과를 반환. 실제 Whisper 연동 전 stub."""
+        """오디오 바이트를 임시 파일로 저장 후 변환."""
         if not audio_bytes:
             return {"text": "", "error": "빈 오디오 데이터"}
-        logger.info(f"Whisper STT bytes (Stub): {len(audio_bytes)} bytes")
-        return {"text": "(음성 인식 결과가 여기에 표시됩니다)", "language": "ko", "segments": []}
+
+        if self._model is None:
+            return {"text": "", "language": "ko", "segments": []}
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
+            return await self.transcribe(tmp_path)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
 
     async def analyze_speech(self, audio_path: str) -> dict:
         """
-        음성 특징 분석
-        Librosa 추가 시: 발화 속도, 음높이 변화, 음량, 무음 구간 등
+        Librosa로 음성 특징 분석.
+        silence_ratio 기반으로 speech_score 산출.
         """
-        # TODO: Librosa 분석
-        # import librosa
-        # y, sr = librosa.load(audio_path)
-        # tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        try:
+            from services.voice.librosa_service import AudioAnalyzer
+            features = AudioAnalyzer.analyze_features(audio_path)
+            if features:
+                silence_ratio = features.get("silence_ratio", 0.15)
+                # 무음 비율이 낮을수록 발화가 충실 → 점수 높음
+                speech_score = round(max(30.0, min(100.0, 100.0 - silence_ratio * 80)), 1)
+                return {
+                    "avg_pitch": features.get("avg_pitch", 0.0),
+                    "avg_energy": features.get("avg_energy", 0.0),
+                    "silence_ratio": silence_ratio,
+                    "speech_score": speech_score,
+                }
+        except Exception as e:
+            logger.error(f"음성 분석 실패: {e}")
 
         return {
-            "speech_pace": 120.0,          # WPM (더미)
-            "filler_word_count": 0,        # 습관어 횟수
-            "silence_ratio": 0.15,         # 무음 비율
+            "avg_pitch": 0.0,
+            "avg_energy": 0.0,
+            "silence_ratio": 0.0,
             "speech_score": 70.0,
         }
 
