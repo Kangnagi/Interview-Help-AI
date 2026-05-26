@@ -28,7 +28,20 @@
       "PowerShell(conda activate *)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" -Recurse -Depth 3)",
       "Bash(Select-Object FullName)",
-      "Bash(Format-Table -AutoSize)"
+      "Bash(Format-Table -AutoSize)",
+      "Bash(git -C \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\" log --oneline -10)",
+      "Bash(conda run *)",
+      "Read(//c/Users/kch36/anaconda3/envs/interview/Scripts/**)",
+      "Read(//c/Users/kch36/anaconda3/envs/interview/**)",
+      "Bash(\"C:\\\\Users\\\\kch36\\\\anaconda3\\\\envs\\\\interview\\\\python.exe\" check_imports.py)",
+      "Bash(set PYTHONIOENCODING=utf-8)",
+      "PowerShell($env:PYTHONIOENCODING=\"utf-8\"; cd \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\\\\backend\"; & \"C:\\\\Users\\\\kch36\\\\anaconda3\\\\envs\\\\interview\\\\python.exe\" check_imports.py 2>&1)",
+      "PowerShell($env:PYTHONIOENCODING=\"utf-8\"; cd \"C:\\\\Users\\\\kch36\\\\Desktop\\\\Interview-Help-AI\\\\backend\"; Start-Process -FilePath \"C:\\\\Users\\\\kch36\\\\anaconda3\\\\envs\\\\interview\\\\python.exe\" -ArgumentList \"-m\", \"uvicorn\", \"main:app\", \"--host\", \"127.0.0.1\", \"--port\", \"8000\", \"--reload\" -RedirectStandardOutput \"$env:TEMP\\\\backend_out.txt\" -RedirectStandardError \"$env:TEMP\\\\backend_err.txt\" -PassThru | Select-Object Id, ProcessName)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/)",
+      "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/register -H 'Content-Type: application/json' -d '{\"email\":\"test_check@example.com\",\"username\":\"testuser\",\"password\":\"test1234\"}')",
+      "Bash(curl -s -X POST http://localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"test_check@example.com\",\"password\":\"test1234\"}')",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); print\\(f'면접 목록 {len\\(data\\)}건 조회 OK'\\); [print\\(f'  [{d[\\\\\"id\\\\\"]}] {d[\\\\\"title\\\\\"]} | {d[\\\\\"status\\\\\"]} | score={d[\\\\\"total_score\\\\\"]}'\\) for d in data[:5]]\")",
+      "PowerShell(Get-Process -Id 23068 -ErrorAction SilentlyContinue)"
     ]
   }
 }

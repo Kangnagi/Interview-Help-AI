@@ -5,7 +5,7 @@ from datetime import datetime
 import hashlib
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -193,44 +193,61 @@ async def get_interview_questions(
 async def submit_answer(
     interview_id: int,
     question_id: int,
-    answer_text: str = Form(...),
-    is_practice: bool = Form(False),
-    audio_file: UploadFile = File(None),
+    body: AnswerCreate,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """면접 질문에 대한 사용자의 답변(텍스트 및 오디오 파일)을 서버에 저장합니다."""
+    """면접 질문에 대한 사용자의 답변(JSON)을 서버에 저장합니다."""
     result = await db.execute(
-        select(InterviewQuestion).where(InterviewQuestion.id == question_id, InterviewQuestion.interview_id == interview_id)
+        select(InterviewQuestion).where(
+            InterviewQuestion.id == question_id,
+            InterviewQuestion.interview_id == interview_id,
+        )
     )
     question = result.scalar_one_or_none()
     if not question:
         raise HTTPException(status_code=404, detail="질문을 찾을 수 없습니다")
-    
-    question.answer_text = answer_text
-    
-    # 🔊 전송받은 음성 파일이 있다면 분석을 위해 로컬에 저장
-    image_bytes = None
-    if audio_file:
-        from core.config import settings
-        file_path = f"{settings.UPLOAD_DIR}/iv_{interview_id}_q_{question_id}.webm"
-        with open(file_path, "wb") as f:
-            f.write(await audio_file.read())
-            
-        if is_practice:
-            try:
-                from services.voice.librosa_service import generate_audio_spectrogram
-                image_bytes = await generate_audio_spectrogram(file_path)
-            except Exception as e:
-                logger.warning(f"오디오 이미지 변환 실패: {e}")
 
-    feedback = None
-    if is_practice:
-        from services.llm.gemini_service import analyze_answer_with_gemini_short
-        feedback = await analyze_answer_with_gemini_short(question.question_text, answer_text, image_bytes)
-
+    question.answer_text = body.answer_text
     await db.commit()
-    return {"message": "답변이 저장되었습니다", "feedback": feedback}
+    return {"message": "답변이 저장되었습니다"}
+
+
+@router.post("/{interview_id}/questions/{question_id}/feedback")
+async def get_question_feedback(
+    interview_id: int,
+    question_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """저장된 답변에 대해 즉시 AI 피드백을 생성합니다."""
+    result = await db.execute(
+        select(InterviewQuestion).where(
+            InterviewQuestion.id == question_id,
+            InterviewQuestion.interview_id == interview_id,
+        )
+    )
+    question = result.scalar_one_or_none()
+    if not question:
+        raise HTTPException(status_code=404, detail="질문을 찾을 수 없습니다")
+    if not question.answer_text:
+        raise HTTPException(status_code=400, detail="저장된 답변이 없습니다")
+
+    try:
+        from services.llm.gemini_service import analyze_answer_with_gemini
+        result_data = await analyze_answer_with_gemini(question.question_text, question.answer_text)
+        feedback_text = result_data.get("feedback", "") if isinstance(result_data, dict) else str(result_data)
+        score = result_data.get("content_score", 75) if isinstance(result_data, dict) else 75
+        try:
+            score = int(score)
+        except Exception:
+            score = 75
+    except Exception as e:
+        logger.error(f"즉시 피드백 생성 오류: {e}")
+        feedback_text = "피드백을 생성할 수 없습니다."
+        score = 75
+
+    return {"score": score, "feedback": feedback_text, "tip": ""}
 
 @router.patch("/{interview_id}/finish")
 async def finish_interview(
