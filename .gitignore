@@ -29,3 +29,16 @@ frontend/node_modules/
 frontend/.vite/
 **/.vite/
 
+backend/kobert/
+.venv/
+venv/
+kobert/
+env/
+.conda/
+conda_env/
+kobert_env
+**/kobert/
+# pyenv or unexpected home directories
+.pyenv/
+$HOME/
+# Environment variables
