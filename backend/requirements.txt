@@ -31,7 +31,7 @@ protobuf==4.25.3
 git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
 
 # Vision
-mediapipe==0.10.30
+mediapipe==0.10.14
 opencv-python==4.9.0.80
 numpy==1.26.4
 Pillow==10.3.0

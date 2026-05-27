@@ -90,9 +90,9 @@ class KoBERTService:
         질문-답변 쌍을 분석하여 점수 딕셔너리를 반환.
 
         점수 산출 방식:
-          relevance_score — 질문·답변 임베딩 간 코사인 유사도 (0~1 → 0~100 변환)
-          content_score   — 답변 길이 기반 휴리스틱 (짧으면 감점, 너무 길어도 감점)
-          clarity_score   — 어휘 다양성 (unique tokens / total tokens × 100)
+        relevance_score — 질문·답변 임베딩 간 코사인 유사도 (0~1 → 0~100 변환)
+        content_score   — 답변 길이 기반 휴리스틱 (짧으면 감점, 너무 길어도 감점)
+        clarity_score   — 어휘 다양성 (unique tokens / total tokens * 100)
         """
         if not answer.strip():
             return self._empty_result()
