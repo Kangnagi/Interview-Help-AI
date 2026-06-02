@@ -54,7 +54,10 @@
       "Read(//mnt/c/Users/kch36/Desktop/Interview-Help-AI/**)",
       "Bash(grep -v \"KEY\\\\|SECRET\\\\|PASSWORD\" .env)",
       "mcp__Claude_in_Chrome__tabs_context_mcp",
-      "Bash(\"C:\\\\Users\\\\kch36\\\\anaconda3\\\\envs\\\\interview\\\\python.exe\" test_gemini_direct.py)"
+      "Bash(\"C:\\\\Users\\\\kch36\\\\anaconda3\\\\envs\\\\interview\\\\python.exe\" test_gemini_direct.py)",
+      "Bash(Get-ChildItem -Recurse -Directory)",
+      "Bash(ConvertTo-Csv -NoTypeInformation)",
+      "Bash(Out-String)"
     ]
   }
 }
