@@ -17,6 +17,65 @@ from schemas.schemas import InterviewCreate, InterviewResponse
 from services.llm.gemini_service import generate_questions_from_resume
 from services.llm.kobert_service import kobert_service
 
+
+def _generate_local_feedback(kobert: dict, answer: str) -> dict:
+    """KoBERT 점수 기반 로컬 피드백 생성 (Gemini API 호출 없음)."""
+    status = kobert.get("status", "error")
+
+    if status != "success":
+        # KoBERT 미로드 시 텍스트 길이 기반 휴리스틱
+        length = len((answer or "").strip())
+        if length < 10:
+            score = 30
+        elif length < 50:
+            score = 55
+        elif length < 200:
+            score = 75
+        else:
+            score = 85
+        return {
+            "score": score,
+            "feedback": "1. 답변이 저장되었습니다.\n2. 면접 종료 후 종합 분석에서 상세 Gemini 피드백을 확인하세요.",
+            "tip": "STAR 기법(상황→과제→행동→결과)으로 구조화하면 답변의 설득력이 높아집니다.",
+        }
+
+    relevance = kobert.get("relevance_score", 0.0)
+    content   = kobert.get("content_score",   0.0)
+    clarity   = kobert.get("clarity_score",   0.0)
+
+    # 가중 평균 (관련성 40% · 내용 35% · 명확성 25%)
+    score = round(relevance * 0.4 + content * 0.35 + clarity * 0.25)
+    score = max(20, min(100, score))
+
+    lines = []
+    if relevance >= 70:
+        lines.append("1. 질문과의 관련성이 높은 답변입니다.")
+    elif relevance >= 40:
+        lines.append("1. 질문 핵심을 부분적으로 다뤘습니다. 핵심 포인트를 더 명확히 짚어주세요.")
+    else:
+        lines.append("1. 질문의 핵심에서 벗어났습니다. 질문을 다시 확인하고 답변 방향을 잡아보세요.")
+
+    if content >= 70:
+        lines.append("2. 답변 내용이 충실합니다.")
+    elif content >= 40:
+        lines.append("2. 답변이 조금 짧습니다. 구체적인 경험이나 수치를 추가해보세요.")
+    else:
+        lines.append("2. 답변이 너무 짧습니다. STAR 구조(상황→과제→행동→결과)로 구체화해보세요.")
+
+    if clarity >= 70:
+        lines.append("3. 표현이 명확하고 어휘가 다양합니다.")
+    else:
+        lines.append("3. 추임새나 반복 표현을 줄이고 더 명확하게 전달해보세요.")
+
+    keywords = kobert.get("keywords", [])
+    tip = (
+        f"핵심 키워드 '{', '.join(keywords[:3])}'를 중심으로 답변을 구체화해보세요."
+        if keywords else
+        "STAR 기법(상황→과제→행동→결과)으로 구조화하면 답변의 설득력이 높아집니다."
+    )
+
+    return {"score": score, "feedback": "\n".join(lines), "tip": tip}
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/interviews", tags=["면접"])
 
@@ -234,32 +293,16 @@ async def get_question_feedback(
     if not question.answer_text:
         raise HTTPException(status_code=400, detail="저장된 답변이 없습니다")
 
-    try:
-        from services.llm.gemini_service import analyze_answer_with_gemini
-        #  1. KoBERT로 먼저 텍스트 정량 분석 수행 
-        kobert_result = await kobert_service.analyze_answer(question.question_text, question.answer_text)
-        logger.info(f"KoBERT 분석 결과: {kobert_result}")
-        
-        # 👇 2. 분석 결과를 Gemini 함수에 파라미터로 전달 👇
-        result_data = await analyze_answer_with_gemini(
-            question.question_text, 
-            question.answer_text,
-            kobert_scores=kobert_result 
-        )
-        feedback_text = result_data.get("feedback", "") if isinstance(result_data, dict) else str(result_data)
-        tip_text = result_data.get("tip", "") if isinstance(result_data, dict) else ""
-        score = result_data.get("score", 75) if isinstance(result_data, dict) else 75
-        try:
-            score = int(score)
-        except Exception:
-            score = 75
-    except Exception as e:
-        logger.error(f"즉시 피드백 생성 오류: {e}")
-        feedback_text = "피드백을 생성할 수 없습니다."
-        tip_text = ""
-        score = 75
+    # KoBERT 로컬 분석 → Gemini API 호출 없이 즉시 반환
+    kobert_result = await kobert_service.analyze_answer(question.question_text, question.answer_text)
+    logger.info(f"KoBERT 분석 결과: {kobert_result}")
 
-    question.ai_score = score
+    result_data = _generate_local_feedback(kobert_result, question.answer_text)
+    score        = result_data["score"]
+    feedback_text = result_data["feedback"]
+    tip_text      = result_data["tip"]
+
+    question.ai_score    = score
     question.ai_feedback = feedback_text
     await db.commit()
 

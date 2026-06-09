@@ -37,7 +37,7 @@ numpy==1.26.4
 Pillow==10.3.0
 
 # Voice & Audio
-faster-whisper==1.2.0
+openai-whisper
 soundfile==0.13.1
 librosa==0.11.0
 ffmpeg-python==0.2.0
