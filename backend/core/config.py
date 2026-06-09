@@ -7,7 +7,7 @@ import os
 class Settings(BaseSettings):
     # ── 앱 기본 설정 ───────────────────────────────────────
     APP_NAME: str = "AI 면접 도우미"             # Swagger UI 및 로그에 표시될 앱 이름
-    APP_VERSION: str = "0.1.0"                   # 앱 버전 (API 응답 / 문서에 노출)
+    APP_VERSION: str = "2.0.0"                   # 앱 버전 (API 응답 / 문서에 노출)
     DEBUG: bool = True                            # True면 자세한 로그 + 서버 자동 재시작
     HOST: str = "0.0.0.0"                        # 서버 바인딩 주소 (0.0.0.0 = 외부 접근 허용)
     PORT: int = 8000                              # 서버 포트
@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"                     # JWT 서명 알고리즘
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60        # 액세스 토큰 유효 시간 (분)
     GEMINI_API_KEY: Optional[str] = None        # .env 파일에 GEMINI_API_KEY= 로 설정
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-2.5-flash"
 
     # ── DB ─────────────────────────────────────────────────
     DATABASE_URL: str = "sqlite+aiosqlite:///./interview.db"   # 비동기 SQLite DB 경로

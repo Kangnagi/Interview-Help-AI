@@ -4,37 +4,18 @@ import json
 import asyncio
 from dotenv import load_dotenv
 from google import genai
-from google.genai.errors import APIError
 
 load_dotenv(override=True)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# .env의 GEMINI_MODEL을 우선 사용, 없으면 gemini-2.0-flash 기본값
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 client = None
 
 if GEMINI_API_KEY:
     client = genai.Client(api_key=GEMINI_API_KEY)
-    try:
-        # m.name은 'models/gemini-2.0-flash' 형태이므로 prefix 제거 후 비교
-        available_models = [m.name.replace("models/", "") for m in client.models.list()]
-        print(f"사용 가능한 모델: {available_models}")
-        preferred = [MODEL_NAME, 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.0-pro']
-        for p in preferred:
-            if p in available_models:
-                MODEL_NAME = p
-                break
-        else:
-            if available_models:
-                MODEL_NAME = available_models[0]
-    except APIError as e:
-        print(f"모델 목록 조회 실패 (API 오류): {e}")
-    except Exception as e:
-        print(f"모델 목록 조회 실패: {e}")
+    print(f"Gemini 클라이언트 초기화 완료 (모델: {MODEL_NAME})")
 else:
     print("GEMINI_API_KEY를 찾을 수 없습니다.")
-
-print(f"선택된 Gemini 모델: {MODEL_NAME}")
 
 
 def _parse_json(text: str):
@@ -136,8 +117,13 @@ async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
         "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
         f"아래 면접 Q&A {n}개를 분석하여 반드시 아래 형식의 JSON 배열로만 응답하세요 (코드블록 금지).\n"
         "배열 순서는 입력 순서와 반드시 일치해야 합니다.\n\n"
+        "점수 기준(0~100):\n"
+        "- content_score: 답변 내용의 충실도 및 적절성\n"
+        "- relevance_score: 질문과의 관련성\n"
+        "- clarity_score: 표현 명확성 및 논리 구조\n"
+        "- speech_score: 발화 품질 (추임새, 반복 표현, 문장 구조 기반 추정)\n\n"
         '형식: [{"content_score":점수,"relevance_score":점수,"clarity_score":점수,'
-        '"speech_score":점수,"posture_score":점수,"eye_contact_score":점수,'
+        '"speech_score":점수,'
         '"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성"}]\n\n'
         f"{items}"
     )
