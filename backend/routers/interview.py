@@ -60,7 +60,7 @@ async def create_interview(
         resume_hash = ""
         if body.resume_text:
             resume_hash = hashlib.sha256(body.resume_text.encode('utf-8')).hexdigest()
-            
+
         if resume_hash and resume_hash in _question_cache:
             cache_entry = _question_cache[resume_hash]
             # 구버전 캐시(리스트 형태) 호환성 처리
@@ -93,18 +93,18 @@ async def create_interview(
         if cache_entry and "ai_questions" in cache_entry:
             ai_pool = cache_entry["ai_questions"]
             idx = cache_entry.get("index", 0)
-            
+
             selected_ai = []
             count_to_pick = min(3, len(ai_pool))
             for _ in range(count_to_pick):
                 selected_ai.append(ai_pool[idx])
                 idx = (idx + 1) % len(ai_pool)
-                
+
             # 다음 면접을 위해 회전된 인덱스 저장
             cache_entry["index"] = idx
             _question_cache[resume_hash] = cache_entry
             save_question_cache(_question_cache)
-            
+
             questions_list = [
                 "간단한 자기소개 부탁드립니다.",
                 "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?"
