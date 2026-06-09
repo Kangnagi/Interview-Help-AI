@@ -6,13 +6,14 @@ KoBERT 답변 분석 서비스
 점수 산출 방식:
   relevance_score — 질문·답변 임베딩 코사인 유사도 기반
   content_score   — 답변 길이 휴리스틱 (30~400자 기준)
-  clarity_score   — 어휘 다양성 (unique ratio)
+  clarity_score   — 어휘 다양성 (unique ratio) 및 불용어 감점
 
 싱글톤 패턴:
   서버 전체에서 모델을 1개만 유지 (메모리 절약).
 """
 import logging
 import torch
+import re
 from typing import Optional
 from transformers import AutoTokenizer, AutoModel
 
@@ -92,7 +93,7 @@ class KoBERTService:
         점수 산출 방식:
         relevance_score — 질문·답변 임베딩 간 코사인 유사도 (0~1 → 0~100 변환)
         content_score   — 답변 길이 기반 휴리스틱 (짧으면 감점, 너무 길어도 감점)
-        clarity_score   — 어휘 다양성 (unique tokens / total tokens * 100)
+        clarity_score   — 어휘 다양성 (unique tokens / total tokens * 100) 및 불용어 감점
         """
         if not answer.strip():
             return self._empty_result()
@@ -104,25 +105,28 @@ class KoBERTService:
             q_emb = self._encode(question)
             a_emb = self._encode(answer)
 
-            # 코사인 유사도: [-1, 1] → 선형 변환으로 [0, 100]
+            # 1. 코사인 유사도: [-1, 1] → 선형 변환으로 [0, 100] (문맥 매칭률 보정 적용)
             cos_sim = torch.nn.functional.cosine_similarity(q_emb, a_emb).item()
-            relevance_score = round(min(100.0, max(0.0, (cos_sim - 0.3) / 0.7 * 100)), 1)
+            relevance_score = round(min(100.0, max(0.0, (cos_sim - 0.2) / 0.8 * 100)), 1)
 
-            # 답변 길이 기반 내용 충실도 (한국어 기준 100~400자가 적절)
+            # 2. 답변 길이 기반 내용 충실도 (길이에 따른 구간별 점수 최적화)
             char_len = len(answer)
             if char_len < 30:
-                content_score = 30.0
+                content_score = 30.0 + (char_len / 30.0) * 20.0
             elif char_len < 100:
-                content_score = round(30.0 + (char_len - 30) / 70.0 * 40.0, 1)
-            elif char_len < 400:
-                content_score = round(70.0 + (char_len - 100) / 300.0 * 20.0, 1)
+                content_score = round(50.0 + (char_len - 30) / 70.0 * 30.0, 1)
+            elif char_len < 500:
+                content_score = round(80.0 + (char_len - 100) / 400.0 * 20.0, 1)
             else:
-                content_score = round(min(95.0, 90.0 + (char_len - 400) / 600.0 * 5.0), 1)
+                content_score = round(max(60.0, 100.0 - (char_len - 500) / 100.0 * 10.0), 1)
+                
+            content_score = round(min(100.0, content_score), 1)
 
-            # 어휘 다양성 (명확성 지표)
+            # 3. 어휘 다양성 (명확성 지표) 및 불용어(추임새) 감점
             tokens = answer.split()
+            v_penalty = len(re.findall(r'(음|어|그|저기|아|그니까|막)\s', answer)) * 2.5
             unique_ratio = len(set(tokens)) / max(len(tokens), 1)
-            clarity_score = round(min(90.0, max(40.0, unique_ratio * 100.0)), 1)
+            clarity_score = round(min(100.0, max(40.0, (unique_ratio * 100.0) - v_penalty)), 1)
 
             # 대표 키워드: 길이 1 이하 토큰 제외
             keywords = [w for w in tokens if len(w) > 1][:5]

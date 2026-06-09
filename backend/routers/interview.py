@@ -15,6 +15,7 @@ from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from schemas.schemas import InterviewCreate, InterviewResponse
 from services.llm.gemini_service import generate_questions_from_resume
+from services.llm.kobert_service import kobert_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/interviews", tags=["면접"])
@@ -235,7 +236,16 @@ async def get_question_feedback(
 
     try:
         from services.llm.gemini_service import analyze_answer_with_gemini
-        result_data = await analyze_answer_with_gemini(question.question_text, question.answer_text)
+        #  1. KoBERT로 먼저 텍스트 정량 분석 수행 
+        kobert_result = await kobert_service.analyze_answer(question.question_text, question.answer_text)
+        logger.info(f"KoBERT 분석 결과: {kobert_result}")
+        
+        # 👇 2. 분석 결과를 Gemini 함수에 파라미터로 전달 👇
+        result_data = await analyze_answer_with_gemini(
+            question.question_text, 
+            question.answer_text,
+            kobert_scores=kobert_result 
+        )
         feedback_text = result_data.get("feedback", "") if isinstance(result_data, dict) else str(result_data)
         tip_text = result_data.get("tip", "") if isinstance(result_data, dict) else ""
         score = result_data.get("score", 75) if isinstance(result_data, dict) else 75

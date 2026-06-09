@@ -52,7 +52,7 @@ def _parse_json(text: str):
 
 
 # ── 1) 질문별 즉시 피드백 (연습·실전 면접 중 실시간 호출) ─────────────────────────
-async def analyze_answer_with_gemini(question: str, answer: str, audio_image_bytes: bytes = None) -> dict:
+async def analyze_answer_with_gemini(question: str, answer: str, audio_image_bytes: bytes = None, kobert_scores: dict = None) -> dict:
     if not GEMINI_API_KEY:
         return {"score": 0, "feedback": "서버 오류: Gemini API 키가 설정되지 않았습니다.", "tip": ""}
 
@@ -70,15 +70,24 @@ async def analyze_answer_with_gemini(question: str, answer: str, audio_image_byt
             "feedback": "답변이 너무 짧습니다. 이유와 구체적인 경험을 덧붙여 주세요.",
             "tip": "STAR 기법(상황→과제→행동→결과)으로 구조화하면 짧은 답변도 풍성해집니다.",
         }
+    kobert_context = ""
+    if kobert_scores and kobert_scores.get("status") == "success":
+        kobert_context = (
+            f"\n\n[참고 자료: KoBERT 모델의 1차 정량적 분석 결과]\n"
+            f"- 질문과 답변의 맥락 관련성: {kobert_scores.get('relevance_score', 0)}/100점\n"
+            f"- 답변 분량 및 내용 충실도: {kobert_scores.get('content_score', 0)}/100점\n"
+            f"- 어휘 다양성 및 명확성: {kobert_scores.get('clarity_score', 0)}/100점\n"
+            f"위 점수들을 면밀히 참고하여, 지원자가 어떤 부분(관련성, 충실도, 명확성 등)이 부족했거나 뛰어났는지 피드백에 자연스럽게 반영해 주세요."
+        )
 
     prompt = (
         "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
-        "지원자의 면접 질문과 답변을 분석하여 반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지):\n"
+        "지원자의 면접 질문과 답변, 그리고 AI의 1차 정량 평가 결과를 분석하여 반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지):\n"
         '{"score":0~100,"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성 제안","tip":"다음 답변을 위한 실질적 개선 팁 한 문장"}\n\n'
         f"면접 질문: {question}\n"
         f"지원자 답변: {answer_clean}"
+        f"{kobert_context}"
     )
-
     contents = [prompt]
     if audio_image_bytes:
         contents.append({"mime_type": "image/png", "data": audio_image_bytes})
