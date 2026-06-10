@@ -1,6 +1,7 @@
 import json
 import logging
 import asyncio
+import os
 from typing import Dict, List
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 from sqlalchemy import select
@@ -9,7 +10,6 @@ from jose import JWTError, jwt
 from core.config import settings
 from core.database import AsyncSessionLocal
 from services.vision.mediapipe_service import mediapipe_service
-from services.voice.whisper_service import whisper_service
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from routers.analysis import _run_analysis_pipeline
 
@@ -102,6 +102,11 @@ async def interview_audio_websocket(
     await websocket.accept()
     audio_buffers[interview_id] = [] # 버퍼 초기화
     logger.info(f"[WS-Audio] 면접 {interview_id} 기록 시작")
+    
+    # 저장 디렉토리 생성
+    upload_dir = settings.UPLOAD_DIR
+    if not os.path.exists(upload_dir):
+        os.makedirs(upload_dir)
 
     try:
         while True:
@@ -124,19 +129,19 @@ async def interview_audio_websocket(
 
 async def process_final_audio_analysis(interview_id: int, full_audio: bytes):
     """모든 오디오 데이터가 모인 후 수행되는 작업"""
+    # 저장 파일 경로 설정
+    file_name = f"interview_{interview_id}_{int(asyncio.get_event_loop().time())}.webm"
+    file_path = os.path.join(settings.UPLOAD_DIR, file_name)
+
     try:
-        # 1. STT (Whisper)
-        stt_result = await whisper_service.transcribe_bytes(full_audio)
-        stt_text = stt_result.get("text")
+        # 1. 오디오 파일 물리적 저장
+        with open(file_path, "wb") as f:
+            f.write(full_audio)
+        logger.info(f"[Storage] 면접 {interview_id} 오디오 저장 완료: {file_path}")
 
-        if not stt_text:
-            logger.warning(f"[Analysis] 면접 {interview_id}에서 음성을 텍스트로 변환하지 못했습니다. (원인: {stt_result.get('error', '알 수 없음')})")
-
-        # 2. 변환된 텍스트를 DB에 저장하고, 면접 상태를 '완료'로 변경
-        # 참고: 현재 구조는 모든 질문의 답변을 하나의 오디오로 받습니다.
-        # 따라서 임시로 첫 번째 질문에 모든 답변 내용을 저장합니다.
+        # 2. DB에 오디오 경로 업데이트 및 면접 상태 변경
         async with AsyncSessionLocal() as db:
-            # (1) 답변 텍스트 저장
+            # (1) 해당 면접의 질문 레코드를 찾아 오디오 경로 기록
             stmt = select(InterviewQuestion).where(InterviewQuestion.interview_id == interview_id).order_by(InterviewQuestion.order).limit(1)
             result = await db.execute(stmt)
             question_to_update = result.scalar_one_or_none()
@@ -145,12 +150,8 @@ async def process_final_audio_analysis(interview_id: int, full_audio: bytes):
                 logger.error(f"[Analysis] 면접 {interview_id}의 답변을 저장할 질문 객체를 찾지 못했습니다.")
                 return
             
-            # 사용자가 직접 타이핑한 텍스트가 없고, STT 텍스트가 있을 때만 덮어쓰기
-            if stt_text:
-                question_to_update.answer_text = stt_text
-            elif not question_to_update.answer_text:
-                # 음성 인식도 실패하고 타이핑된 텍스트도 없을 경우 임시 텍스트 삽입
-                question_to_update.answer_text = "음성 인식을 실패하여 임시 텍스트로 대체합니다. 저는 백엔드 개발자로서 훌륭한 역량과 경험을 가지고 있습니다."
+            # 오디오 경로 저장
+            question_to_update.audio_path = file_path
 
             db.add(question_to_update)
 

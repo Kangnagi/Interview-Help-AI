@@ -16,8 +16,8 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 
 # HTTP & WebSocket
-httpx==0.27.0
-websockets==12.0
+httpx>=0.28.1,<1.0.0
+websockets>=13.0.0,<15.1.0
 
 # AI
 torch==2.1.2
