@@ -151,7 +151,7 @@ function merge(...objs) {
     if (key === "__proto__" || key === "constructor" || key === "prototype") {
       return;
     }
-    const targetKey = caseless && findKey(result, key) || key;
+    const targetKey = caseless && typeof key === "string" && findKey(result, key) || key;
     const existing = hasOwnProperty(result, targetKey) ? result[targetKey] : void 0;
     if (isPlainObject(existing) && isPlainObject(val)) {
       result[targetKey] = merge(existing, val);
@@ -164,7 +164,21 @@ function merge(...objs) {
     }
   };
   for (let i = 0, l = objs.length; i < l; i++) {
-    objs[i] && forEach(objs[i], assignValue);
+    const source = objs[i];
+    if (!source || isBuffer(source)) {
+      continue;
+    }
+    forEach(source, assignValue);
+    if (typeof source !== "object" || isArray(source)) {
+      continue;
+    }
+    const symbols = Object.getOwnPropertySymbols(source);
+    for (let j = 0; j < symbols.length; j++) {
+      const symbol = symbols[j];
+      if (propertyIsEnumerable.call(source, symbol)) {
+        assignValue(source[symbol], symbol);
+      }
+    }
   }
   return result;
 }
@@ -287,6 +301,7 @@ var toCamelCase = (str) => {
   });
 };
 var hasOwnProperty = (({ hasOwnProperty: hasOwnProperty2 }) => (obj, prop) => hasOwnProperty2.call(obj, prop))(Object.prototype);
+var { propertyIsEnumerable } = Object.prototype;
 var isRegExp = kindOfTest("RegExp");
 var reduceDescriptors = (obj, reducer) => {
   const descriptors = Object.getOwnPropertyDescriptors(obj);
@@ -595,7 +610,7 @@ var AxiosHeaders = class {
     function setHeader(_value, _header, _rewrite) {
       const lHeader = normalizeHeader(_header);
       if (!lHeader) {
-        throw new Error("header name must be a non-empty string");
+        return;
       }
       const key = utils_default.findKey(self2, lHeader);
       if (!key || self2[key] === void 0 || _rewrite === true || _rewrite === void 0 && self2[key] !== false) {
@@ -611,7 +626,7 @@ var AxiosHeaders = class {
       let obj = {}, dest, key;
       for (const entry of header) {
         if (!utils_default.isArray(entry)) {
-          throw TypeError("Object iterator must return a key-value pair");
+          throw new TypeError("Object iterator must return a key-value pair");
         }
         obj[key = entry[0]] = (dest = obj[key]) ? utils_default.isArray(dest) ? [...dest, entry[1]] : [dest, entry[1]] : entry[1];
       }
@@ -1014,7 +1029,7 @@ function toFormData(obj, formData, options) {
       );
     }
     if (stack.indexOf(value) !== -1) {
-      throw Error("Circular reference detected in " + path.join("."));
+      throw new Error("Circular reference detected in " + path.join("."));
     }
     stack.push(value);
     utils_default.forEach(value, function each(el, key) {
@@ -1164,7 +1179,8 @@ var transitional_default = {
   silentJSONParsing: true,
   forcedJSONParsing: true,
   clarifyTimeoutError: false,
-  legacyInterceptorReqResOrdering: true
+  legacyInterceptorReqResOrdering: true,
+  advertiseZstdAcceptEncoding: false
 };
 
 // node_modules/axios/lib/platform/browser/classes/URLSearchParams.js
@@ -1760,7 +1776,7 @@ var encodeUTF8 = (str) => encodeURIComponent(str).replace(
   /%([0-9A-F]{2})/gi,
   (_, hex) => String.fromCharCode(parseInt(hex, 16))
 );
-var resolveConfig_default = (config) => {
+function resolveConfig(config) {
   const newConfig = mergeConfig({}, config);
   const own2 = (key) => utils_default.hasOwnProp(newConfig, key) ? newConfig[key] : void 0;
   const data = own2("data");
@@ -1775,8 +1791,8 @@ var resolveConfig_default = (config) => {
   newConfig.headers = headers = AxiosHeaders_default.from(headers);
   newConfig.url = buildURL(
     buildFullPath(baseURL, url, allowAbsoluteUrls),
-    config.params,
-    config.paramsSerializer
+    own2("params"),
+    own2("paramsSerializer")
   );
   if (auth) {
     headers.set(
@@ -1785,7 +1801,7 @@ var resolveConfig_default = (config) => {
     );
   }
   if (utils_default.isFormData(data)) {
-    if (platform_default.hasStandardBrowserEnv || platform_default.hasStandardBrowserWebWorkerEnv) {
+    if (platform_default.hasStandardBrowserEnv || platform_default.hasStandardBrowserWebWorkerEnv || utils_default.isReactNative(data)) {
       headers.setContentType(void 0);
     } else if (utils_default.isFunction(data.getHeaders)) {
       setFormDataHeaders(headers, data.getHeaders(), own2("formDataHeaderPolicy"));
@@ -1804,7 +1820,8 @@ var resolveConfig_default = (config) => {
     }
   }
   return newConfig;
-};
+}
+var resolveConfig_default = resolveConfig;
 
 // node_modules/axios/lib/adapters/xhr.js
 var isXHRAdapterSupported = typeof XMLHttpRequest !== "undefined";
@@ -2146,17 +2163,39 @@ function estimateDataURLDecodedBytes(url) {
 }
 
 // node_modules/axios/lib/env/data.js
-var VERSION = "1.16.1";
+var VERSION = "1.17.0";
 
 // node_modules/axios/lib/adapters/fetch.js
 var DEFAULT_CHUNK_SIZE = 64 * 1024;
 var { isFunction: isFunction2 } = utils_default;
+var encodeUTF82 = (str) => encodeURIComponent(str).replace(
+  /%([0-9A-F]{2})/gi,
+  (_, hex) => String.fromCharCode(parseInt(hex, 16))
+);
+var decodeURIComponentSafe = (value) => {
+  if (!utils_default.isString(value)) {
+    return value;
+  }
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    return value;
+  }
+};
 var test = (fn, ...args) => {
   try {
     return !!fn(...args);
   } catch (e) {
     return false;
   }
+};
+var maybeWithAuthCredentials = (url) => {
+  const protocolIndex = url.indexOf("://");
+  let urlToCheck = url;
+  if (protocolIndex !== -1) {
+    urlToCheck = urlToCheck.slice(protocolIndex + 3);
+  }
+  return urlToCheck.includes("@") || urlToCheck.includes(":");
 };
 var factory = (env) => {
   const globalObject = utils_default.global !== void 0 && utils_default.global !== null ? utils_default.global : globalThis;
@@ -2262,6 +2301,7 @@ var factory = (env) => {
     } = resolveConfig_default(config);
     const hasMaxContentLength = utils_default.isNumber(maxContentLength) && maxContentLength > -1;
     const hasMaxBodyLength = utils_default.isNumber(maxBodyLength) && maxBodyLength > -1;
+    const own2 = (key) => utils_default.hasOwnProp(config, key) ? config[key] : void 0;
     let _fetch = envFetch || fetch;
     responseType = responseType ? (responseType + "").toLowerCase() : "text";
     let composedSignal = composeSignals_default(
@@ -2274,6 +2314,39 @@ var factory = (env) => {
     });
     let requestContentLength;
     try {
+      let auth = void 0;
+      const configAuth = own2("auth");
+      if (configAuth) {
+        const username = configAuth.username || "";
+        const password = configAuth.password || "";
+        auth = {
+          username,
+          password
+        };
+      }
+      if (maybeWithAuthCredentials(url)) {
+        const parsedURL = new URL(url, platform_default.origin);
+        if (!auth && (parsedURL.username || parsedURL.password)) {
+          const urlUsername = decodeURIComponentSafe(parsedURL.username);
+          const urlPassword = decodeURIComponentSafe(parsedURL.password);
+          auth = {
+            username: urlUsername,
+            password: urlPassword
+          };
+        }
+        if (parsedURL.username || parsedURL.password) {
+          parsedURL.username = "";
+          parsedURL.password = "";
+          url = parsedURL.href;
+        }
+      }
+      if (auth) {
+        headers.delete("authorization");
+        headers.set(
+          "Authorization",
+          "Basic " + btoa(encodeUTF82((auth.username || "") + ":" + (auth.password || "")))
+        );
+      }
       if (hasMaxContentLength && typeof url === "string" && url.startsWith("data:")) {
         const estimated = estimateDataURLDecodedBytes(url);
         if (estimated > maxContentLength) {
@@ -2708,7 +2781,8 @@ var Axios = class {
           silentJSONParsing: validators2.transitional(validators2.boolean),
           forcedJSONParsing: validators2.transitional(validators2.boolean),
           clarifyTimeoutError: validators2.transitional(validators2.boolean),
-          legacyInterceptorReqResOrdering: validators2.transitional(validators2.boolean)
+          legacyInterceptorReqResOrdering: validators2.transitional(validators2.boolean),
+          advertiseZstdAcceptEncoding: validators2.transitional(validators2.boolean)
         },
         false
       );

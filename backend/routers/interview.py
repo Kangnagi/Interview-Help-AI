@@ -302,25 +302,3 @@ async def delete_interview(
 
     await db.delete(interview)
     await db.commit()
-
-
-@router.post("/transcribe")
-async def transcribe_audio(
-    file: UploadFile = File(...),
-    user_id: int = Depends(get_current_user_id)
-):
-    """음성 파일을 업로드받아 텍스트로 변환(STT)합니다."""
-    audio_bytes = await file.read()
-    try:
-        from services.voice.whisper_service import whisper_service
-        # whisper_service에 transcribe_bytes 메서드가 구현되어 있다고 가정
-        if hasattr(whisper_service, "transcribe_bytes"):
-            result = await whisper_service.transcribe_bytes(audio_bytes)
-            logger.info(f"🎤 [STT 분석 결과] {result}")
-            text = result.get("text", "") if isinstance(result, dict) else str(result)
-        else:
-            text = "음성 인식을 완료했습니다. (현재 Whisper 모델 연동 대기 중)"
-        return {"text": text}
-    except Exception as e:
-        logger.error(f"STT 변환 중 오류: {e}")
-        return {"text": f"음성 변환 실패: {str(e)}"}
