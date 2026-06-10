@@ -20,7 +20,7 @@ from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
 from services.llm.kobert_service import kobert_service
 from services.llm.gemini_service import analyze_answers_batch_with_gemini, generate_overall_summary_with_gemini
-from services.voice.whisper_service import whisper_service
+from services.voice.librosa_service import generate_audio_spectrogram, get_audio_duration
 from services.vision.mediapipe_service import mediapipe_service
 
 logger = logging.getLogger(__name__)
@@ -59,21 +59,38 @@ async def _run_analysis_pipeline(interview_id: int):
             # ── 2) KoBERT(점수 평가) 및 Gemini(피드백 생성) 분석 ─────────
             content_scores, relevance_scores, clarity_scores = [], [], []
             speech_scores, posture_scores, eye_contact_scores = [], [], []
+            speech_paces = []
             all_feedbacks = []
 
             qna_list = []
             valid_questions = []
 
             for q in interview.questions:
-                if not q.answer_text:
+                if not q.answer_text or not q.audio_path:
                     continue
                
-                # 🎵 오디오 파일을 이미지로 변환 (Librosa)
-                audio_path = f"{settings.UPLOAD_DIR}/iv_{interview_id}_q_{q.id}.webm"
+                # 1) 발화 속도 계산 (WPM)
+                duration = get_audio_duration(q.audio_path)
+                if duration > 0:
+                    word_count = len(q.answer_text.split())
+                    # WPM = (단어 수 / 초) * 60
+                    wpm = round((word_count / duration) * 60, 1)
+                    speech_paces.append(wpm)
+                    
+                    # 발화 속도 점수화 (예: 한국어 기준 분당 80~110단어가 적절하다고 가정)
+                    # 너무 빠르거나(150 초과) 너무 느린(40 미만) 경우 감점 로직 추가 가능
+                    if 70 <= wpm <= 130:
+                        s_score = 95
+                    elif wpm < 40 or wpm > 160:
+                        s_score = 60
+                    else:
+                        s_score = 80
+                    speech_scores.append(s_score)
+
+                # 2) 🎵 오디오 파일을 이미지로 변환 (Librosa)
                 image_bytes = None
                 try:
-                    from services.voice.librosa_service import generate_audio_spectrogram
-                    image_bytes = await generate_audio_spectrogram(audio_path)
+                    image_bytes = await generate_audio_spectrogram(q.audio_path)
                 except Exception as e:
                     logger.warning(f"오디오 이미지 변환 실패 (건너뜀): {e}")
 
@@ -137,7 +154,8 @@ async def _run_analysis_pipeline(interview_id: int):
             analysis.relevance_score = _avg(relevance_scores)
             analysis.clarity_score   = _avg(clarity_scores)
 
-            analysis.speech_score    = _avg(speech_scores)
+            analysis.speech_score    = _avg(speech_scores) or 80.0
+            analysis.speech_pace     = _avg(speech_paces)
             analysis.posture_score   = _avg(posture_scores)
             analysis.eye_contact_score = _avg(eye_contact_scores)
 

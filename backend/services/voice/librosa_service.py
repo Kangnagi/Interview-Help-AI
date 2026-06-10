@@ -1,6 +1,8 @@
 import io
 import os
 import asyncio
+import logging
+import threading
 import uuid
 from pathlib import Path
 
@@ -9,54 +11,62 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # GUI가 없는 서버 환경에서 오류 방지
 
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import librosa
 import librosa.display
+
+
+logger = logging.getLogger(__name__)
+
+MAX_SPECTROGRAM_DURATION_SECONDS = 30
+_PLOT_LOCK = threading.Lock()
 
 
 def _create_spectrogram_sync(audio_path: str) -> bytes | None:
     """오디오 파일을 멜 스펙트로그램 이미지 PNG bytes로 변환하는 내부 함수"""
 
-    if not os.path.exists(audio_path):
+    if not audio_path or not os.path.isfile(audio_path):
         return None
 
     try:
-        # 1. 오디오 파일 로드
-        y, sr = librosa.load(audio_path, sr=None)
+        # 긴 답변이 서버 메모리와 분석 시간을 과도하게 사용하지 않도록 앞부분만 분석합니다.
+        y, sr = librosa.load(
+            audio_path,
+            sr=None,
+            mono=True,
+            duration=MAX_SPECTROGRAM_DURATION_SECONDS,
+        )
 
-        if len(y) == 0:
+        if y.size == 0:
             return None
 
-        # 2. 멜 스펙트로그램 생성
-        plt.figure(figsize=(10, 4))
-
-        S = librosa.feature.melspectrogram(
+        mel_spectrogram = librosa.feature.melspectrogram(
             y=y,
             sr=sr,
-            n_mels=128
+            n_mels=128,
         )
+        spectrogram_db = librosa.power_to_db(mel_spectrogram, ref=np.max)
 
-        # 3. dB 단위로 변환
-        S_dB = librosa.power_to_db(S, ref=np.max)
+        # Matplotlib 내부 상태는 완전히 thread-safe하지 않아 렌더링 구간을 보호합니다.
+        with _PLOT_LOCK:
+            figure = Figure(figsize=(10, 4))
+            axis = figure.subplots()
+            librosa.display.specshow(
+                spectrogram_db,
+                sr=sr,
+                x_axis="time",
+                y_axis="mel",
+                ax=axis,
+            )
+            axis.set_title("Mel Spectrogram")
+            figure.tight_layout()
 
-        # 4. 스펙트로그램 이미지 그리기
-        librosa.display.specshow(
-            S_dB,
-            sr=sr,
-            x_axis="time",
-            y_axis="mel"
-        )
+            with io.BytesIO() as buffer:
+                figure.savefig(buffer, format="png", bbox_inches="tight", pad_inches=0)
+                return buffer.getvalue()
 
-        # 5. PNG bytes로 변환
-        buf = io.BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
-        plt.close()
-
-        buf.seek(0)
-        return buf.read()
-
-    except Exception as e:
-        print(f"Librosa 스펙트로그램 생성 중 오류: {e}")
+    except Exception:
+        logger.exception("Librosa 스펙트로그램 생성 중 오류: %s", audio_path)
         return None
 
 

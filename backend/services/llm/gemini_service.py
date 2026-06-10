@@ -127,16 +127,28 @@ async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
         "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
         f"아래 면접 Q&A {n}개를 분석하여 반드시 아래 형식의 JSON 배열로만 응답하세요 (코드블록 금지).\n"
         "배열 순서는 입력 순서와 반드시 일치해야 합니다.\n\n"
+        "각 질문에 첨부된 멜 스펙트로그램이 있으면 음성의 에너지 변화, 무음 구간, "
+        "발화 흐름을 참고하여 speech_score를 평가하세요. 이미지가 없는 질문은 답변 텍스트만 평가하세요.\n"
+        "멜 스펙트로그램만으로 자세나 시선은 판단하지 마세요.\n\n"
         '형식: [{"content_score":점수,"relevance_score":점수,"clarity_score":점수,'
         '"speech_score":점수,"posture_score":점수,"eye_contact_score":점수,'
         '"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성"}]\n\n'
         f"{items}"
     )
 
+    contents = [prompt]
+    for index, qna in enumerate(qna_list, start=1):
+        audio_image_bytes = qna.get("audio_image_bytes")
+        if audio_image_bytes:
+            contents.extend([
+                f"다음 이미지는 질문 {index} 답변의 멜 스펙트로그램입니다.",
+                {"mime_type": "image/png", "data": audio_image_bytes},
+            ])
+
     for attempt in range(3):
         try:
             response = await asyncio.wait_for(
-                client.aio.models.generate_content(model=MODEL_NAME, contents=prompt),
+                client.aio.models.generate_content(model=MODEL_NAME, contents=contents),
                 timeout=60.0,
             )
             result = _parse_json(response.text)
