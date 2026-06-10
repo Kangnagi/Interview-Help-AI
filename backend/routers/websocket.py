@@ -8,6 +8,7 @@ from jose import JWTError, jwt
 
 from core.config import settings
 from core.database import AsyncSessionLocal
+from core.vision_buffer import init_buffer, add_frame_result
 from services.vision.mediapipe_service import mediapipe_service
 from services.voice.whisper_service import whisper_service
 from models.interview import Interview, InterviewQuestion, InterviewStatus
@@ -62,21 +63,25 @@ async def interview_websocket(
         return
 
     await manager.connect(interview_id, websocket)
+    init_buffer(interview_id)
 
     try:
         while True:
             message = await websocket.receive()
-            
+
             if "text" in message:
                 data = json.loads(message["text"])
-                # 단순 echo 또는 상태 제어
                 await manager.send_json(websocket, {"type": "status", "received": data.get("type")})
 
             elif "bytes" in message:
-                # 실시간 영상 분석 (Mediapipe)
                 frame_bytes = message["bytes"]
-                # 잦은 분석을 방지하려면 스레드 풀 사용 권장
                 result = mediapipe_service.analyze_frame_sync(frame_bytes)
+
+                # MediaPipe가 실제로 초기화된 경우에만 버퍼에 누적
+                # (Stub 모드는 항상 True를 반환하므로 제외)
+                if mediapipe_service._initialized:
+                    add_frame_result(interview_id, result)
+
                 await manager.send_json(websocket, {
                     "type": "frame_analysis",
                     "result": result

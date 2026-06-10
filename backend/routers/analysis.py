@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from core.database import get_db, AsyncSessionLocal
 from core.config import settings
 from core.security import get_current_user_id
+from core.vision_buffer import get_and_clear_vision_scores
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
@@ -133,11 +134,21 @@ async def _run_analysis_pipeline(interview_id: int):
             analysis.clarity_score    = _avg(clarity_scores)   or _avg([_safe_int(r.get("clarity_score"))   for r in batch_results if isinstance(r, dict)])
             analysis.speech_score     = _avg(speech_scores)
 
-            # posture / eye_contact: MediaPipe 실시간 데이터가 저장되지 않으므로
-            # 답변 품질 기반 추정값 사용 (추후 영상 저장 시 교체)
-            text_avg = _avg([analysis.content_score, analysis.relevance_score, analysis.clarity_score])
-            analysis.posture_score      = round(min(100, (text_avg or 75) * 0.9 + 10), 1)
-            analysis.eye_contact_score  = round(min(100, (text_avg or 80) * 0.85 + 12), 1)
+            # posture / eye_contact: 실시간 MediaPipe 버퍼 우선 사용, 없으면 텍스트 기반 추정
+            vision_scores = get_and_clear_vision_scores(interview_id)
+            if vision_scores:
+                analysis.posture_score     = vision_scores["posture_score"]
+                analysis.eye_contact_score = vision_scores["eye_contact_score"]
+                logger.info(
+                    f"[Analysis] MediaPipe 실측값 사용 "
+                    f"(프레임 수={vision_scores['frame_count']}, "
+                    f"자세={analysis.posture_score}, 눈맞춤={analysis.eye_contact_score})"
+                )
+            else:
+                text_avg = _avg([analysis.content_score, analysis.relevance_score, analysis.clarity_score])
+                analysis.posture_score     = round(min(100, (text_avg or 75) * 0.9 + 10), 1)
+                analysis.eye_contact_score = round(min(100, (text_avg or 80) * 0.85 + 12), 1)
+                logger.info("[Analysis] MediaPipe 데이터 없음 — 텍스트 기반 추정값 사용")
 
             # ── 5) 종합 점수 ─────────────────────────────────────────────────
             analysis.total_score = _avg([
