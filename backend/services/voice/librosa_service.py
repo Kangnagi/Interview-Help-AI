@@ -1,94 +1,111 @@
 import io
 import os
 import asyncio
+import uuid
+from pathlib import Path
+
+import numpy as np
+
 import matplotlib
-matplotlib.use('Agg') # GUI가 없는 서버 환경에서 오류 방지
+matplotlib.use("Agg")  # GUI가 없는 서버 환경에서 오류 방지
+
 import matplotlib.pyplot as plt
 import librosa
 import librosa.display
 
 
-async def generate_audio_spectrogram(audio_path: str):
-    """오디오 파일을 멜 스펙트로그램 PNG bytes로 변환. 파일 없거나 오류 시 None 반환."""
+def _create_spectrogram_sync(audio_path: str) -> bytes | None:
+    """오디오 파일을 멜 스펙트로그램 이미지 PNG bytes로 변환하는 내부 함수"""
+
     if not os.path.exists(audio_path):
         return None
+
     try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import librosa.display
-
-        y, sr = librosa.load(audio_path, duration=30)
-        S = librosa.feature.melspectrogram(y=y, sr=sr)
-        S_db = librosa.power_to_db(S, ref=np.max)
-
-        fig, ax = plt.subplots(figsize=(6, 3))
-        librosa.display.specshow(S_db, sr=sr, ax=ax)
-        ax.axis("off")
-
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
-        plt.close(fig)
-        return buf.getvalue()
-    except Exception as e:
-        logger.error(f"스펙트로그램 생성 실패: {e}")
-        return None
-
-class AudioAnalyzer:
-    @staticmethod
-    def analyze_features_from_bytes(audio_bytes: bytes) -> dict:
-        """오디오 바이트 데이터에서 목소리 특징(음량, 길이 등)을 분석합니다."""
-        try:
-            import soundfile as sf
-            import numpy as np
-            with io.BytesIO(audio_bytes) as f:
-                y, sr = sf.read(f)
-            if len(y) == 0:
-                return {}
-            
-            # 간단한 RMS(음량) 계산
-            rms = librosa.feature.rms(y=y)
-            return {
-                "duration_sec": len(y) / sr,
-                "avg_volume": float(np.mean(rms))
-            }
-        except Exception as e:
-            print(f"AudioAnalyzer 분석 중 오류 발생: {e}")
-            return {}
-
-def _create_spectrogram_sync(audio_path: str) -> bytes:
-    """동기적으로 스펙트로그램 이미지를 생성하는 내부 함수"""
-    if not os.path.exists(audio_path):
-        return None
-        
-    try:
-        # 1. 오디오 로드
+        # 1. 오디오 파일 로드
         y, sr = librosa.load(audio_path, sr=None)
-        
+
         if len(y) == 0:
             return None
 
         # 2. 멜 스펙트로그램 생성
         plt.figure(figsize=(10, 4))
-        S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
-        S_dB = librosa.power_to_db(S, ref=max)
-        
-        # 3. 이미지 그리기 및 바이트 데이터로 추출
-        librosa.display.specshow(S_dB, sr=sr, x_axis='time', y_axis='mel')
-        
+
+        S = librosa.feature.melspectrogram(
+            y=y,
+            sr=sr,
+            n_mels=128
+        )
+
+        # 3. dB 단위로 변환
+        S_dB = librosa.power_to_db(S, ref=np.max)
+
+        # 4. 스펙트로그램 이미지 그리기
+        librosa.display.specshow(
+            S_dB,
+            sr=sr,
+            x_axis="time",
+            y_axis="mel"
+        )
+
+        # 5. PNG bytes로 변환
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+        plt.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
         plt.close()
+
         buf.seek(0)
         return buf.read()
+
     except Exception as e:
         print(f"Librosa 스펙트로그램 생성 중 오류: {e}")
         return None
 
-async def generate_audio_spectrogram(audio_path: str) -> bytes:
+
+async def generate_audio_spectrogram(audio_path: str) -> bytes | None:
     """
-    저장된 오디오 파일을 읽어들여 멜 스펙트로그램 이미지로 변환합니다.
-    (서버 멈춤을 방지하기 위해 비동기 논블로킹 스레드에서 실행됩니다.)
+    저장된 오디오 파일을 읽어 멜 스펙트로그램 이미지로 변환합니다.
+    서버가 멈추지 않도록 별도 스레드에서 실행합니다.
     """
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _create_spectrogram_sync, audio_path)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        _create_spectrogram_sync,
+        audio_path
+    )
+
+
+async def save_audio_spectrogram(audio_path: str) -> str | None:
+    """
+    오디오 파일을 멜 스펙트로그램 이미지로 변환한 뒤
+    backend/uploads/librosa_img 폴더에 PNG로 저장합니다.
+    """
+    image_bytes = await generate_audio_spectrogram(audio_path)
+
+    if image_bytes is None:
+        return None
+
+    # 현재 파일 위치: backend/services/voice/librosa_service.py
+    # parents[2] = backend
+    backend_dir = Path(__file__).resolve().parents[2]
+
+    save_dir = backend_dir / "uploads" / "librosa_img"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{uuid.uuid4()}.png"
+    save_path = save_dir / filename
+
+    with open(save_path, "wb") as f:
+        f.write(image_bytes)
+
+    return str(save_path)
+
+
+def get_audio_duration(audio_path: str) -> float:
+    """오디오 파일의 길이를 초(second) 단위로 반환합니다."""
+    if not audio_path or not os.path.exists(audio_path):
+        return 0.0
+
+    try:
+        # librosa.get_duration은 파일을 전체 로드하지 않고 길이를 반환합니다.
+        return float(librosa.get_duration(path=audio_path))
+    except Exception:
+        return 0.0
