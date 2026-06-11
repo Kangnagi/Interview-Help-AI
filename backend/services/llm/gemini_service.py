@@ -125,25 +125,18 @@ async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
 
     prompt = (
         "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
-        f"아래 면접 Q&A {n}개를 분석하여 반드시 아래 형식의 JSON 배열로만 응답하세요 (코드블록 금지).\n"
+        f"아래 면접 Q&A {n}개의 텍스트 내용만을 분석하여 반드시 아래 형식의 JSON 배열로만 응답하세요 (코드블록 금지).\n"
         "배열 순서는 입력 순서와 반드시 일치해야 합니다.\n\n"
-        "각 질문에 첨부된 멜 스펙트로그램이 있으면 음성의 에너지 변화, 무음 구간, "
-        "발화 흐름을 참고하여 speech_score를 평가하세요. 이미지가 없는 질문은 답변 텍스트만 평가하세요.\n"
-        "멜 스펙트로그램만으로 자세나 시선은 판단하지 마세요.\n\n"
+        "답변의 내용, 논리성, 관련성을 중점적으로 평가하세요.\n"
+        "speech_score, posture_score, eye_contact_score는 일단 기본값으로 80을 부여하세요. (다른 시스템에서 덮어씌워질 예정입니다.)\n\n"
         '형식: [{"content_score":점수,"relevance_score":점수,"clarity_score":점수,'
-        '"speech_score":점수,"posture_score":점수,"eye_contact_score":점수,'
+        '"speech_score":80,"posture_score":80,"eye_contact_score":80,'
         '"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성"}]\n\n'
         f"{items}"
     )
 
     contents = [prompt]
-    for index, qna in enumerate(qna_list, start=1):
-        audio_image_bytes = qna.get("audio_image_bytes")
-        if audio_image_bytes:
-            contents.extend([
-                f"다음 이미지는 질문 {index} 답변의 멜 스펙트로그램입니다.",
-                {"mime_type": "image/png", "data": audio_image_bytes},
-            ])
+    # 스펙트로그램 이미지 첨부 로직 삭제 (별도 함수에서 처리)
 
     for attempt in range(3):
         try:
@@ -162,6 +155,46 @@ async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
             wait = 10 + attempt * 10
             print(f"Gemini 배치 분석 오류 (시도 {attempt + 1}/3): {e} -> {wait}s 대기")
             await asyncio.sleep(wait)
+
+    return fallback
+
+
+async def analyze_speech_with_spectrogram(audio_image_bytes: bytes) -> dict:
+    """
+    스펙트로그램 이미지만을 사용하여 음성(발성, 흐름, 에너지)을 단독으로 평가합니다.
+    """
+    fallback = {"speech_score": 70, "feedback": ""}
+    if not GEMINI_API_KEY or not audio_image_bytes:
+        return fallback
+
+    prompt = (
+        "당신은 음성 분석 및 스피치 코칭 전문가입니다.\n"
+        "첨부된 이미지는 면접 답변의 '멜 스펙트로그램(Mel Spectrogram)'입니다.\n"
+        "이 이미지를 분석하여 발화의 흐름, 에너지 변화, 무음 구간 등을 파악하고, 발성과 말하기 방식에 대해 평가하세요.\n"
+        "반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지):\n"
+        '{"speech_score": 0~100, "feedback": "목소리 톤, 발성, 끊어 읽기 등에 대한 짧은 팁(1문장)"}'
+    )
+
+    contents = [
+        prompt,
+        {"mime_type": "image/png", "data": audio_image_bytes}
+    ]
+
+    for attempt in range(3):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(model=MODEL_NAME, contents=contents),
+                timeout=25.0,
+            )
+            return _parse_json(response.text)
+        except Exception as e:
+            err_str = str(e)
+            is_quota = "429" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str
+            print(f"Gemini 음성 평가 오류 (시도 {attempt + 1}/3): {e}")
+            if is_quota:
+                await asyncio.sleep(20)
+            elif attempt < 2:
+                await asyncio.sleep(5)
 
     return fallback
 
