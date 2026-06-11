@@ -19,7 +19,7 @@ from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
 from services.llm.kobert_service import kobert_service
-from services.llm.gemini_service import analyze_answers_batch_with_gemini, generate_overall_summary_with_gemini
+from services.llm.gemini_service import analyze_answers_batch_with_gemini, generate_overall_summary_with_gemini, analyze_speech_with_spectrogram
 from services.voice.librosa_service import generate_audio_spectrogram, save_audio_spectrogram, get_audio_duration
 from services.vision.mediapipe_service import mediapipe_service
 
@@ -124,7 +124,43 @@ async def _run_analysis_pipeline(interview_id: int):
                     for q in valid_questions
                 ]
             else:
-                batch_results = await analyze_answers_batch_with_gemini(qna_list) if qna_list else []
+                # 텍스트 내용 기반 배치 분석과 오디오 기반 개별 분석을 동시에 실행합니다.
+                logger.info(f"[Analysis] Gemini 배치 평가(텍스트) 및 개별 음성 평가 시작")
+                
+                # 1. 텍스트 배치 분석 Task
+                text_analysis_task = asyncio.create_task(analyze_answers_batch_with_gemini(qna_list) if qna_list else asyncio.sleep(0, result=[]))
+                
+                # 2. 오디오 개별 분석 Tasks
+                speech_tasks = []
+                for qna in qna_list:
+                    if qna.get("audio_image_bytes"):
+                        speech_tasks.append(analyze_speech_with_spectrogram(qna["audio_image_bytes"]))
+                    else:
+                        # 오디오 이미지가 없는 경우 더미 결과 반환 Task
+                        speech_tasks.append(asyncio.sleep(0, result={"speech_score": 80, "feedback": ""}))
+                
+                # 모든 태스크 동시 대기
+                batch_results, speech_results = await asyncio.gather(
+                    text_analysis_task,
+                    asyncio.gather(*speech_tasks)
+                )
+
+                # 3. 결과 병합: 텍스트 분석 결과에 음성 분석 점수와 피드백을 추가합니다.
+                if isinstance(batch_results, list) and len(batch_results) == len(speech_results):
+                    for i in range(len(batch_results)):
+                        if isinstance(batch_results[i], dict) and isinstance(speech_results[i], dict):
+                            # 오디오 기반 speech_score로 덮어쓰기
+                            s_score = speech_results[i].get("speech_score", 80)
+                            try:
+                                batch_results[i]["speech_score"] = int(s_score)
+                            except:
+                                batch_results[i]["speech_score"] = 80
+                            
+                            # 음성 피드백을 기존 피드백에 추가
+                            speech_fb = speech_results[i].get("feedback", "").strip()
+                            if speech_fb:
+                                current_fb = batch_results[i].get("feedback", "")
+                                batch_results[i]["feedback"] = f"{current_fb}\n\n[음성 코칭]\n{speech_fb}".strip()
 
             # ── Gemini 피드백 결과 매핑 ──
             for q, gemini_result in zip(valid_questions, batch_results):
