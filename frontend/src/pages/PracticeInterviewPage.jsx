@@ -4,6 +4,7 @@ import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
+import { useAuthStore } from '@/store/authStore'
 
 const PHASE = {
   SETUP: 'setup',
@@ -45,6 +46,11 @@ export default function PracticeInterviewPage() {
   const [backendQuestions, setBackendQuestions] = useState([])
   const [feedbackLoading, setFeedbackLoading] = useState(false)
 
+  // Audio Streaming 관련 Refs
+  const wsRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const token = useAuthStore((s) => s.token)
+
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const totalTimer = useRef(null)
@@ -57,9 +63,46 @@ export default function PracticeInterviewPage() {
   const { listening, interim, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
     useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
 
+  // 오디오 스트리밍 시작 (WebSocket 연결)
+  const startAudioStreaming = useCallback(() => {
+    if (!backendInterviewId) return
+    
+    const wsUrl = `ws://${window.location.hostname}:8000/ws/interview_audio/${backendInterviewId}?token=${token}`
+    wsRef.current = new WebSocket(wsUrl)
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      mediaRecorderRef.current = recorder
+      
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(e.data)
+        }
+      }
+      // 500ms 단위로 오디오 조각을 서버에 전송
+      recorder.start(500)
+    })
+  }, [backendInterviewId, token])
+
+  // 오디오 스트리밍 종료
+  const stopAudioStreaming = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
+    }
+    if (wsRef.current) {
+      wsRef.current.close()
+    }
+  }, [])
+
   useEffect(() => {
-    if (phase !== PHASE.ANSWERING) stopSTT()
-  }, [phase, stopSTT])
+    if (phase === PHASE.ANSWERING) {
+      startAudioStreaming()
+    } else {
+      stopSTT()
+      stopAudioStreaming()
+    }
+    return () => stopAudioStreaming()
+  }, [phase, stopSTT, startAudioStreaming, stopAudioStreaming])
 
   const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
     setDeviceIds({ cameraId, micId })
