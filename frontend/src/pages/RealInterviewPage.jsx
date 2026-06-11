@@ -4,6 +4,7 @@ import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
+import { interviewWS } from '@/services/websocket'
 
 const FALLBACK_QUESTIONS = [
   '자기소개를 1분 이내로 해주세요.',
