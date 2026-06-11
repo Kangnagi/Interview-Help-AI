@@ -46,23 +46,39 @@ def _create_spectrogram_sync(audio_path: str) -> bytes | None:
             n_mels=128,
         )
         spectrogram_db = librosa.power_to_db(mel_spectrogram, ref=np.max)
+        
+        # RMS Energy 계산
+        rms = librosa.feature.rms(y=y)[0]
+        times = librosa.times_like(rms, sr=sr)
 
         # Matplotlib 내부 상태는 완전히 thread-safe하지 않아 렌더링 구간을 보호합니다.
         with _PLOT_LOCK:
-            figure = Figure(figsize=(10, 4))
-            axis = figure.subplots()
+            # 2개의 서브플롯을 위아래로 배치
+            figure = Figure(figsize=(10, 6))
+            axes = figure.subplots(nrows=2, ncols=1, sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+            
+            # 1. Mel Spectrogram
             librosa.display.specshow(
                 spectrogram_db,
                 sr=sr,
                 x_axis="time",
                 y_axis="mel",
-                ax=axis,
+                ax=axes[0],
             )
-            axis.set_title("Mel Spectrogram")
+            axes[0].set_title("Mel Spectrogram")
+            axes[0].set_xlabel("") # 공유 x축이므로 위쪽 그래프의 x축 라벨 제거
+            
+            # 2. RMS Energy
+            axes[1].semilogy(times, rms, label="RMS Energy", color="b")
+            axes[1].set_ylabel("RMS Energy")
+            axes[1].set_xlabel("Time (s)")
+            axes[1].set_xlim([times.min(), times.max()])
+            axes[1].legend(loc="upper right")
+            
             figure.tight_layout()
 
             with io.BytesIO() as buffer:
-                figure.savefig(buffer, format="png", bbox_inches="tight", pad_inches=0)
+                figure.savefig(buffer, format="png", bbox_inches="tight", pad_inches=0.1)
                 return buffer.getvalue()
 
     except Exception:
