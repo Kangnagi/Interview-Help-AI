@@ -20,7 +20,7 @@ from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
 from services.llm.kobert_service import kobert_service
 from services.llm.gemini_service import analyze_answers_batch_with_gemini, generate_overall_summary_with_gemini
-from services.voice.librosa_service import generate_audio_spectrogram, get_audio_duration
+from services.voice.librosa_service import generate_audio_spectrogram, save_audio_spectrogram, get_audio_duration
 from services.vision.mediapipe_service import mediapipe_service
 
 logger = logging.getLogger(__name__)
@@ -87,12 +87,18 @@ async def _run_analysis_pipeline(interview_id: int):
                         s_score = 80
                     speech_scores.append(s_score)
 
-                # 2) 🎵 오디오 파일을 이미지로 변환 (Librosa)
+                # 2) 🎵 오디오 파일을 이미지로 변환 및 저장 (Librosa)
                 image_bytes = None
                 try:
-                    image_bytes = await generate_audio_spectrogram(q.audio_path)
+                    # 디버깅/확인용: 이미지를 실제 폴더에 저장
+                    saved_path = await save_audio_spectrogram(q.audio_path)
+                    if saved_path:
+                        # 저장된 파일을 읽어서 AI 모델 전송용 bytes 데이터로 변환
+                        with open(saved_path, "rb") as f:
+                            image_bytes = f.read()
+                        logger.info(f"[Analysis] 스펙트로그램 이미지 저장 완료: {saved_path}")
                 except Exception as e:
-                    logger.warning(f"오디오 이미지 변환 실패 (건너뜀): {e}")
+                    logger.warning(f"오디오 이미지 변환/저장 실패 (건너뜀): {e}")
 
                 qna_list.append({
                     "question": q.question_text,
