@@ -121,6 +121,48 @@ async def test_kobert() -> bool:
 
 
 # ─────────────────────────────────────────────────────────
+# 3. MediaPipe (비전 분석)
+# ─────────────────────────────────────────────────────────
+async def test_mediapipe() -> bool:
+    section("3. MediaPipe 비전 분석")
+    try:
+        import mediapipe as mp
+        import cv2
+        print(f"{PASS} mediapipe {mp.__version__} 로드 성공")
+        print(f"{PASS} opencv {cv2.__version__} 로드 성공")
+
+        from services.vision.mediapipe_service import mediapipe_service
+        await mediapipe_service.initialize()
+
+        if mediapipe_service._initialized:
+            print(f"{PASS} MediaPipe 초기화 성공 (FaceLandmarker + PoseLandmarker)")
+
+            # 더미 프레임(480x640 흑백 이미지)으로 analyze_frame 테스트
+            import numpy as np
+            dummy_rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+            _, buf = cv2.imencode(".jpg", dummy_rgb)
+            result = await mediapipe_service.analyze_frame(buf.tobytes())
+            print(f"  → eye_contact : {result.get('eye_contact')}")
+            print(f"  → posture_ok  : {result.get('posture_ok')}")
+            print(f"  → head_pose   : {result.get('head_pose')}")
+        else:
+            print(f"{WARN} MediaPipe Stub 모드 (패키지 미설치 또는 모델 오류)")
+            result = await mediapipe_service.analyze_frame(b"")
+            print(f"  → stub 응답: {result}")
+
+        return True
+    except ImportError as e:
+        print(f"{WARN} mediapipe/opencv 미설치 — Stub 모드로 동작: {e}")
+        from services.vision.mediapipe_service import mediapipe_service
+        result = await mediapipe_service.analyze_frame(b"")
+        print(f"  → stub 응답: {result}")
+        return True
+    except Exception as e:
+        print(f"{FAIL} 오류: {e}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────
 # 5. Librosa (음성 특징 분석)
 # ─────────────────────────────────────────────────────────
 async def test_librosa() -> bool:
