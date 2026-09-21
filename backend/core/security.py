@@ -4,6 +4,7 @@ from jose import JWTError, jwt                   # JWT 생성/디코딩 라이�
 from passlib.context import CryptContext         # 비밀번호 해싱 컨텍스트
 from fastapi import Depends, HTTPException, status   # FastAPI DI, HTTP 예외, 상태 코드
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials   # Bearer 토큰 추출
+from sqlalchemy.ext.asyncio import AsyncSession   # 계정 잠금 상태 갱신 시 사용
 from core.config import settings                 # SECRET_KEY, ALGORITHM 등 설정
 
 # 비밀번호 해싱 알고리즘: argon2 사용 (bcrypt보다 메모리 집약적 → 무차별 대입 공격 방어)
@@ -61,3 +62,31 @@ async def get_current_user_id(
         raise HTTPException(status_code=401, detail="토큰에 사용자 정보가 없습니다")
 
     return int(user_id)   # 문자열로 저장된 ID를 정수로 변환하여 반환
+
+
+def is_account_locked(user) -> bool:
+    """현재 시각 기준으로 계정이 잠금 상태인지 확인한다 (locked_until이 미래 시각이면 잠김)."""
+    return bool(user.locked_until and user.locked_until > datetime.utcnow())
+
+
+async def register_failed_login(user, db: AsyncSession) -> None:
+    """
+    로그인 실패 1회를 기록한다.
+
+    누적 실패 횟수가 ACCOUNT_LOCK_THRESHOLD에 도달하면 ACCOUNT_LOCK_MINUTES 동안 잠근다.
+    """
+    user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+
+    if user.failed_login_attempts >= settings.ACCOUNT_LOCK_THRESHOLD:
+        user.locked_until = datetime.utcnow() + timedelta(minutes=settings.ACCOUNT_LOCK_MINUTES)
+
+    db.add(user)
+    await db.commit()
+
+
+async def reset_failed_login(user, db: AsyncSession) -> None:
+    """로그인 성공 시 실패 횟수·잠금 상태를 초기화한다."""
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    db.add(user)
+    await db.commit()
