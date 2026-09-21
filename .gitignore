@@ -20,6 +20,8 @@ Thumbs.db
 # Logs
 *.log
 backend/interview.db
+backend/interview.db-wal
+backend/interview.db-shm
 
 # Node.js
 node_modules/

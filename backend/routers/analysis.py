@@ -85,7 +85,8 @@ async def _run_analysis_pipeline(interview_id: int):
                     continue
                
                 # 1) 발화 속도 계산 (WPM)
-                duration = get_audio_duration(q.audio_path)
+                # get_audio_duration은 동기 함수라 별도 스레드로 넘겨 이벤트 루프를 막지 않는다.
+                duration = await asyncio.to_thread(get_audio_duration, q.audio_path)
                 if duration > 0:
                     word_count = len(q.answer_text.split())
                     # WPM = (단어 수 / 초) * 60
