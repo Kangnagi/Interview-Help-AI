@@ -75,7 +75,10 @@ async def interview_websocket(
 
             elif "bytes" in message:
                 frame_bytes = message["bytes"]
-                result = mediapipe_service.analyze_frame_sync(frame_bytes)
+                # analyze_frame_sync는 동기(CPU 바운드) 함수 — 이벤트 루프에서 직접 호출하면
+                # 이 프레임 분석이 끝날 때까지 다른 모든 연결(다른 면접자, 일반 API 요청)이
+                # 전부 멈춘다. 별도 스레드로 넘겨 이벤트 루프가 계속 다른 요청을 처리하게 한다.
+                result = await asyncio.to_thread(mediapipe_service.analyze_frame_sync, frame_bytes)
 
                 # MediaPipe가 실제로 초기화된 경우에만 버퍼에 누적
                 # (Stub 모드는 항상 True를 반환하므로 제외)

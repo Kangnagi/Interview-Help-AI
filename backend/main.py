@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from slowapi.middleware import SlowAPIMiddleware
@@ -81,6 +82,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Cloudflare Tunnel을 경유하므로 응답을 압축하면 전송량이 줄어 체감 속도가 개선된다.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
