@@ -7,24 +7,32 @@ import sqlite3
 
 DB_PATH = "./interview.db"
 
+# (테이블명, ALTER TABLE 구문) 목록 — 이미 존재하는 컬럼은 자동으로 건너뜀
 MIGRATIONS = [
-    "ALTER TABLE interviews ADD COLUMN interview_type VARCHAR DEFAULT 'practice'",
-    "ALTER TABLE interviews ADD COLUMN resume_ref_id VARCHAR",
+    ("interviews", "ALTER TABLE interviews ADD COLUMN interview_type VARCHAR DEFAULT 'practice'"),
+    ("interviews", "ALTER TABLE interviews ADD COLUMN resume_ref_id VARCHAR"),
+    ("users", "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0"),
+    ("users", "ALTER TABLE users ADD COLUMN locked_until DATETIME"),
 ]
 
 def run():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("PRAGMA table_info(interviews)")
-    existing_cols = {row[1] for row in cur.fetchall()}
 
-    for sql in MIGRATIONS:
+    existing_cols_by_table = {}
+
+    for table, sql in MIGRATIONS:
+        if table not in existing_cols_by_table:
+            cur.execute(f"PRAGMA table_info({table})")
+            existing_cols_by_table[table] = {row[1] for row in cur.fetchall()}
+
         col = sql.split("ADD COLUMN ")[1].split(" ")[0]
-        if col not in existing_cols:
+        if col not in existing_cols_by_table[table]:
             cur.execute(sql)
-            print(f"Added column: {col}")
+            existing_cols_by_table[table].add(col)
+            print(f"Added column: {table}.{col}")
         else:
-            print(f"Already exists, skip: {col}")
+            print(f"Already exists, skip: {table}.{col}")
 
     conn.commit()
     conn.close()
