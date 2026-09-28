@@ -51,7 +51,6 @@ class Settings(BaseSettings):
 
     # ── 파일 저장 ───────────────────────────────────────────
     UPLOAD_DIR: str = "./uploads"               # 업로드 파일 저장 디렉토리
-    MAX_UPLOAD_SIZE_MB: int = 100               # 최대 업로드 파일 크기 (MB)
 
     # ── 이메일 설정 (비밀번호 재설정) ──────────────────────────
     SMTP_HOST: str = "smtp.gmail.com"
