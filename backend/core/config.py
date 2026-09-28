@@ -62,6 +62,10 @@ class Settings(BaseSettings):
 
     # ── AI 모델 설정 ────────────────────────────────────────
     KOBERT_MODEL_PATH: str = "./models/kobert"              # KoBERT 로컬 모델 경로 (미사용 시 HuggingFace 자동 다운)
+    LLAMA_BASE_MODEL: str = "meta-llama/Llama-3.2-3B-Instruct"   # 게이트 모델 — HuggingFace 라이선스 동의 + 로그인 필요
+    LLAMA_ADAPTER_PATH: str = "./ai_models/llama-interview-adapter"  # 파인튜닝된 LoRA 어댑터 경로
+    LLAMA_USE_4BIT: bool = False                            # VRAM이 부족하면 True (QLoRA 4bit 로드)
+    LLAMA_MAX_NEW_TOKENS: int = 512                         # 피드백 생성 최대 토큰 수
     WHISPER_MODEL_SIZE: str = "base"                        # Whisper 모델 크기 (tiny/base/small/medium/large)
     WHISPER_LANGUAGE: str = "ko"                            # Whisper 인식 언어 (한국어 고정)
     MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5        # MediaPipe 얼굴 감지 최소 신뢰도 (0~1)

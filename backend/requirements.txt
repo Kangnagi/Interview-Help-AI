@@ -3,11 +3,11 @@ fastapi==0.111.0
 uvicorn[standard]==0.29.0
 python-multipart==0.0.9
 python-dotenv==1.0.1
-pydantic==2.7.1
-pydantic-settings==2.2.1
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
 
 # DB
-sqlalchemy==2.0.30
+sqlalchemy>=2.0.36
 alembic==1.13.1
 aiosqlite==0.20.0
 
@@ -23,21 +23,22 @@ httpx>=0.28.1,<1.0.0
 websockets>=13.0.0,<15.1.0
 
 # AI
-torch==2.1.2
-transformers==4.35.2
-tokenizers==0.14.1
-sentencepiece==0.1.99
-accelerate==0.25.0
-protobuf==4.25.3
+torch>=2.2.0
+transformers>=4.40.0
+tokenizers>=0.19.0
+sentencepiece>=0.2.0
+accelerate>=0.30.0
+protobuf>=4.25.3
+peft>=0.11.1
+bitsandbytes>=0.43.1
 
 # LLM-KoBERT Tokenizer (Custom GitHub URL)
-git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf
 
 # Vision
-mediapipe==0.10.14
-opencv-python==4.9.0.80
-numpy==1.26.4
-Pillow==10.3.0
+mediapipe>=0.10.14
+opencv-python>=4.9.0.80
+numpy>=1.26.4
+Pillow>=10.3.0
 
 # Voice & Audio
 openai-whisper
@@ -47,5 +48,5 @@ ffmpeg-python==0.2.0
 
 # API & Extras
 google-genai>=1.0.0
-matplotlib==3.8.4
+matplotlib>=3.8.4
 argon2-cffi==23.1.0

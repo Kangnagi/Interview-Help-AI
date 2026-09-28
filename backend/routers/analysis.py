@@ -13,7 +13,8 @@ from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
 from services.llm.kobert_service import kobert_service
-from services.llm.gemini_service import analyze_answers_batch_with_gemini, generate_overall_summary_with_gemini, analyze_speech_with_spectrogram
+from services.llm.llama_service import analyze_answers_batch_with_llama, generate_overall_summary_with_llama
+from services.llm.gemini_service import analyze_speech_with_spectrogram
 from services.voice.librosa_service import generate_audio_spectrogram, save_audio_spectrogram, get_audio_duration
 from services.vision.mediapipe_service import mediapipe_service
 
@@ -125,78 +126,62 @@ async def _run_analysis_pipeline(interview_id: int):
                     qna["audio_image_bytes"] = q.audio_image_bytes
                 qna_list.append(qna)
 
-            # 저장된 실시간 피드백이 있으면 배치 Gemini 호출 건너뜀
-            all_have_feedback = bool(valid_questions) and all(q.ai_feedback for q in valid_questions)
-            if all_have_feedback:
-                logger.info(f"[Analysis] 저장된 실시간 피드백 사용 (Gemini 배치 생략)")
-                batch_results = [
-                    {
-                        "content_score": int(q.ai_score or 80),
-                        "relevance_score": int(q.ai_score or 80),
-                        "clarity_score": int(q.ai_score or 80),
-                        "speech_score": int(q.ai_score or 80),
-                        "posture_score": int(q.ai_score or 80),
-                        "eye_contact_score": int(q.ai_score or 80),
-                        "feedback": q.ai_feedback or "",
-                    }
-                    for q in valid_questions
-                ]
-            else:
-                # 텍스트 내용 기반 배치 분석과 오디오 기반 개별 분석을 동시에 실행합니다.
-                logger.info(f"[Analysis] Gemini 배치 평가(텍스트) 및 개별 음성 평가 시작")
-                
-                # 1. 텍스트 배치 분석 Task
-                text_analysis_task = asyncio.create_task(analyze_answers_batch_with_gemini(qna_list) if qna_list else asyncio.sleep(0, result=[]))
-                
-                # 2. 오디오 개별 분석 Tasks
-                speech_tasks = []
-                for qna in qna_list:
-                    if qna.get("audio_image_bytes"):
-                        speech_tasks.append(analyze_speech_with_spectrogram(qna["audio_image_bytes"]))
-                    else:
-                        # 오디오 이미지가 없는 경우 더미 결과 반환 Task
-                        speech_tasks.append(asyncio.sleep(0, result={"speech_score": 80, "feedback": ""}))
-                
-                # 모든 태스크 동시 대기
-                batch_results, speech_results = await asyncio.gather(
-                    text_analysis_task,
-                    asyncio.gather(*speech_tasks)
-                )
+            # 텍스트 내용 기반 배치 분석과 오디오 기반 개별 분석을 동시에 실행합니다.
+            logger.info(f"[Analysis] Llama 배치 평가(텍스트) 및 개별 음성 평가 시작")
 
-                # 3. 결과 병합: 텍스트 분석 결과에 음성 분석 점수와 피드백을 추가합니다.
-                if isinstance(batch_results, list) and len(batch_results) == len(speech_results):
-                    for i in range(len(batch_results)):
-                        if isinstance(batch_results[i], dict) and isinstance(speech_results[i], dict):
-                            # 오디오 기반 speech_score로 덮어쓰기
-                            s_score = speech_results[i].get("speech_score", 80)
-                            try:
-                                batch_results[i]["speech_score"] = int(s_score)
-                            except:
-                                batch_results[i]["speech_score"] = 80
-                            
-                            # 음성 피드백을 기존 피드백에 추가
-                            speech_fb = speech_results[i].get("feedback", "").strip()
-                            if speech_fb:
-                                current_fb = batch_results[i].get("feedback", "")
-                                batch_results[i]["feedback"] = f"{current_fb}\n\n[음성 코칭]\n{speech_fb}".strip()
+            # 1. 텍스트 배치 분석 Task (점수: Gemini, feedback 텍스트: 로컬 Llama)
+            text_analysis_task = asyncio.create_task(analyze_answers_batch_with_llama(qna_list) if qna_list else asyncio.sleep(0, result=[]))
+
+            # 2. 오디오 개별 분석 Tasks
+            speech_tasks = []
+            for qna in qna_list:
+                if qna.get("audio_image_bytes"):
+                    speech_tasks.append(analyze_speech_with_spectrogram(qna["audio_image_bytes"]))
+                else:
+                    speech_tasks.append(asyncio.sleep(0, result={"speech_score": 80, "feedback": ""}))
+
+            # 모든 태스크 동시 대기
+            batch_results, speech_results = await asyncio.gather(
+                text_analysis_task,
+                asyncio.gather(*speech_tasks)
+            )
+
+            # 3. 결과 병합: 텍스트 분석 결과에 음성 분석 점수와 피드백을 추가합니다.
+            if isinstance(batch_results, list) and len(batch_results) == len(speech_results):
+                for i in range(len(batch_results)):
+                    if isinstance(batch_results[i], dict) and isinstance(speech_results[i], dict):
+                        s_score = speech_results[i].get("speech_score", 80)
+                        try:
+                            batch_results[i]["speech_score"] = int(s_score)
+                        except:
+                            batch_results[i]["speech_score"] = 80
+
+                        speech_fb = speech_results[i].get("feedback", "").strip()
+                        if speech_fb:
+                            current_fb = batch_results[i].get("feedback", "")
+                            batch_results[i]["feedback"] = f"{current_fb}\n\n[음성 코칭]\n{speech_fb}".strip()
 
             speech_scores_final = []
+            per_q_content_scores, per_q_relevance_scores, per_q_clarity_scores = [], [], []
             for q, gemini_r, kobert_r in zip(valid_questions, batch_results, kobert_results):
                 if isinstance(gemini_r, dict):
-                    sp_score  = _safe_int(gemini_r.get("speech_score"))
-                    fb_text   = gemini_r.get("feedback", "")
+                    sp_score = _safe_int(gemini_r.get("speech_score"))
+                    fb_text  = gemini_r.get("feedback", "")
 
-                    # Gemini content/relevance/clarity를 KoBERT 결과로 덮어씀
-                    # (KoBERT가 실제 임베딩 기반이라 더 신뢰성 있음)
+                    # content / clarity: Gemini가 실제 내용·논리 구조를 평가한 값 사용
+                    q_content = _safe_int(gemini_r.get("content_score"))
+                    q_clarity = _safe_int(gemini_r.get("clarity_score"))
+
+                    # relevance: Gemini(60%) + KoBERT 임베딩 유사도(40%) 혼합
+                    # KoBERT 코사인 유사도는 객관적 수치라 Gemini 주관 평가를 보정함
+                    gemini_relevance = _safe_int(gemini_r.get("relevance_score"))
                     if kobert_r.get("status") == "success":
-                        q_content   = kobert_r["content_score"]
-                        q_relevance = kobert_r["relevance_score"]
-                        q_clarity   = kobert_r["clarity_score"]
+                        kobert_relevance = kobert_r["relevance_score"]
+                        q_relevance = round(gemini_relevance * 0.6 + kobert_relevance * 0.4)
                     else:
-                        q_content   = _safe_int(gemini_r.get("content_score"))
-                        q_relevance = _safe_int(gemini_r.get("relevance_score"))
-                        q_clarity   = _safe_int(gemini_r.get("clarity_score"))
+                        q_relevance = gemini_relevance
                 else:
+                    # Gemini 실패 시 KoBERT 전체 폴백
                     sp_score    = 70
                     fb_text     = ""
                     q_content   = kobert_r["content_score"]   if kobert_r.get("status") == "success" else 70
@@ -209,24 +194,41 @@ async def _run_analysis_pipeline(interview_id: int):
                 # 질문별 종합 점수 = (content·40 + relevance·35 + clarity·25) / 100
                 q_score = round(q_content * 0.4 + q_relevance * 0.35 + q_clarity * 0.25)
 
-                # Gemini 피드백이 없으면 KoBERT 점수 기반 폴백 피드백 생성
-                # (짧은 답변 포함 모든 질문이 동일하게 피드백을 갖도록 보장)
+                # 답변이 없거나 질문과 아예 다른 경우 점수를 30으로 고정
+                answer_stripped = (q.answer_text or "").strip()
+                is_empty = len(answer_stripped) < 10 or len(answer_stripped.split()) < 3
+                is_unrelated = (
+                    kobert_r.get("status") == "success"
+                    and kobert_r.get("relevance_score", 100) < 25
+                )
+                if is_empty or is_unrelated:
+                    q_score = 30
+                    q_content = q_relevance = q_clarity = 30  # 세부 항목에도 동일 페널티 반영
+
+                # 질문별 점수와 동일한 값으로 세부 항목 집계
+                per_q_content_scores.append(q_content)
+                per_q_relevance_scores.append(q_relevance)
+                per_q_clarity_scores.append(q_clarity)
+
+                # Llama 배치 분석 피드백이 없으면 단건 호출로 보완
                 if not fb_text:
-                    if kobert_r.get("status") == "success":
-                        r  = kobert_r.get("relevance_score", 0)
-                        c  = kobert_r.get("content_score",   0)
-                        cl = kobert_r.get("clarity_score",   0)
+                    logger.warning(f"[Analysis] q{q.id} 배치 피드백 없음 — 단건 호출 시도")
+                    try:
+                        from services.llm.llama_service import analyze_answer_with_llama
+                        single = await analyze_answer_with_llama(q.question_text, q.answer_text)
+                        fb_text = single.get("feedback", "")
+                        # 단건 호출 점수가 있으면 배치 점수 보정
+                        if single.get("score"):
+                            q_score = int(single["score"])
+                    except Exception as fb_err:
+                        logger.error(f"[Analysis] 단건 피드백 생성 실패: {fb_err}")
+                    # 단건도 실패하면 점수 기반 자동 생성
+                    if not fb_text:
                         fb_text = (
-                            f"1. {'질문 관련성이 높은 답변입니다.' if r >= 70 else '질문의 핵심에 더 집중하여 답변해보세요.'}\n"
-                            f"2. {'답변 내용이 충실합니다.' if c >= 70 else 'STAR 기법(상황→과제→행동→결과)으로 답변을 구체화해보세요.'}\n"
-                            f"3. {'표현이 명확합니다.' if cl >= 70 else '추임새나 반복 표현을 줄이고 더 명확하게 전달해보세요.'}"
+                            f"1. {'질문 관련성이 높은 답변입니다.' if q_relevance >= 70 else '질문의 핵심에 더 집중하여 답변해보세요.'}\n"
+                            f"2. {'답변 내용이 충실합니다.' if q_content >= 70 else 'STAR 기법(상황→과제→행동→결과)으로 답변을 구체화해보세요.'}\n"
+                            f"3. {'표현이 명확합니다.' if q_clarity >= 70 else '추임새나 반복 표현을 줄이고 더 명확하게 전달해보세요.'}"
                         )
-                    else:
-                        answer_len = len((q.answer_text or "").strip())
-                        if answer_len < 10:
-                            fb_text = "답변이 너무 짧습니다. 면접에서는 구체적인 경험과 이유를 함께 설명해주세요."
-                        else:
-                            fb_text = "구체적인 경험과 수치를 활용해 답변하면 면접관에게 더 설득력 있게 전달됩니다."
 
                 # 각 질문 레코드에 Gemini 피드백과 종합 점수 저장 (기존 로컬 피드백 덮어씀)
                 q.ai_score    = max(20, min(100, q_score))
@@ -244,10 +246,13 @@ async def _run_analysis_pipeline(interview_id: int):
             analysis.posture_score   = _avg(posture_scores)
             analysis.eye_contact_score = _avg(eye_contact_scores)
 
-            # ── 4) 영역별 집계 점수 ──────────────────────────────────────────
-            analysis.content_score    = _avg(content_scores)   or _avg([_safe_int(r.get("content_score"))   for r in batch_results if isinstance(r, dict)])
-            analysis.relevance_score  = _avg(relevance_scores) or _avg([_safe_int(r.get("relevance_score")) for r in batch_results if isinstance(r, dict)])
-            analysis.clarity_score    = _avg(clarity_scores)   or _avg([_safe_int(r.get("clarity_score"))   for r in batch_results if isinstance(r, dict)])
+            # ── 4) 영역별 집계 점수 (질문별 점수와 동일한 값에서 평균) ─────────
+            # per_q_* 는 루프에서 실제 q.ai_score 계산에 쓴 값 그대로를 수집한 것이므로
+            # content_score 평균 × 0.4 + relevance 평균 × 0.35 + clarity 평균 × 0.25
+            # ≈ 질문별 ai_score 평균이 성립해 세부 항목과 질문별 점수가 연동됨
+            analysis.content_score    = _avg(per_q_content_scores)
+            analysis.relevance_score  = _avg(per_q_relevance_scores)
+            analysis.clarity_score    = _avg(per_q_clarity_scores)
 
             # posture / eye_contact: 실시간 MediaPipe 버퍼 우선 사용, 없으면 텍스트 기반 추정
             vision_scores = get_and_clear_vision_scores(interview_id)
@@ -275,16 +280,20 @@ async def _run_analysis_pipeline(interview_id: int):
                 analysis.eye_contact_score,
             ])
 
-            # ── 6) Gemini 종합 총평 / 강점 / 개선점 ─────────────────────────
+            # ── 6) 종합 총평 / 강점 / 개선점 (베이스 Llama, 실패 시 Gemini 폴백) ──
             qna_feedbacks = [
                 {
-                    "question": q.question_text,
-                    "answer":   q.answer_text or "",
-                    "feedback": (r.get("feedback", "") if isinstance(r, dict) else ""),
+                    "question":        q.question_text,
+                    "answer":          q.answer_text or "",
+                    "score":           q.ai_score,
+                    "content_score":   per_q_content_scores[i]   if i < len(per_q_content_scores)   else None,
+                    "relevance_score": per_q_relevance_scores[i] if i < len(per_q_relevance_scores) else None,
+                    "clarity_score":   per_q_clarity_scores[i]   if i < len(per_q_clarity_scores)   else None,
+                    "feedback":        q.ai_feedback or "",
                 }
-                for q, r in zip(valid_questions, batch_results)
+                for i, (q, r) in enumerate(zip(valid_questions, batch_results))
             ]
-            summary = await generate_overall_summary_with_gemini(qna_feedbacks)
+            summary = await generate_overall_summary_with_llama(qna_feedbacks)
             analysis.feedback_summary = summary.get("feedback_summary", "")
             analysis.strengths        = summary.get("strengths", []) or []
             analysis.improvements     = summary.get("improvements", []) or []
@@ -320,6 +329,12 @@ async def start_analysis(
 
     if interview.status != InterviewStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="완료된 면접만 분석할 수 있습니다")
+
+    # 플레이스홀더 레코드를 즉시 생성해 GET 엔드포인트가 404를 반환하지 않도록 보장
+    existing = await db.execute(select(Analysis).where(Analysis.interview_id == interview_id))
+    if not existing.scalar_one_or_none():
+        db.add(Analysis(interview_id=interview_id))
+        await db.commit()
 
     background_tasks.add_task(_run_analysis_pipeline, interview_id)
     return {"message": "분석을 시작했습니다", "interview_id": interview_id, "status": "processing"}

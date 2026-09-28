@@ -14,67 +14,7 @@ from core.database import get_db
 from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from schemas.schemas import InterviewCreate, InterviewResponse
-from services.llm.gemini_service import generate_questions_from_resume
-from services.llm.kobert_service import kobert_service
-
-
-def _generate_local_feedback(kobert: dict, answer: str) -> dict:
-    """KoBERT 점수 기반 로컬 피드백 생성 (Gemini API 호출 없음)."""
-    status = kobert.get("status", "error")
-
-    if status != "success":
-        # KoBERT 미로드 시 텍스트 길이 기반 휴리스틱
-        length = len((answer or "").strip())
-        if length < 10:
-            score = 30
-        elif length < 50:
-            score = 55
-        elif length < 200:
-            score = 75
-        else:
-            score = 85
-        return {
-            "score": score,
-            "feedback": "1. 답변이 저장되었습니다.\n2. 면접 종료 후 종합 분석에서 상세 Gemini 피드백을 확인하세요.",
-            "tip": "STAR 기법(상황→과제→행동→결과)으로 구조화하면 답변의 설득력이 높아집니다.",
-        }
-
-    relevance = kobert.get("relevance_score", 0.0)
-    content   = kobert.get("content_score",   0.0)
-    clarity   = kobert.get("clarity_score",   0.0)
-
-    # 가중 평균 (관련성 40% · 내용 35% · 명확성 25%)
-    score = round(relevance * 0.4 + content * 0.35 + clarity * 0.25)
-    score = max(20, min(100, score))
-
-    lines = []
-    if relevance >= 70:
-        lines.append("1. 질문과의 관련성이 높은 답변입니다.")
-    elif relevance >= 40:
-        lines.append("1. 질문 핵심을 부분적으로 다뤘습니다. 핵심 포인트를 더 명확히 짚어주세요.")
-    else:
-        lines.append("1. 질문의 핵심에서 벗어났습니다. 질문을 다시 확인하고 답변 방향을 잡아보세요.")
-
-    if content >= 70:
-        lines.append("2. 답변 내용이 충실합니다.")
-    elif content >= 40:
-        lines.append("2. 답변이 조금 짧습니다. 구체적인 경험이나 수치를 추가해보세요.")
-    else:
-        lines.append("2. 답변이 너무 짧습니다. STAR 구조(상황→과제→행동→결과)로 구체화해보세요.")
-
-    if clarity >= 70:
-        lines.append("3. 표현이 명확하고 어휘가 다양합니다.")
-    else:
-        lines.append("3. 추임새나 반복 표현을 줄이고 더 명확하게 전달해보세요.")
-
-    keywords = kobert.get("keywords", [])
-    tip = (
-        f"핵심 키워드 '{', '.join(keywords[:3])}'를 중심으로 답변을 구체화해보세요."
-        if keywords else
-        "STAR 기법(상황→과제→행동→결과)으로 구조화하면 답변의 설득력이 높아집니다."
-    )
-
-    return {"score": score, "feedback": "\n".join(lines), "tip": tip}
+from services.llm.llama_service import generate_questions_from_resume, analyze_answer_with_llama
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/interviews", tags=["면접"])
@@ -129,8 +69,8 @@ async def create_interview(
                     "index": 0
                 }
             logger.info(f"Interview {interview.id}: 캐시된 질문 풀에서 3개를 가져옵니다. (API 절약)")
-        elif os.getenv("GEMINI_API_KEY") and body.resume_text and len(body.resume_text.strip()) > 10:
-            logger.info(f"Interview {interview.id}: Gemini API로 질문 풀 생성을 시도합니다.")
+        elif body.resume_text and len(body.resume_text.strip()) > 10:
+            logger.info(f"Interview {interview.id}: 로컬 Llama로 질문 풀 생성을 시도합니다.")
             category_val = body.category.value if hasattr(body.category, "value") else str(body.category)
             raw_questions = await generate_questions_from_resume(
                 resume_text=body.resume_text,
@@ -144,10 +84,10 @@ async def create_interview(
                 }
             else:
                 cache_entry = None
-                logger.warning(f"Interview {interview.id}: Gemini가 질문을 반환하지 않았습니다. 폴백 로직을 사용합니다.")
+                logger.warning(f"Interview {interview.id}: Llama가 질문을 반환하지 않았습니다. 폴백 로직을 사용합니다.")
         else:
             cache_entry = None
-            logger.info(f"Interview {interview.id}: Gemini API 키가 없거나 자기소개서 내용이 부족하여 폴백 로직을 사용합니다.")
+            logger.info(f"Interview {interview.id}: 자기소개서 내용이 부족하여 폴백 로직을 사용합니다.")
 
         if cache_entry and "ai_questions" in cache_entry:
             ai_pool = cache_entry["ai_questions"]
@@ -170,7 +110,7 @@ async def create_interview(
             ] + selected_ai
 
     except Exception as e:
-        logger.error(f"Interview {interview.id}: Gemini 질문 생성 중 예외 발생, 폴백 로직 실행: {e}")
+        logger.error(f"Interview {interview.id}: 질문 생성 중 예외 발생, 폴백 로직 실행: {e}")
 
     # 3. AI 질문 생성에 실패한 경우, 기본 폴백 질문 사용
     if not questions_list or len(questions_list) <= 2:
@@ -280,7 +220,7 @@ async def get_question_feedback(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """저장된 답변에 대해 즉시 AI 피드백을 생성합니다."""
+    """저장된 답변에 대해 AI 피드백을 즉시 생성합니다 (점수: Gemini, 피드백 텍스트: 로컬 Llama)."""
     result = await db.execute(
         select(InterviewQuestion).where(
             InterviewQuestion.id == question_id,
@@ -293,14 +233,12 @@ async def get_question_feedback(
     if not question.answer_text:
         raise HTTPException(status_code=400, detail="저장된 답변이 없습니다")
 
-    # KoBERT 로컬 분석 → Gemini API 호출 없이 즉시 반환
-    kobert_result = await kobert_service.analyze_answer(question.question_text, question.answer_text)
-    logger.info(f"KoBERT 분석 결과: {kobert_result}")
+    llama_result = await analyze_answer_with_llama(question.question_text, question.answer_text)
+    logger.info(f"[Feedback] q={question_id} score={llama_result.get('score')}")
 
-    result_data = _generate_local_feedback(kobert_result, question.answer_text)
-    score        = result_data["score"]
-    feedback_text = result_data["feedback"]
-    tip_text      = result_data["tip"]
+    score         = llama_result.get("score", 70)
+    feedback_text = llama_result.get("feedback", "")
+    tip_text      = llama_result.get("tip", "")
 
     question.ai_score    = score
     question.ai_feedback = feedback_text

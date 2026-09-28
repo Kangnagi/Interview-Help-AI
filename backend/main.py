@@ -16,6 +16,7 @@ from core.security_middleware import SecurityHeadersMiddleware, RequestSizeLimit
 from routers import auth, interview, analysis, websocket, stt, stats
 from services.vision.mediapipe_service import mediapipe_service
 from services.llm.kobert_service import kobert_service
+from services.llm.llama_service import llama_service
 
 logging.basicConfig(
     level=logging.INFO if settings.DEBUG else logging.WARNING,
@@ -33,7 +34,9 @@ async def lifespan(app: FastAPI):
 
     # KoBERT는 로딩 시간이 길고 현재 Gemini로 대체되어 비활성화
     # await kobert_service.load_model()
-  
+
+    await llama_service.load_model()  # 파인튜닝된 Llama-3.2-3B(LoRA) 로딩
+
     await mediapipe_service.initialize()
     logger.info("AI 모델 준비 완료")
 
