@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"   # JWT 서명 비밀키 (운영 시 반드시 교체)
     ALGORITHM: str = "HS256"                     # JWT 서명 알고리즘
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60        # 액세스 토큰 유효 시간 (분)
-    GEMINI_API_KEY: Optional[str] = None        # .env 파일에 GEMINI_API_KEY= 로 설정
+    # settings.GEMINI_API_KEY / .GEMINI_MODEL로는 안 쓰고 services/llm/gemini_service.py가
+    # os.getenv()로 직접 읽는다. 그래도 여기 선언은 유지해야 함 — pydantic-settings가 기본적으로
+    # .env에 있는 미선언 값을 오류로 취급해 서버가 기동을 거부하기 때문.
+    GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.5-flash"
 
     # ── Rate Limiting / 계정 잠금 ───────────────────────────────
@@ -60,14 +63,10 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"   # 재설정 링크에 사용할 프론트 주소
 
     # ── AI 모델 설정 ────────────────────────────────────────
-    KOBERT_MODEL_PATH: str = "./models/kobert"              # KoBERT 로컬 모델 경로 (미사용 시 HuggingFace 자동 다운)
     LLAMA_BASE_MODEL: str = "meta-llama/Llama-3.2-3B-Instruct"   # 게이트 모델 — HuggingFace 라이선스 동의 + 로그인 필요
     LLAMA_ADAPTER_PATH: str = "./ai_models/llama-interview-adapter"  # 파인튜닝된 LoRA 어댑터 경로
     LLAMA_USE_4BIT: bool = False                            # VRAM이 부족하면 True (QLoRA 4bit 로드)
     LLAMA_MAX_NEW_TOKENS: int = 512                         # 피드백 생성 최대 토큰 수
-    WHISPER_MODEL_SIZE: str = "base"                        # Whisper 모델 크기 (tiny/base/small/medium/large)
-    WHISPER_LANGUAGE: str = "ko"                            # Whisper 인식 언어 (한국어 고정)
-    MEDIAPIPE_MIN_DETECTION_CONFIDENCE: float = 0.5        # MediaPipe 얼굴 감지 최소 신뢰도 (0~1)
 
     class Config:
         env_file = ".env"          # 프로젝트 루트의 .env 파일에서 환경 변수 로드
