@@ -1,22 +1,22 @@
 """
-파인튜닝된 Llama-3.2-3B-Instruct(LoRA)로 답변 피드백을 생성하는 서비스.
+파인튜닝된 Llama-3.2-3B-Instruct(LoRA)로 답변을 채점하고 피드백을 생성하는 서비스 — 채점에 Gemini 미사용.
 
-학습 범위(llama-finetune/training/train_New.jsonl, train_Experienced.jsonl):
-  "질문 + 답변" 단일 쌍 -> 요약 + 평가 피드백 텍스트 생성
-그래서 이 서비스가 직접 대체하는 것은 "feedback 텍스트" 뿐이다.
+베이스 모델 1개 위에 LoRA 어댑터 2개를 올려 두고 용도에 따라 바꿔 쓴다.
+  - interview_score    : 질문+답변 -> {"score","feedback","tip"} JSON (메인 채점기)
+                         training/generate_teacher_scores.py가 만든 선생님(Qwen2.5-14B) 데이터로 학습.
+  - interview_feedback : 질문+답변 -> 피드백 텍스트 (채점 어댑터가 실패했을 때 피드백 폴백용)
+  - 어댑터 없음(베이스) : 종합 총평, 자기소개서 기반 질문 생성
 
-아직 이 어댑터로 학습되지 않아 당분간 Gemini에 그대로 맡기는 것:
-  - content_score / relevance_score / clarity_score 등 숫자 점수 산정
-    (2단계로 점수 라벨 데이터를 만들어 추가 파인튜닝 예정)
-  - analyze_speech_with_spectrogram (음성 스펙트로그램 이미지 분석 — 텍스트 전용
-    모델이라 대체 불가. 자체 음성 분석 모델로 별도 이식 예정이라 이 서비스에는
-    구현하지 않음. 라우터에서 계속 gemini_service 것을 직접 import해서 쓴다.)
+채점이 실패하면(모델 미로딩, JSON 파싱 실패 등) Gemini로 넘기지 않고 규칙 기반 점수로 대체한다.
 
-자기소개서 기반 질문 생성(generate_questions_from_resume)도 이 어댑터의 학습
-범위 밖이라, LoRA 어댑터를 끈 베이스 Llama로 생성한다 (완전 로컬, Gemini 미사용).
+아직 Gemini가 맡는 것:
+  - analyze_speech_with_spectrogram (음성 스펙트로그램 이미지 분석 — 텍스트 전용 모델이라 대체 불가.
+    라우터에서 gemini_service 것을 직접 import해서 쓴다.)
+  - 종합 총평 생성이 실패했을 때의 폴백
 """
 import asyncio
 import logging
+import os
 from contextlib import nullcontext
 from typing import Optional
 
@@ -30,11 +30,25 @@ from services.llm.gemini_service import _parse_json
 
 logger = logging.getLogger(__name__)
 
-ADAPTER_NAME = "interview_feedback"
+FEEDBACK_ADAPTER = "interview_feedback"
+SCORE_ADAPTER = "interview_score"
+
+# training/generate_teacher_scores.py의 SCORING_SYSTEM_PROMPT와 글자 하나까지 같아야 한다.
+# (채점 어댑터는 이 프롬프트로만 학습됐기 때문에 조금만 달라져도 출력 형식·점수가 흔들린다.)
+SCORING_SYSTEM_PROMPT = (
+    "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
+    "지원자의 면접 질문과 답변을 분석하여 반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지).\n"
+    "feedback의 각 항목은 1~2문장으로 간결하게 작성하세요.\n"
+    '{"score":0~100,"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성 제안",'
+    '"tip":"다음 답변을 위한 실질적 개선 팁 한 문장"}'
+)
+SCORE_MAX_NEW_TOKENS = 600   # 학습 라벨(JSON) 길이 기준 여유치 — 평가에서 60/60 완결됨
+SCORE_BATCH_SIZE = 8         # 한 번에 채점할 답변 수 (VRAM·지연 시간 균형)
+MAX_ANSWER_CHARS = 2000      # 비정상적으로 긴 답변은 잘라서 채점
 
 
 class LlamaService:
-    """싱글톤. 베이스 모델 1개 + LoRA 어댑터 1개를 메모리에 유지한다."""
+    """싱글톤. 베이스 모델 1개 + LoRA 어댑터들을 메모리에 유지한다."""
 
     _instance: Optional["LlamaService"] = None
 
@@ -48,8 +62,9 @@ class LlamaService:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.tokenizer = None
             self.model = None
+            self.has_score_adapter = False
             # generate()는 스레드로 넘어가므로, 같은 모델 인스턴스에 대한 동시
-            # 호출(어댑터 on/off 전환 포함)이 서로 섞이지 않도록 직렬화한다.
+            # 호출(어댑터 전환 포함)이 서로 섞이지 않도록 직렬화한다.
             self._lock = asyncio.Lock()
             self.initialized = True
 
@@ -59,11 +74,12 @@ class LlamaService:
         logger.info("Llama 모델 로딩 중...")
         try:
             await asyncio.to_thread(self._load_model_sync)
-            logger.info(f"Llama 로딩 완료 (device: {self.device})")
+            logger.info(f"Llama 로딩 완료 (device: {self.device}, 채점 어댑터: {self.has_score_adapter})")
         except Exception as e:
-            logger.error(f"Llama 로딩 실패 (Gemini 폴백으로 동작): {e}")
+            logger.error(f"Llama 로딩 실패 (규칙 기반 채점으로 동작): {e}")
             self.model = None
             self.tokenizer = None
+            self.has_score_adapter = False
 
     def _load_model_sync(self):
         compute_dtype = torch.bfloat16 if (self.device == "cuda" and torch.cuda.is_bf16_supported()) else torch.float16
@@ -80,6 +96,7 @@ class LlamaService:
         self.tokenizer = AutoTokenizer.from_pretrained(settings.LLAMA_ADAPTER_PATH)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "left"   # 여러 답변을 한 번에 생성(배치)할 때 필요
 
         base_model = AutoModelForCausalLM.from_pretrained(
             settings.LLAMA_BASE_MODEL,
@@ -88,47 +105,146 @@ class LlamaService:
             device_map={"": 0} if self.device == "cuda" else None,
         )
         self.model = PeftModel.from_pretrained(
-            base_model, settings.LLAMA_ADAPTER_PATH, adapter_name=ADAPTER_NAME
+            base_model, settings.LLAMA_ADAPTER_PATH, adapter_name=FEEDBACK_ADAPTER
         )
+        if os.path.isdir(settings.LLAMA_SCORE_ADAPTER_PATH):
+            self.model.load_adapter(settings.LLAMA_SCORE_ADAPTER_PATH, adapter_name=SCORE_ADAPTER)
+            self.has_score_adapter = True
+        else:
+            logger.warning(f"채점 어댑터 없음: {settings.LLAMA_SCORE_ADAPTER_PATH} — 규칙 기반 채점으로 동작")
         self.model.eval()
 
-    def _generate_sync(self, messages: list, max_new_tokens: int, use_adapter: bool) -> str:
-        if use_adapter:
-            self.model.set_adapter(ADAPTER_NAME)
+    def _generate_sync(self, conversations: list, max_new_tokens: int, adapter: Optional[str], greedy: bool) -> list:
+        if adapter:
+            self.model.set_adapter(adapter)
             ctx = nullcontext()
         else:
             ctx = self.model.disable_adapter()
 
+        if greedy:
+            # 채점: 학습·평가와 같은 조건(탐욕적 디코딩)으로 — 같은 답변엔 항상 같은 점수
+            gen_kwargs = {"do_sample": False}
+        else:
+            gen_kwargs = {
+                "do_sample": True, "temperature": 0.7, "top_p": 0.9,
+                "repetition_penalty": 1.15, "no_repeat_ngram_size": 3,
+            }
+
         with ctx:
-            prompt_text = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            encoding = self.tokenizer(prompt_text, return_tensors="pt").to(self.model.device)
+            prompts = [
+                self.tokenizer.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
+                for m in conversations
+            ]
+            encoding = self.tokenizer(prompts, return_tensors="pt", padding=True).to(self.model.device)
             input_len = encoding["input_ids"].shape[-1]
             with torch.no_grad():
                 output = self.model.generate(
                     **encoding,
                     max_new_tokens=max_new_tokens,
-                    do_sample=True,
-                    temperature=0.7,
-                    top_p=0.9,
-                    repetition_penalty=1.15,
-                    no_repeat_ngram_size=3,
                     pad_token_id=self.tokenizer.pad_token_id,
+                    **gen_kwargs,
                 )
-            return self.tokenizer.decode(output[0][input_len:], skip_special_tokens=True)
+            return [self.tokenizer.decode(o[input_len:], skip_special_tokens=True) for o in output]
 
-    async def generate(self, messages: list, max_new_tokens: int = None, use_adapter: bool = True) -> str:
+    async def generate_batch(self, conversations: list, max_new_tokens: int,
+                             adapter: Optional[str], greedy: bool = False) -> list:
         if self.model is None:
             raise RuntimeError("Llama 모델이 로드되지 않았습니다.")
-        max_new_tokens = max_new_tokens or settings.LLAMA_MAX_NEW_TOKENS
         async with self._lock:
-            return await asyncio.to_thread(self._generate_sync, messages, max_new_tokens, use_adapter)
+            return await asyncio.to_thread(self._generate_sync, conversations, max_new_tokens, adapter, greedy)
+
+    async def generate(self, messages: list, max_new_tokens: int = None, use_adapter: bool = True) -> str:
+        max_new_tokens = max_new_tokens or settings.LLAMA_MAX_NEW_TOKENS
+        adapter = FEEDBACK_ADAPTER if use_adapter else None
+        return (await self.generate_batch([messages], max_new_tokens, adapter))[0]
 
 
 llama_service = LlamaService()
 
 
+# ── 채점 ─────────────────────────────────────────────────────────────────────
+def _scoring_messages(question: str, answer: str) -> list:
+    # user 메시지 형식도 학습 데이터와 동일해야 한다.
+    return [
+        {"role": "system", "content": SCORING_SYSTEM_PROMPT},
+        {"role": "user", "content": f"면접 질문: {question}\n지원자 답변: {answer[:MAX_ANSWER_CHARS]}"},
+    ]
+
+
+def _short_answer_result(answer: str) -> Optional[dict]:
+    """빈 답변·극단적으로 짧은 답변은 모델 없이 바로 채점."""
+    if not answer:
+        return {
+            "score": 20,
+            "feedback": "답변을 입력하지 않으셨습니다. 짧더라도 자신의 생각을 반드시 전달해야 합니다.",
+            "tip": "모르더라도 관련 경험이나 학습 의지를 짧게 표현해 보세요.",
+        }
+    if len(answer) < 10:
+        return {
+            "score": 35,
+            "feedback": "답변이 너무 짧습니다. 이유와 구체적인 경험을 덧붙여 주세요.",
+            "tip": "STAR 기법(상황→과제→행동→결과)으로 구조화하면 짧은 답변도 풍성해집니다.",
+        }
+    return None
+
+
+def _parse_score_output(text: str) -> Optional[dict]:
+    try:
+        r = _parse_json(text)
+        score = int(r["score"])
+        feedback, tip = r.get("feedback"), r.get("tip")
+        if not (0 <= score <= 100 and isinstance(feedback, str) and feedback.strip() and isinstance(tip, str)):
+            return None
+        return {"score": score, "feedback": feedback.strip(), "tip": tip.strip()}
+    except Exception:
+        return None
+
+
+async def _fallback_result(question: str, answer: str) -> dict:
+    """채점 어댑터를 못 쓸 때: 답변 길이 기반 점수 + (가능하면) 피드백 어댑터 텍스트. Gemini 미사용."""
+    n = len(answer)
+    score = 45 if n < 50 else 55 if n < 200 else 65
+    feedback = await generate_feedback_text(question, answer) if llama_service.model is not None else None
+    return {
+        "score": score,
+        "feedback": feedback or (
+            "1. 질문에 대한 답변을 제시했습니다.\n"
+            "2. 구체적인 경험과 수치를 더하면 설득력이 높아집니다.\n"
+            "3. 상황→과제→행동→결과(STAR) 순서로 답변을 구조화해 보세요."
+        ),
+        "tip": "다음 답변에서는 구체적인 경험과 수치를 활용해 보세요.",
+    }
+
+
+async def score_answers(qna_list: list) -> list:
+    """질문·답변 목록을 채점해 [{"score","feedback","tip"}]를 입력 순서대로 반환. 항상 길이가 같다."""
+    answers = [(q.get("answer") or "").strip() for q in qna_list]
+    results = [_short_answer_result(a) for a in answers]
+    todo = [i for i, r in enumerate(results) if r is None]
+
+    if todo and llama_service.has_score_adapter:
+        for b in range(0, len(todo), SCORE_BATCH_SIZE):
+            chunk = todo[b:b + SCORE_BATCH_SIZE]
+            try:
+                texts = await llama_service.generate_batch(
+                    [_scoring_messages(qna_list[i]["question"], answers[i]) for i in chunk],
+                    SCORE_MAX_NEW_TOKENS, adapter=SCORE_ADAPTER, greedy=True,
+                )
+            except Exception as e:
+                logger.error(f"Llama 채점 실패: {e}")
+                continue
+            for i, text in zip(chunk, texts):
+                results[i] = _parse_score_output(text)
+                if results[i] is None:
+                    logger.warning(f"Llama 채점 출력 파싱 실패 — 규칙 기반 폴백: {text[:120]!r}")
+
+    for i, r in enumerate(results):
+        if r is None:
+            results[i] = await _fallback_result(qna_list[i]["question"], answers[i])
+    return results
+
+
+# ── 피드백 텍스트 (폴백용 어댑터) ──────────────────────────────────────────────
 def _feedback_messages(question: str, answer: str) -> list:
     return [
         {"role": "system", "content": "당신은 AI 면접 도우미입니다. 면접관의 질문과 지원자의 답변을 분석하여 핵심 내용을 요약하고 피드백을 제공합니다."},
@@ -141,7 +257,7 @@ FEEDBACK_MAX_NEW_TOKENS = 200  # 학습 데이터의 assistant 응답 길이(평
 
 
 async def generate_feedback_text(question: str, answer: str) -> Optional[str]:
-    """파인튜닝된 어댑터로 단일 질문/답변 피드백 텍스트 생성. 실패 시 None (호출부가 Gemini 피드백을 그대로 씀)."""
+    """피드백 어댑터로 단일 질문/답변 피드백 텍스트 생성. 실패 시 None."""
     try:
         text = await llama_service.generate(
             _feedback_messages(question, answer), max_new_tokens=FEEDBACK_MAX_NEW_TOKENS, use_adapter=True
@@ -152,27 +268,34 @@ async def generate_feedback_text(question: str, answer: str) -> Optional[str]:
         return None
 
 
+# ── 라우터가 쓰는 공개 함수 ─────────────────────────────────────────────────────
 async def analyze_answer_with_llama(question: str, answer: str, audio_image_bytes: bytes = None, kobert_scores: dict = None) -> dict:
-    """점수(score/tip)는 당분간 Gemini가 산정하고, feedback 텍스트만 파인튜닝된 로컬 Llama로 교체."""
-    result = await gemini_service.analyze_answer_with_gemini(question, answer, audio_image_bytes, kobert_scores)
-    llama_feedback = await generate_feedback_text(question, answer)
-    if llama_feedback:
-        result = dict(result)
-        result["feedback"] = llama_feedback
-    return result
+    """단일 답변 즉시 채점: {"score","feedback","tip"}. (audio_image_bytes, kobert_scores는 하위 호환용으로만 받음)"""
+    return (await score_answers([{"question": question, "answer": answer}]))[0]
 
 
 async def analyze_answers_batch_with_llama(qna_list: list) -> list:
-    """점수는 Gemini 배치 결과를 그대로 쓰고, 문항별 feedback만 로컬 Llama로 순차 교체."""
-    results = await gemini_service.analyze_answers_batch_with_gemini(qna_list)
-    for i, qna in enumerate(qna_list):
-        if i >= len(results) or not isinstance(results[i], dict):
-            continue
-        llama_feedback = await generate_feedback_text(qna["question"], qna["answer"])
-        if llama_feedback:
-            results[i] = dict(results[i])
-            results[i]["feedback"] = llama_feedback
-    return results
+    """면접 종료 후 일괄 채점. 기존 Gemini 배치 결과와 같은 키를 돌려준다.
+
+    채점 어댑터는 종합 점수 하나만 내므로 content/relevance/clarity에 같은 값을 넣는다.
+    speech/posture/eye_contact는 분석 파이프라인에서 음성·MediaPipe 결과로 덮어쓴다.
+    """
+    if not qna_list:
+        return []
+    scored = await score_answers(qna_list)
+    return [
+        {
+            "content_score": r["score"],
+            "relevance_score": r["score"],
+            "clarity_score": r["score"],
+            "speech_score": 70,
+            "posture_score": 80,
+            "eye_contact_score": 80,
+            "feedback": r["feedback"],
+            "tip": r["tip"],
+        }
+        for r in scored
+    ]
 
 
 async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:

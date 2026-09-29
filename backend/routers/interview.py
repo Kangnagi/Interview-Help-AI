@@ -220,7 +220,7 @@ async def get_question_feedback(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """저장된 답변에 대해 AI 피드백을 즉시 생성합니다 (점수: Gemini, 피드백 텍스트: 로컬 Llama)."""
+    """저장된 답변에 대해 AI 피드백을 즉시 생성합니다 (점수·피드백·팁 모두 로컬 Llama, Gemini 미사용)."""
     result = await db.execute(
         select(InterviewQuestion).where(
             InterviewQuestion.id == question_id,

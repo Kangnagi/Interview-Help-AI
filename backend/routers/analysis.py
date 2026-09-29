@@ -129,7 +129,7 @@ async def _run_analysis_pipeline(interview_id: int):
             # 텍스트 내용 기반 배치 분석과 오디오 기반 개별 분석을 동시에 실행합니다.
             logger.info(f"[Analysis] Llama 배치 평가(텍스트) 및 개별 음성 평가 시작")
 
-            # 1. 텍스트 배치 분석 Task (점수: Gemini, feedback 텍스트: 로컬 Llama)
+            # 1. 텍스트 배치 분석 Task (점수·feedback 모두 로컬 Llama 채점 어댑터, Gemini 미사용)
             text_analysis_task = asyncio.create_task(analyze_answers_batch_with_llama(qna_list) if qna_list else asyncio.sleep(0, result=[]))
 
             # 2. 오디오 개별 분석 Tasks
@@ -168,12 +168,12 @@ async def _run_analysis_pipeline(interview_id: int):
                     sp_score = _safe_int(gemini_r.get("speech_score"))
                     fb_text  = gemini_r.get("feedback", "")
 
-                    # content / clarity: Gemini가 실제 내용·논리 구조를 평가한 값 사용
+                    # content / clarity: Llama 채점 어댑터의 종합 점수 (현재 세 항목 모두 같은 값)
                     q_content = _safe_int(gemini_r.get("content_score"))
                     q_clarity = _safe_int(gemini_r.get("clarity_score"))
 
-                    # relevance: Gemini(60%) + KoBERT 임베딩 유사도(40%) 혼합
-                    # KoBERT 코사인 유사도는 객관적 수치라 Gemini 주관 평가를 보정함
+                    # relevance: Llama(60%) + KoBERT 임베딩 유사도(40%) 혼합
+                    # KoBERT 코사인 유사도는 객관적 수치라 모델의 주관 평가를 보정함
                     gemini_relevance = _safe_int(gemini_r.get("relevance_score"))
                     if kobert_r.get("status") == "success":
                         kobert_relevance = kobert_r["relevance_score"]

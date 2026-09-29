@@ -64,7 +64,8 @@ class Settings(BaseSettings):
 
     # ── AI 모델 설정 ────────────────────────────────────────
     LLAMA_BASE_MODEL: str = "meta-llama/Llama-3.2-3B-Instruct"   # 게이트 모델 — HuggingFace 라이선스 동의 + 로그인 필요
-    LLAMA_ADAPTER_PATH: str = "./ai_models/llama-interview-adapter"  # 파인튜닝된 LoRA 어댑터 경로
+    LLAMA_ADAPTER_PATH: str = "./ai_models/llama-interview-adapter"  # 파인튜닝된 LoRA 어댑터 경로 (피드백 텍스트 폴백용)
+    LLAMA_SCORE_ADAPTER_PATH: str = "./ai_models/llama-score-adapter"  # 점수·피드백·팁 채점 어댑터 (training/ 선생님 데이터로 학습)
     LLAMA_USE_4BIT: bool = False                            # VRAM이 부족하면 True (QLoRA 4bit 로드)
     LLAMA_MAX_NEW_TOKENS: int = 512                         # 피드백 생성 최대 토큰 수
 
