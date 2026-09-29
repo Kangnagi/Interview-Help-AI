@@ -185,6 +185,13 @@ def _short_answer_result(answer: str) -> Optional[dict]:
             "feedback": "답변이 너무 짧습니다. 이유와 구체적인 경험을 덧붙여 주세요.",
             "tip": "STAR 기법(상황→과제→행동→결과)으로 구조화하면 짧은 답변도 풍성해집니다.",
         }
+    # 인코딩이 깨져 '?'·'�'로 바뀐 답변 — 모델에 넣으면 내용 없이도 높은 점수가 나와서 따로 처리
+    if sum(ch in "?�" for ch in answer) > len(answer) * 0.3:
+        return {
+            "score": 20,
+            "feedback": "답변 내용을 인식하지 못했습니다 (글자가 깨져 저장됨). 다시 답변해 주세요.",
+            "tip": "음성 답변이라면 마이크 상태를 확인하고 다시 녹음해 보세요.",
+        }
     return None
 
 
