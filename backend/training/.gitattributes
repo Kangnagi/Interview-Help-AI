@@ -1,0 +1,2 @@
+# WSL bash에서 실행하는 스크립트 — Windows 체크아웃에서도 CRLF로 바뀌지 않게 고정
+*.sh text eol=lf

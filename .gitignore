@@ -27,6 +27,13 @@ backend/interview.db-shm
 backend/uploads/*
 !backend/uploads/.gitkeep
 
+# 실제 사용자 답변으로 만든 학습 데이터 — 개인정보라 저장소에 올리지 않음
+backend/training/data/score_dataset_from_db.jsonl
+backend/training/data/score_train.jsonl
+backend/training/data/score_eval.jsonl
+# 학습 산출물(어댑터 가중치)은 용량이 커서 제외
+backend/training/output/
+
 # Node.js
 node_modules/
 frontend/node_modules/
