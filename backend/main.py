@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("DB 초기화 완료")
 
-    # KoBERT는 로딩 시간이 길고 현재 Gemini로 대체되어 비활성화
+    # KoBERT는 로딩 시간이 길고 현재 Llama 채점으로 대체되어 비활성화
     # await kobert_service.load_model()
 
     await llama_service.load_model()  # 파인튜닝된 Llama-3.2-3B(LoRA) 로딩

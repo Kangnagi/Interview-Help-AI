@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"   # JWT 서명 비밀키 (운영 시 반드시 교체)
     ALGORITHM: str = "HS256"                     # JWT 서명 알고리즘
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60        # 액세스 토큰 유효 시간 (분)
-    # settings.GEMINI_API_KEY / .GEMINI_MODEL로는 안 쓰고 services/llm/gemini_service.py가
-    # os.getenv()로 직접 읽는다. 그래도 여기 선언은 유지해야 함 — pydantic-settings가 기본적으로
-    # .env에 있는 미선언 값을 오류로 취급해 서버가 기동을 거부하기 때문.
+    # 서비스 동작 경로에서는 더 이상 Gemini를 쓰지 않는다 (채점·총평·질문 생성 = Llama, 발화 분석 = librosa).
+    # 선언만 남겨 두는 이유: pydantic-settings가 .env에 있는 미선언 값을 오류로 취급해 서버가 기동을
+    # 거부하기 때문 (.env에서 GEMINI_* 줄을 지워도 서버는 정상 동작한다).
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.5-flash"
 

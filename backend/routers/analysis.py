@@ -14,8 +14,7 @@ from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
 from services.llm.kobert_service import kobert_service
 from services.llm.llama_service import analyze_answers_batch_with_llama, generate_overall_summary_with_llama
-from services.llm.gemini_service import analyze_speech_with_spectrogram
-from services.voice.librosa_service import generate_audio_spectrogram, save_audio_spectrogram, get_audio_duration
+from services.voice.librosa_service import analyze_speech, get_audio_duration
 from services.vision.mediapipe_service import mediapipe_service
 
 logger = logging.getLogger(__name__)
@@ -64,7 +63,7 @@ async def _run_analysis_pipeline(interview_id: int):
                 logger.warning(f"[Analysis] 답변이 있는 질문 없음 — 분석 중단")
                 return
 
-            # ── 2) KoBERT(점수 평가) 및 Gemini(피드백 생성) 분석 ─────────
+            # ── 2) KoBERT(관련성 보정) 및 Llama(점수·피드백)·로컬 발화 분석 ─────────
             content_scores, relevance_scores, clarity_scores = [], [], []
             speech_scores, posture_scores, eye_contact_scores = [], [], []
             speech_paces = []
@@ -85,46 +84,20 @@ async def _run_analysis_pipeline(interview_id: int):
                 if not q.answer_text or not q.audio_path:
                     continue
                
-                # 1) 발화 속도 계산 (WPM)
+                # 발화 속도 기록 (WPM). 점수는 아래 로컬 발화 분석(analyze_speech)이 매긴다.
                 # get_audio_duration은 동기 함수라 별도 스레드로 넘겨 이벤트 루프를 막지 않는다.
                 duration = await asyncio.to_thread(get_audio_duration, q.audio_path)
                 if duration > 0:
                     word_count = len(q.answer_text.split())
-                    # WPM = (단어 수 / 초) * 60
-                    wpm = round((word_count / duration) * 60, 1)
-                    speech_paces.append(wpm)
-                    
-                    # 발화 속도 점수화 (예: 한국어 기준 분당 80~110단어가 적절하다고 가정)
-                    # 너무 빠르거나(150 초과) 너무 느린(40 미만) 경우 감점 로직 추가 가능
-                    if 70 <= wpm <= 130:
-                        s_score = 95
-                    elif wpm < 40 or wpm > 160:
-                        s_score = 60
-                    else:
-                        s_score = 80
-                    speech_scores.append(s_score)
+                    speech_paces.append(round((word_count / duration) * 60, 1))
 
-                # 2) 🎵 오디오 파일을 이미지로 변환 및 저장 (Librosa)
-                image_bytes = None
-                try:
-                    # 디버깅/확인용: 이미지를 실제 폴더에 저장
-                    saved_path = await save_audio_spectrogram(q.audio_path)
-                    if saved_path:
-                        # 저장된 파일을 읽어서 AI 모델 전송용 bytes 데이터로 변환
-                        with open(saved_path, "rb") as f:
-                            image_bytes = f.read()
-                        q.audio_image_bytes = image_bytes
-                        logger.info(f"[Analysis] 스펙트로그램 이미지 저장 완료: {saved_path}")
-                except Exception as e:
-                    logger.warning(f"오디오 이미지 변환/저장 실패 (건너뜀): {e}")
-
-            # ── 3) Gemini 배치: 피드백 텍스트 + speech_score ────────────────
-            qna_list = []
-            for q in valid_questions:
-                qna = {"question": q.question_text, "answer": q.answer_text}
-                if hasattr(q, "audio_image_bytes"):
-                    qna["audio_image_bytes"] = q.audio_image_bytes
-                qna_list.append(qna)
+            # ── 3) Llama 배치 채점 + 로컬 발화 분석 ─────────────────────────
+            # (예전엔 스펙트로그램 이미지를 만들어 Gemini에 보냈지만, 서버에 webm 디코더가 없어 이미지 생성이
+            #  실패하면서 음성 평가가 사실상 기본값으로만 채워졌다. 이제 파형을 직접 분석한다.)
+            qna_list = [
+                {"question": q.question_text, "answer": q.answer_text, "audio_path": q.audio_path}
+                for q in valid_questions
+            ]
 
             # 텍스트 내용 기반 배치 분석과 오디오 기반 개별 분석을 동시에 실행합니다.
             logger.info(f"[Analysis] Llama 배치 평가(텍스트) 및 개별 음성 평가 시작")
@@ -132,13 +105,12 @@ async def _run_analysis_pipeline(interview_id: int):
             # 1. 텍스트 배치 분석 Task (점수·feedback 모두 로컬 Llama 채점 어댑터, Gemini 미사용)
             text_analysis_task = asyncio.create_task(analyze_answers_batch_with_llama(qna_list) if qna_list else asyncio.sleep(0, result=[]))
 
-            # 2. 오디오 개별 분석 Tasks
-            speech_tasks = []
-            for qna in qna_list:
-                if qna.get("audio_image_bytes"):
-                    speech_tasks.append(analyze_speech_with_spectrogram(qna["audio_image_bytes"]))
-                else:
-                    speech_tasks.append(asyncio.sleep(0, result={"speech_score": 80, "feedback": ""}))
+            # 2. 오디오 개별 분석 Tasks (녹음이 없거나 분석 불가면 None)
+            speech_tasks = [
+                analyze_speech(qna["audio_path"], qna["answer"]) if qna.get("audio_path")
+                else asyncio.sleep(0, result=None)
+                for qna in qna_list
+            ]
 
             # 모든 태스크 동시 대기
             batch_results, speech_results = await asyncio.gather(
@@ -150,11 +122,10 @@ async def _run_analysis_pipeline(interview_id: int):
             if isinstance(batch_results, list) and len(batch_results) == len(speech_results):
                 for i in range(len(batch_results)):
                     if isinstance(batch_results[i], dict) and isinstance(speech_results[i], dict):
-                        s_score = speech_results[i].get("speech_score", 80)
-                        try:
-                            batch_results[i]["speech_score"] = int(s_score)
-                        except:
-                            batch_results[i]["speech_score"] = 80
+                        s_score = int(speech_results[i]["speech_score"])
+                        batch_results[i]["speech_score"] = s_score
+                        speech_scores.append(s_score)
+                        logger.info(f"[Analysis] 발화 분석 q{i + 1}: {s_score}점 {speech_results[i].get('metrics')}")
 
                         speech_fb = speech_results[i].get("feedback", "").strip()
                         if speech_fb:
@@ -163,25 +134,25 @@ async def _run_analysis_pipeline(interview_id: int):
 
             speech_scores_final = []
             per_q_content_scores, per_q_relevance_scores, per_q_clarity_scores = [], [], []
-            for q, gemini_r, kobert_r in zip(valid_questions, batch_results, kobert_results):
-                if isinstance(gemini_r, dict):
-                    sp_score = _safe_int(gemini_r.get("speech_score"))
-                    fb_text  = gemini_r.get("feedback", "")
+            for q, llama_r, kobert_r in zip(valid_questions, batch_results, kobert_results):
+                if isinstance(llama_r, dict):
+                    sp_score = _safe_int(llama_r.get("speech_score"))
+                    fb_text  = llama_r.get("feedback", "")
 
                     # content / clarity: Llama 채점 어댑터의 종합 점수 (현재 세 항목 모두 같은 값)
-                    q_content = _safe_int(gemini_r.get("content_score"))
-                    q_clarity = _safe_int(gemini_r.get("clarity_score"))
+                    q_content = _safe_int(llama_r.get("content_score"))
+                    q_clarity = _safe_int(llama_r.get("clarity_score"))
 
                     # relevance: Llama(60%) + KoBERT 임베딩 유사도(40%) 혼합
                     # KoBERT 코사인 유사도는 객관적 수치라 모델의 주관 평가를 보정함
-                    gemini_relevance = _safe_int(gemini_r.get("relevance_score"))
+                    llama_relevance = _safe_int(llama_r.get("relevance_score"))
                     if kobert_r.get("status") == "success":
                         kobert_relevance = kobert_r["relevance_score"]
-                        q_relevance = round(gemini_relevance * 0.6 + kobert_relevance * 0.4)
+                        q_relevance = round(llama_relevance * 0.6 + kobert_relevance * 0.4)
                     else:
-                        q_relevance = gemini_relevance
+                        q_relevance = llama_relevance
                 else:
-                    # Gemini 실패 시 KoBERT 전체 폴백
+                    # Llama 배치 결과가 없으면 KoBERT 전체 폴백
                     sp_score    = 70
                     fb_text     = ""
                     q_content   = kobert_r["content_score"]   if kobert_r.get("status") == "success" else 70
@@ -231,12 +202,12 @@ async def _run_analysis_pipeline(interview_id: int):
                             f"3. {'표현이 명확합니다.' if q_clarity >= 70 else '추임새나 반복 표현을 줄이고 더 명확하게 전달해보세요.'}"
                         )
 
-                # 각 질문 레코드에 Gemini 피드백과 종합 점수 저장 (기존 로컬 피드백 덮어씀)
+                # 각 질문 레코드에 Llama 피드백과 종합 점수 저장 (기존 즉시 피드백 덮어씀)
                 q.ai_score    = max(0, min(100, q_score))
                 q.ai_feedback = fb_text
                 db.add(q)
 
-            # speech_scores가 오디오 기반이면 그걸 우선적으로 쓰고 아니면 제미나이걸 쓴다
+            # 녹음을 분석한 발화 점수(speech_scores)가 있으면 그것을, 없으면 배치 결과의 기본값을 쓴다
             # 아까 첫루프에서 생성된 speech_scores가 더 정확함
             if speech_scores:
                 analysis.speech_score = _avg(speech_scores) or 80.0
@@ -281,7 +252,7 @@ async def _run_analysis_pipeline(interview_id: int):
                 analysis.eye_contact_score,
             ])
 
-            # ── 6) 종합 총평 / 강점 / 개선점 (베이스 Llama, 실패 시 Gemini 폴백) ──
+            # ── 6) 종합 총평 / 강점 / 개선점 (베이스 Llama, 실패 시 규칙 기반 총평) ──
             qna_feedbacks = [
                 {
                     "question":        q.question_text,

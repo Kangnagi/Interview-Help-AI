@@ -7,16 +7,15 @@
   - interview_feedback : 질문+답변 -> 피드백 텍스트 (채점 어댑터가 실패했을 때 피드백 폴백용)
   - 어댑터 없음(베이스) : 종합 총평, 자기소개서 기반 질문 생성
 
-채점이 실패하면(모델 미로딩, JSON 파싱 실패 등) Gemini로 넘기지 않고 규칙 기반 점수로 대체한다.
-
-아직 Gemini가 맡는 것:
-  - analyze_speech_with_spectrogram (음성 스펙트로그램 이미지 분석 — 텍스트 전용 모델이라 대체 불가.
-    라우터에서 gemini_service 것을 직접 import해서 쓴다.)
-  - 종합 총평 생성이 실패했을 때의 폴백
+채점·총평이 실패하면(모델 미로딩, JSON 파싱 실패 등) Gemini로 넘기지 않고 규칙 기반으로 대체한다.
+음성(발화) 분석은 services/voice/librosa_service.analyze_speech가 파형을 직접 분석한다.
+→ 서비스 동작 경로에서 Gemini를 전혀 쓰지 않는다.
 """
 import asyncio
+import json
 import logging
 import os
+import re
 from contextlib import nullcontext
 from typing import Optional
 
@@ -25,10 +24,21 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from core.config import settings
-from services.llm import gemini_service
-from services.llm.gemini_service import _parse_json
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_json(text: str):
+    """모델 출력에서 JSON 추출 — 마크다운 코드블록·앞뒤 텍스트 제거 후 파싱"""
+    text = text.strip()
+    if "```" in text:
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+        text = m.group(1).strip() if m else re.sub(r"```(?:json)?", "", text).strip()
+    for s, e in [("{", "}"), ("[", "]")]:
+        si, ei = text.find(s), text.rfind(e)
+        if si != -1 and ei > si:
+            return json.loads(text[si:ei + 1])
+    return json.loads(text)
 
 FEEDBACK_ADAPTER = "interview_feedback"
 SCORE_ADAPTER = "interview_score"
@@ -308,10 +318,42 @@ async def analyze_answers_batch_with_llama(qna_list: list) -> list:
     ]
 
 
-async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
-    """베이스 Llama(어댑터 비활성화)로 종합 총평 생성. 실패하면 Gemini로 폴백."""
+def _feedback_line(feedback: str, number: int) -> Optional[str]:
+    """'1. ...\\n2. ...\\n3. ...' 형식 피드백에서 n번째 항목 문장을 꺼낸다."""
+    m = re.search(rf"(?m)^\s*{number}\.\s*(.+?)\s*$", feedback or "")
+    return m.group(1) if m else None
+
+
+def _rule_based_summary(qna_feedbacks: list) -> dict:
+    """Llama 총평 생성이 실패했을 때: 질문별 점수·피드백으로 총평을 만든다 (Gemini 미사용).
+
+    강점 = 점수가 높은 질문들의 피드백 1번(잘한 점), 개선점 = 점수가 낮은 질문들의 피드백 2번(아쉬운 점).
+    """
     if not qna_feedbacks:
-        return await gemini_service.generate_overall_summary_with_gemini(qna_feedbacks)
+        return {"feedback_summary": "분석할 답변이 없습니다.", "strengths": [], "improvements": []}
+
+    scored = [item for item in qna_feedbacks if isinstance(item.get("score"), (int, float))]
+    avg = round(sum(i["score"] for i in scored) / len(scored)) if scored else None
+    level = ("전반적으로 구체적이고 완성도 높은 답변을 했습니다" if avg is not None and avg >= 75 else
+             "질문에 맞게 답했지만 구체적인 사례와 근거를 보완하면 더 좋아집니다" if avg is not None and avg >= 50 else
+             "답변의 구체성과 완성도를 높이는 연습이 필요합니다")
+    summary = f"총 {len(qna_feedbacks)}개 질문" + (f"의 평균 점수는 {avg}점으로, {level}." if avg is not None else f"에 답했습니다. {level}.")
+    if len(scored) >= 2:
+        best, worst = max(scored, key=lambda i: i["score"]), min(scored, key=lambda i: i["score"])
+        if best["score"] != worst["score"]:
+            summary += (f" 가장 좋았던 답변은 '{best['question'][:30]}'({best['score']}점), "
+                        f"가장 보완이 필요한 답변은 '{worst['question'][:30]}'({worst['score']}점)입니다.")
+
+    ordered = sorted(scored, key=lambda i: i["score"], reverse=True)
+    strengths = [s for s in (_feedback_line(i.get("feedback"), 1) for i in ordered[:3]) if s]
+    improvements = [s for s in (_feedback_line(i.get("feedback"), 2) for i in reversed(ordered[-3:])) if s]
+    return {"feedback_summary": summary, "strengths": strengths, "improvements": improvements}
+
+
+async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
+    """베이스 Llama(어댑터 비활성화)로 종합 총평 생성. 실패하면 규칙 기반 총평으로 대체."""
+    if not qna_feedbacks:
+        return _rule_based_summary(qna_feedbacks)
 
     items_text = "\n\n".join(
         f"[질문 {i + 1}]\n질문: {item['question']}\n답변: {item['answer'] or '없음'}\n"
@@ -335,8 +377,8 @@ async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
             result.setdefault("improvements", [])
             return result
     except Exception as e:
-        logger.error(f"Llama 총평 생성 실패, Gemini로 폴백: {e}")
-    return await gemini_service.generate_overall_summary_with_gemini(qna_feedbacks)
+        logger.error(f"Llama 총평 생성 실패, 규칙 기반 총평으로 대체: {e}")
+    return _rule_based_summary(qna_feedbacks)
 
 
 async def generate_questions_from_resume(resume_text: str, category: str, num_questions: int = 5) -> list:

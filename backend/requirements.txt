@@ -44,9 +44,10 @@ Pillow>=10.3.0
 openai-whisper
 soundfile==0.13.1
 librosa==0.11.0
+av>=14.0.0            # 브라우저 녹음(webm/opus) 디코딩 — ffmpeg 내장, 시스템 ffmpeg 불필요 (발화 분석용)
 ffmpeg-python==0.2.0
 
 # API & Extras
-google-genai>=1.0.0
+google-genai>=1.0.0   # 서비스 동작 경로에서는 미사용 (gemini_service.py·테스트 스크립트용으로만 남음)
 matplotlib>=3.8.4
 argon2-cffi==23.1.0
