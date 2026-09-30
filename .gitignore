@@ -19,6 +19,9 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
+# 로컬 실행 도구 (node, cloudflared) — scripts/start_all.ps1이 사용
+.tools/
 backend/interview.db
 backend/interview.db-wal
 backend/interview.db-shm
