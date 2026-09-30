@@ -172,16 +172,19 @@ def _scoring_messages(question: str, answer: str) -> list:
 
 
 def _short_answer_result(answer: str) -> Optional[dict]:
-    """빈 답변·극단적으로 짧은 답변은 모델 없이 바로 채점."""
+    """빈 답변·극단적으로 짧은 답변은 모델 없이 바로 채점.
+
+    점수는 사람 검토 결과("잘 모르겠습니다"·"asdasd"에 35점은 너무 높음)에 맞춰 낮게 잡았다.
+    """
     if not answer:
         return {
-            "score": 20,
+            "score": 0,
             "feedback": "답변을 입력하지 않으셨습니다. 짧더라도 자신의 생각을 반드시 전달해야 합니다.",
             "tip": "모르더라도 관련 경험이나 학습 의지를 짧게 표현해 보세요.",
         }
     if len(answer) < 10:
         return {
-            "score": 35,
+            "score": 10,
             "feedback": "답변이 너무 짧습니다. 이유와 구체적인 경험을 덧붙여 주세요.",
             "tip": "STAR 기법(상황→과제→행동→결과)으로 구조화하면 짧은 답변도 풍성해집니다.",
         }

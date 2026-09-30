@@ -31,7 +31,7 @@ backend/uploads/*
 backend/training/data/score_dataset_from_db.jsonl
 backend/training/data/score_train.jsonl
 backend/training/data/score_eval.jsonl
-backend/training/data/real_answers_scored.*
+backend/training/data/real_answers_scored*
 # 학습 산출물(어댑터 가중치)은 용량이 커서 제외
 backend/training/output/
 

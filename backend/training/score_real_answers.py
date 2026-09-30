@@ -7,7 +7,8 @@ DB는 읽기 전용으로 열고, 결과는 개인정보라 .gitignore 된 data/
 
 실행:
     cd backend
-    .venv\\Scripts\\python.exe training\\score_real_answers.py
+    .venv\\Scripts\\python.exe training\\score_real_answers.py          (.env의 어댑터로 채점)
+    다른 어댑터로 채점: 환경변수 LLAMA_SCORE_ADAPTER_PATH 지정 + 접미사 인자 (예: _v2)
 """
 import asyncio
 import csv
@@ -42,6 +43,8 @@ def load_rows():
 
 
 async def main():
+    # 결과 파일 이름 접미사 (예: _v2) — 다른 어댑터로 채점한 결과를 나란히 비교할 때 사용
+    suffix = sys.argv[1] if len(sys.argv) > 1 else ""
     rows = load_rows()
     print(f"채점 대상 {len(rows)}개", flush=True)
     await llama_service.load_model()
@@ -66,11 +69,11 @@ async def main():
             "new_score": res["score"], "new_feedback": res["feedback"], "new_tip": res["tip"],
         })
 
-    with open(OUT_DIR / "real_answers_scored.jsonl", "w", encoding="utf-8") as f:
+    with open(OUT_DIR / f"real_answers_scored{suffix}.jsonl", "w", encoding="utf-8") as f:
         for o in out:
             f.write(json.dumps(o, ensure_ascii=False) + "\n")
 
-    with open(OUT_DIR / "real_answers_scored.csv", "w", encoding="utf-8-sig", newline="") as f:
+    with open(OUT_DIR / f"real_answers_scored{suffix}.csv", "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["번호", "질문", "답변", "답변 길이", "기존 점수", "기존 점수 종류", "새 점수",
                     "새 피드백", "새 팁", "검토(적절/너무 높음/너무 낮음)", "메모"])
@@ -92,7 +95,7 @@ async def main():
         diffs = [abs(o["new_score"] - o["old_score"]) for o in real]
         print(f"Gemini가 실제로 채점한 {len(real)}개와 비교: 평균 차이 {sum(diffs) / len(diffs):.1f}점, "
               f"10점 이내 {sum(d <= 10 for d in diffs)}개")
-    print(f"저장: {OUT_DIR / 'real_answers_scored.csv'}")
+    print(f"저장: {OUT_DIR / f'real_answers_scored{suffix}.csv'}")
 
 
 if __name__ == "__main__":

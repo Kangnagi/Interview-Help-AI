@@ -18,7 +18,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 BASE_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
-LEVEL_NAMES = ["매우 부실", "부족", "보통", "좋음", "매우 우수"]
+LEVEL_NAMES = ["매우 부실", "부족", "보통", "좋음", "매우 우수", "경험 없음·모름", "좋은 말 나열형"]
 
 
 def parse_json(text: str):

@@ -194,7 +194,8 @@ async def _run_analysis_pipeline(interview_id: int):
                 # 질문별 종합 점수 = (content·40 + relevance·35 + clarity·25) / 100
                 q_score = round(q_content * 0.4 + q_relevance * 0.35 + q_clarity * 0.25)
 
-                # 답변이 없거나 질문과 아예 다른 경우 점수를 30으로 고정
+                # 답변이 없거나 질문과 아예 다른 경우 점수 상한을 30으로 제한
+                # (예전엔 30으로 "고정"해서 "잘 모르겠습니다" 같은 답변이 오히려 30점으로 올라갔다)
                 answer_stripped = (q.answer_text or "").strip()
                 is_empty = len(answer_stripped) < 10 or len(answer_stripped.split()) < 3
                 is_unrelated = (
@@ -202,8 +203,8 @@ async def _run_analysis_pipeline(interview_id: int):
                     and kobert_r.get("relevance_score", 100) < 25
                 )
                 if is_empty or is_unrelated:
-                    q_score = 30
-                    q_content = q_relevance = q_clarity = 30  # 세부 항목에도 동일 페널티 반영
+                    q_score = min(q_score, 30)
+                    q_content, q_relevance, q_clarity = (min(v, 30) for v in (q_content, q_relevance, q_clarity))
 
                 # 질문별 점수와 동일한 값으로 세부 항목 집계
                 per_q_content_scores.append(q_content)
@@ -231,7 +232,7 @@ async def _run_analysis_pipeline(interview_id: int):
                         )
 
                 # 각 질문 레코드에 Gemini 피드백과 종합 점수 저장 (기존 로컬 피드백 덮어씀)
-                q.ai_score    = max(20, min(100, q_score))
+                q.ai_score    = max(0, min(100, q_score))
                 q.ai_feedback = fb_text
                 db.add(q)
 
