@@ -242,6 +242,7 @@ async def get_question_feedback(
 
     question.ai_score    = score
     question.ai_feedback = feedback_text
+    question.ai_model_version = llama_result.get("model_version")
     await db.commit()
 
     return {"score": score, "feedback": feedback_text, "tip": tip_text}

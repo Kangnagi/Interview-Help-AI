@@ -55,5 +55,5 @@ async def init_db():
     """앱 시작 시 테이블 생성 — 없는 테이블만 생성, 기존 데이터 유지"""
     async with engine.begin() as conn:
         # ORM 모델 임포트 → Base.metadata에 테이블 정의 등록 (noqa: 사용 안 해도 import 필요)
-        from models import user, interview, analysis  # noqa
+        from models import user, interview, analysis, feedback  # noqa
         await conn.run_sync(Base.metadata.create_all)   # 동기 DDL을 비동기 컨텍스트에서 실행

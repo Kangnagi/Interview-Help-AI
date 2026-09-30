@@ -88,6 +88,8 @@ class InterviewQuestion(Base):
     duration_seconds = Column(Integer, nullable=True)          # 해당 질문 답변에 걸린 시간
     ai_score         = Column(Float, nullable=True)            # 분석 파이프라인 AI 채점 (0~100)
     ai_feedback      = Column(Text, nullable=True)             # 분석 파이프라인 AI 피드백 텍스트
+    ai_model_version = Column(String, nullable=True)           # 채점한 모델 (예: llama-score-adapter-v21, rule) — 재학습 시 버전별 비교용
     created_at       = Column(DateTime, default=datetime.utcnow)
 
     interview = relationship("Interview", back_populates="questions")
+    ratings   = relationship("AnswerRating", back_populates="question", cascade="all, delete-orphan")

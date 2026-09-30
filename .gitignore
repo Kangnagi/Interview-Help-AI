@@ -25,6 +25,7 @@ logs/
 backend/interview.db
 backend/interview.db-wal
 backend/interview.db-shm
+backend/interview.db.bak*
 
 # 사용자 업로드 데이터 (면접 녹화·음성 스펙트로그램) — 개인정보라 저장소에 올리지 않음
 backend/uploads/*
@@ -35,6 +36,11 @@ backend/training/data/score_dataset_from_db.jsonl
 backend/training/data/score_train.jsonl
 backend/training/data/score_eval.jsonl
 backend/training/data/real_answers_scored*
+# 바탕화면 llama-finetune 데이터에서 뽑은 실제 면접 답변 — 원문 재배포 조건 미확인이라 올리지 않음
+backend/training/data/real_pool.jsonl
+backend/training/data/score_teacher_real.jsonl
+backend/training/data/mix_*.jsonl
+backend/training/data/real_eval.jsonl
 # 학습 산출물(어댑터 가중치)은 용량이 커서 제외
 backend/training/output/
 

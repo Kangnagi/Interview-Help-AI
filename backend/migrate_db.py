@@ -13,6 +13,10 @@ MIGRATIONS = [
     ("interviews", "ALTER TABLE interviews ADD COLUMN resume_ref_id VARCHAR"),
     ("users", "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0"),
     ("users", "ALTER TABLE users ADD COLUMN locked_until DATETIME"),
+    ("users", "ALTER TABLE users ADD COLUMN training_consent BOOLEAN"),
+    ("users", "ALTER TABLE users ADD COLUMN training_consent_at DATETIME"),
+    ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN ai_model_version VARCHAR"),
+    # 새 테이블(answer_ratings)은 서버 시작 시 init_db의 create_all이 자동으로 만든다.
 ]
 
 def run():

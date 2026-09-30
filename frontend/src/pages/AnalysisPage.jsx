@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useInterviewStore } from '@/store/interviewStore'
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts'
+import AnswerRating from '@/components/Common/AnswerRating'
+import ConsentBanner from '@/components/Common/ConsentBanner'
 
 export default function AnalysisPage() {
   const { id } = useParams()
@@ -140,6 +142,7 @@ export default function AnalysisPage() {
       {answeredQuestions.length > 0 && (
         <div className="card" style={{ marginBottom: 20 }}>
           <h3 style={{ fontWeight: 600, fontSize: 14, marginBottom: 20 }}>📝 질문별 상세 분석</h3>
+          <ConsentBanner theme="light" />
           {answeredQuestions.map((q, i) => {
             const scoreColor = q.ai_score >= 80 ? 'var(--secondary)' : q.ai_score >= 60 ? 'var(--warning)' : 'var(--danger)'
             const isLast = i === answeredQuestions.length - 1
@@ -184,6 +187,8 @@ export default function AnalysisPage() {
                     <div style={{ width: `${q.ai_score}%`, height: '100%', background: scoreColor, borderRadius: 99, transition: 'width 1.2s' }} />
                   </div>
                 )}
+
+                {q.ai_score != null && <AnswerRating interviewId={id} questionId={q.id} theme="light" />}
               </div>
             )
           })}

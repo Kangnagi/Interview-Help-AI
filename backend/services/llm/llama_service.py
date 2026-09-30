@@ -236,10 +236,21 @@ async def _fallback_result(question: str, answer: str) -> dict:
     }
 
 
+def score_model_version() -> str:
+    """지금 채점 어댑터 이름 (예: llama-score-adapter-v21) — DB에 점수와 함께 남겨 버전별로 비교한다."""
+    return os.path.basename(os.path.normpath(settings.LLAMA_SCORE_ADAPTER_PATH))
+
+
 async def score_answers(qna_list: list) -> list:
-    """질문·답변 목록을 채점해 [{"score","feedback","tip"}]를 입력 순서대로 반환. 항상 길이가 같다."""
+    """질문·답변 목록을 채점해 [{"score","feedback","tip","model_version"}]를 입력 순서대로 반환. 항상 길이가 같다.
+
+    model_version: 채점 어댑터 이름 / "rule"(짧은·깨진 답변 규칙) / "fallback"(어댑터 실패 시 길이 기반)
+    """
     answers = [(q.get("answer") or "").strip() for q in qna_list]
     results = [_short_answer_result(a) for a in answers]
+    for r in results:
+        if r is not None:
+            r["model_version"] = "rule"
     todo = [i for i, r in enumerate(results) if r is None]
 
     if todo and llama_service.has_score_adapter:
@@ -257,10 +268,12 @@ async def score_answers(qna_list: list) -> list:
                 results[i] = _parse_score_output(text)
                 if results[i] is None:
                     logger.warning(f"Llama 채점 출력 파싱 실패 — 규칙 기반 폴백: {text[:120]!r}")
+                else:
+                    results[i]["model_version"] = score_model_version()
 
     for i, r in enumerate(results):
         if r is None:
-            results[i] = await _fallback_result(qna_list[i]["question"], answers[i])
+            results[i] = {**await _fallback_result(qna_list[i]["question"], answers[i]), "model_version": "fallback"}
     return results
 
 
@@ -313,6 +326,7 @@ async def analyze_answers_batch_with_llama(qna_list: list) -> list:
             "eye_contact_score": 80,
             "feedback": r["feedback"],
             "tip": r["tip"],
+            "model_version": r["model_version"],
         }
         for r in scored
     ]
