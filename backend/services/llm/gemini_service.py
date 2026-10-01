@@ -4,18 +4,37 @@ import json
 import asyncio
 from dotenv import load_dotenv
 from google import genai
+from google.genai.errors import APIError
 
 load_dotenv(override=True)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# .env의 GEMINI_MODEL을 우선 사용, 없으면 gemini-2.0-flash 기본값
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 client = None
 
 if GEMINI_API_KEY:
     client = genai.Client(api_key=GEMINI_API_KEY)
-    print(f"Gemini 클라이언트 초기화 완료 (모델: {MODEL_NAME})")
+    try:
+        # m.name은 'models/gemini-2.0-flash' 형태이므로 prefix 제거 후 비교
+        available_models = [m.name.replace("models/", "") for m in client.models.list()]
+        print(f"사용 가능한 모델: {available_models}")
+        preferred = [MODEL_NAME, 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.0-pro']
+        for p in preferred:
+            if p in available_models:
+                MODEL_NAME = p
+                break
+        else:
+            if available_models:
+                MODEL_NAME = available_models[0]
+    except APIError as e:
+        print(f"모델 목록 조회 실패 (API 오류): {e}")
+    except Exception as e:
+        print(f"모델 목록 조회 실패: {e}")
 else:
     print("GEMINI_API_KEY를 찾을 수 없습니다.")
+
+print(f"선택된 Gemini 모델: {MODEL_NAME}")
 
 
 def _parse_json(text: str):
@@ -33,7 +52,7 @@ def _parse_json(text: str):
 
 
 # ── 1) 질문별 즉시 피드백 (연습·실전 면접 중 실시간 호출) ─────────────────────────
-async def analyze_answer_with_gemini(question: str, answer: str, audio_image_bytes: bytes = None, kobert_scores: dict = None) -> dict:
+async def analyze_answer_with_gemini(question: str, answer: str, audio_image_bytes: bytes = None) -> dict:
     if not GEMINI_API_KEY:
         return {"score": 0, "feedback": "서버 오류: Gemini API 키가 설정되지 않았습니다.", "tip": ""}
 
@@ -51,24 +70,15 @@ async def analyze_answer_with_gemini(question: str, answer: str, audio_image_byt
             "feedback": "답변이 너무 짧습니다. 이유와 구체적인 경험을 덧붙여 주세요.",
             "tip": "STAR 기법(상황→과제→행동→결과)으로 구조화하면 짧은 답변도 풍성해집니다.",
         }
-    kobert_context = ""
-    if kobert_scores and kobert_scores.get("status") == "success":
-        kobert_context = (
-            f"\n\n[참고 자료: KoBERT 모델의 1차 정량적 분석 결과]\n"
-            f"- 질문과 답변의 맥락 관련성: {kobert_scores.get('relevance_score', 0)}/100점\n"
-            f"- 답변 분량 및 내용 충실도: {kobert_scores.get('content_score', 0)}/100점\n"
-            f"- 어휘 다양성 및 명확성: {kobert_scores.get('clarity_score', 0)}/100점\n"
-            f"위 점수들을 면밀히 참고하여, 지원자가 어떤 부분(관련성, 충실도, 명확성 등)이 부족했거나 뛰어났는지 피드백에 자연스럽게 반영해 주세요."
-        )
 
     prompt = (
         "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
-        "지원자의 면접 질문과 답변, 그리고 AI의 1차 정량 평가 결과를 분석하여 반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지):\n"
+        "지원자의 면접 질문과 답변을 분석하여 반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지):\n"
         '{"score":0~100,"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성 제안","tip":"다음 답변을 위한 실질적 개선 팁 한 문장"}\n\n'
         f"면접 질문: {question}\n"
         f"지원자 답변: {answer_clean}"
-        f"{kobert_context}"
     )
+
     contents = [prompt]
     if audio_image_bytes:
         contents.append({"mime_type": "image/png", "data": audio_image_bytes})
@@ -115,27 +125,18 @@ async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
 
     prompt = (
         "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
-        f"아래 면접 Q&A {n}개의 텍스트 내용만을 분석하여 반드시 아래 형식의 JSON 배열로만 응답하세요 (코드블록 금지).\n"
+        f"아래 면접 Q&A {n}개를 분석하여 반드시 아래 형식의 JSON 배열로만 응답하세요 (코드블록 금지).\n"
         "배열 순서는 입력 순서와 반드시 일치해야 합니다.\n\n"
-        "점수 기준(0~100):\n"
-        "- content_score: 답변 내용의 충실도 및 적절성\n"
-        "- relevance_score: 질문과의 관련성\n"
-        "- clarity_score: 표현 명확성 및 논리 구조\n"
-        "- speech_score: 발화 품질 (추임새, 반복 표현, 문장 구조 기반 추정)\n\n"
-        "posture_score, eye_contact_score는 일단 기본값으로 80을 부여하세요. (다른 시스템에서 덮어씌워질 예정입니다.)\n\n"
         '형식: [{"content_score":점수,"relevance_score":점수,"clarity_score":점수,'
-        '"speech_score":점수,"posture_score":80,"eye_contact_score":80,'
+        '"speech_score":점수,"posture_score":점수,"eye_contact_score":점수,'
         '"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성"}]\n\n'
         f"{items}"
     )
 
-    contents = [prompt]
-    # 스펙트로그램 이미지 첨부 로직 삭제 (별도 함수에서 처리)
-
     for attempt in range(3):
         try:
             response = await asyncio.wait_for(
-                client.aio.models.generate_content(model=MODEL_NAME, contents=contents),
+                client.aio.models.generate_content(model=MODEL_NAME, contents=prompt),
                 timeout=60.0,
             )
             result = _parse_json(response.text)
@@ -149,46 +150,6 @@ async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
             wait = 10 + attempt * 10
             print(f"Gemini 배치 분석 오류 (시도 {attempt + 1}/3): {e} -> {wait}s 대기")
             await asyncio.sleep(wait)
-
-    return fallback
-
-
-async def analyze_speech_with_spectrogram(audio_image_bytes: bytes) -> dict:
-    """
-    스펙트로그램 이미지만을 사용하여 음성(발성, 흐름, 에너지)을 단독으로 평가합니다.
-    """
-    fallback = {"speech_score": 70, "feedback": ""}
-    if not GEMINI_API_KEY or not audio_image_bytes:
-        return fallback
-
-    prompt = (
-        "당신은 음성 분석 및 스피치 코칭 전문가입니다.\n"
-        "첨부된 이미지는 면접 답변의 '멜 스펙트로그램(Mel Spectrogram)'입니다.\n"
-        "이 이미지를 분석하여 발화의 흐름, 에너지 변화, 무음 구간 등을 파악하고, 발성과 말하기 방식에 대해 평가하세요.\n"
-        "반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지):\n"
-        '{"speech_score": 0~100, "feedback": "목소리 톤, 발성, 끊어 읽기 등에 대한 짧은 팁(1문장)"}'
-    )
-
-    contents = [
-        prompt,
-        {"mime_type": "image/png", "data": audio_image_bytes}
-    ]
-
-    for attempt in range(3):
-        try:
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(model=MODEL_NAME, contents=contents),
-                timeout=25.0,
-            )
-            return _parse_json(response.text)
-        except Exception as e:
-            err_str = str(e)
-            is_quota = "429" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str
-            print(f"Gemini 음성 평가 오류 (시도 {attempt + 1}/3): {e}")
-            if is_quota:
-                await asyncio.sleep(20)
-            elif attempt < 2:
-                await asyncio.sleep(5)
 
     return fallback
 

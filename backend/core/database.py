@@ -1,4 +1,3 @@
-from sqlalchemy import event               # SQLite 연결 시점에 PRAGMA를 걸기 위한 이벤트 훅
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession   # 비동기 SQLAlchemy 핵심 컴포넌트
 from sqlalchemy.orm import DeclarativeBase   # ORM 모델 베이스 클래스
 from core.config import settings             # DB URL 등 설정값
@@ -10,20 +9,6 @@ engine = create_async_engine(
     echo=settings.DEBUG,   # DEBUG 모드에서 SQL 로그 출력
     future=True,           # SQLAlchemy 2.0 스타일 API 사용
 )
-
-if settings.DATABASE_URL.startswith("sqlite"):
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragmas(dbapi_connection, connection_record):
-        """
-        SQLite 기본 저널 모드(DELETE)는 쓰기 중 DB 파일 전체를 잠근다 — 동시 사용자가
-        늘면 "database is locked" 오류가 나기 쉽다. WAL 모드는 읽기와 쓰기가 서로를
-        막지 않게 해주고, busy_timeout은 다른 쓰기가 끝날 때까지 즉시 실패하지 않고
-        잠시 대기하게 한다.
-        """
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
-        cursor.close()
 
 # 세션 팩토리 — 요청마다 새 AsyncSession 생성
 AsyncSessionLocal = async_sessionmaker(
@@ -55,5 +40,5 @@ async def init_db():
     """앱 시작 시 테이블 생성 — 없는 테이블만 생성, 기존 데이터 유지"""
     async with engine.begin() as conn:
         # ORM 모델 임포트 → Base.metadata에 테이블 정의 등록 (noqa: 사용 안 해도 import 필요)
-        from models import user, interview, analysis, feedback  # noqa
+        from models import user, interview, analysis  # noqa
         await conn.run_sync(Base.metadata.create_all)   # 동기 DDL을 비동기 컨텍스트에서 실행

@@ -14,7 +14,7 @@ from core.database import get_db
 from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from schemas.schemas import InterviewCreate, InterviewResponse
-from services.llm.llama_service import generate_questions_from_resume, analyze_answer_with_llama
+from services.llm.gemini_service import generate_questions_from_resume
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/interviews", tags=["면접"])
@@ -59,7 +59,7 @@ async def create_interview(
         resume_hash = ""
         if body.resume_text:
             resume_hash = hashlib.sha256(body.resume_text.encode('utf-8')).hexdigest()
-
+            
         if resume_hash and resume_hash in _question_cache:
             cache_entry = _question_cache[resume_hash]
             # 구버전 캐시(리스트 형태) 호환성 처리
@@ -69,8 +69,8 @@ async def create_interview(
                     "index": 0
                 }
             logger.info(f"Interview {interview.id}: 캐시된 질문 풀에서 3개를 가져옵니다. (API 절약)")
-        elif body.resume_text and len(body.resume_text.strip()) > 10:
-            logger.info(f"Interview {interview.id}: 로컬 Llama로 질문 풀 생성을 시도합니다.")
+        elif os.getenv("GEMINI_API_KEY") and body.resume_text and len(body.resume_text.strip()) > 10:
+            logger.info(f"Interview {interview.id}: Gemini API로 질문 풀 생성을 시도합니다.")
             category_val = body.category.value if hasattr(body.category, "value") else str(body.category)
             raw_questions = await generate_questions_from_resume(
                 resume_text=body.resume_text,
@@ -84,33 +84,33 @@ async def create_interview(
                 }
             else:
                 cache_entry = None
-                logger.warning(f"Interview {interview.id}: Llama가 질문을 반환하지 않았습니다. 폴백 로직을 사용합니다.")
+                logger.warning(f"Interview {interview.id}: Gemini가 질문을 반환하지 않았습니다. 폴백 로직을 사용합니다.")
         else:
             cache_entry = None
-            logger.info(f"Interview {interview.id}: 자기소개서 내용이 부족하여 폴백 로직을 사용합니다.")
+            logger.info(f"Interview {interview.id}: Gemini API 키가 없거나 자기소개서 내용이 부족하여 폴백 로직을 사용합니다.")
 
         if cache_entry and "ai_questions" in cache_entry:
             ai_pool = cache_entry["ai_questions"]
             idx = cache_entry.get("index", 0)
-
+            
             selected_ai = []
             count_to_pick = min(3, len(ai_pool))
             for _ in range(count_to_pick):
                 selected_ai.append(ai_pool[idx])
                 idx = (idx + 1) % len(ai_pool)
-
+                
             # 다음 면접을 위해 회전된 인덱스 저장
             cache_entry["index"] = idx
             _question_cache[resume_hash] = cache_entry
             save_question_cache(_question_cache)
-
+            
             questions_list = [
                 "간단한 자기소개 부탁드립니다.",
                 "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?"
             ] + selected_ai
 
     except Exception as e:
-        logger.error(f"Interview {interview.id}: 질문 생성 중 예외 발생, 폴백 로직 실행: {e}")
+        logger.error(f"Interview {interview.id}: Gemini 질문 생성 중 예외 발생, 폴백 로직 실행: {e}")
 
     # 3. AI 질문 생성에 실패한 경우, 기본 폴백 질문 사용
     if not questions_list or len(questions_list) <= 2:
@@ -220,7 +220,7 @@ async def get_question_feedback(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """저장된 답변에 대해 AI 피드백을 즉시 생성합니다 (점수·피드백·팁 모두 로컬 Llama, Gemini 미사용)."""
+    """저장된 답변에 대해 즉시 AI 피드백을 생성합니다."""
     result = await db.execute(
         select(InterviewQuestion).where(
             InterviewQuestion.id == question_id,
@@ -233,16 +233,24 @@ async def get_question_feedback(
     if not question.answer_text:
         raise HTTPException(status_code=400, detail="저장된 답변이 없습니다")
 
-    llama_result = await analyze_answer_with_llama(question.question_text, question.answer_text)
-    logger.info(f"[Feedback] q={question_id} score={llama_result.get('score')}")
+    try:
+        from services.llm.gemini_service import analyze_answer_with_gemini
+        result_data = await analyze_answer_with_gemini(question.question_text, question.answer_text)
+        feedback_text = result_data.get("feedback", "") if isinstance(result_data, dict) else str(result_data)
+        tip_text = result_data.get("tip", "") if isinstance(result_data, dict) else ""
+        score = result_data.get("score", 75) if isinstance(result_data, dict) else 75
+        try:
+            score = int(score)
+        except Exception:
+            score = 75
+    except Exception as e:
+        logger.error(f"즉시 피드백 생성 오류: {e}")
+        feedback_text = "피드백을 생성할 수 없습니다."
+        tip_text = ""
+        score = 75
 
-    score         = llama_result.get("score", 70)
-    feedback_text = llama_result.get("feedback", "")
-    tip_text      = llama_result.get("tip", "")
-
-    question.ai_score    = score
+    question.ai_score = score
     question.ai_feedback = feedback_text
-    question.ai_model_version = llama_result.get("model_version")
     await db.commit()
 
     return {"score": score, "feedback": feedback_text, "tip": tip_text}
@@ -294,3 +302,25 @@ async def delete_interview(
 
     await db.delete(interview)
     await db.commit()
+
+
+@router.post("/transcribe")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id)
+):
+    """음성 파일을 업로드받아 텍스트로 변환(STT)합니다."""
+    audio_bytes = await file.read()
+    try:
+        from services.voice.whisper_service import whisper_service
+        # whisper_service에 transcribe_bytes 메서드가 구현되어 있다고 가정
+        if hasattr(whisper_service, "transcribe_bytes"):
+            result = await whisper_service.transcribe_bytes(audio_bytes)
+            logger.info(f"🎤 [STT 분석 결과] {result}")
+            text = result.get("text", "") if isinstance(result, dict) else str(result)
+        else:
+            text = "음성 인식을 완료했습니다. (현재 Whisper 모델 연동 대기 중)"
+        return {"text": text}
+    except Exception as e:
+        logger.error(f"STT 변환 중 오류: {e}")
+        return {"text": f"음성 변환 실패: {str(e)}"}

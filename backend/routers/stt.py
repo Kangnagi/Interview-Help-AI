@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from core.security import get_current_user_id
+from services.voice.whisper_service import whisper_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stt", tags=["STT"])
@@ -31,7 +32,12 @@ async def transcribe_audio(
             f.write(content)
             tmp_path = f.name
 
-        return {"text": "서버 측 STT(Whisper)가 비활성화되었습니다. 프론트엔드의 Web STT를 사용하세요."}
+        result = await whisper_service.transcribe(tmp_path)
+
+        if "error" in result and not result.get("text"):
+            raise HTTPException(status_code=500, detail=result["error"])
+
+        return {"text": result.get("text", "")}
     finally:
         if tmp_path:
             try:

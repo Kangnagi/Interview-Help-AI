@@ -14,14 +14,6 @@ class User(Base):
     is_active = Column(Boolean, default=True)                                      # 계정 활성화 여부 (탈퇴/정지 시 False)
     created_at = Column(DateTime, default=datetime.utcnow)                        # 계정 생성 시각 (UTC)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 마지막 수정 시각 (자동 갱신)
-    reset_token = Column(String, nullable=True)                                    # 비밀번호 재설정 토큰 (사용 후 None으로 초기화)
-    reset_token_expires = Column(DateTime, nullable=True)                          # 토큰 만료 시각 (UTC)
-    failed_login_attempts = Column(Integer, default=0, nullable=False)             # 연속 로그인 실패 횟수 (성공 시 0으로 초기화)
-    locked_until = Column(DateTime, nullable=True)                                 # 이 시각까지 로그인 잠금 (지나면 자동 해제)
-    # AI 학습 활용 동의 (선택): None = 아직 묻지 않음, True = 동의, False = 거부.
-    # 동의한 사용자의 답변(텍스트·음성)과 평가만 재학습 데이터로 쓴다. 언제든 철회 가능.
-    training_consent = Column(Boolean, nullable=True)
-    training_consent_at = Column(DateTime, nullable=True)                          # 마지막으로 동의/거부를 선택한 시각 (UTC)
 
     # 이 사용자의 면접 목록 — cascade: 사용자 삭제 시 면접 기록도 함께 삭제
     interviews = relationship("Interview", back_populates="user", cascade="all, delete-orphan")
