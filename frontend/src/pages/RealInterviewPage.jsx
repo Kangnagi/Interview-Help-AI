@@ -38,10 +38,6 @@ export default function RealInterviewPage() {
   const [backendQuestions, setBackendQuestions] = useState([])
   const [isCreating, setIsCreating] = useState(false)
 
-  const [showFeedback, setShowFeedback] = useState(false)
-  const [feedbackLoading, setFeedbackLoading] = useState(false)
-  const [aiFeedback, setAiFeedback] = useState(null)
-
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const timerRef = useRef(null)
@@ -49,7 +45,6 @@ export default function RealInterviewPage() {
   const detectionRef = useRef(null)
   const micRafRef = useRef(null)
   const handleNextRef = useRef(null)
-  const feedbackDismissRef = useRef(null)
 
   const activeQuestions = backendQuestions.length > 0
     ? backendQuestions.map((q) => q.question_text)
@@ -223,55 +218,15 @@ export default function RealInterviewPage() {
       return
     }
 
-    // 중간 질문: 답변 저장 후 AI 피드백 표시
-    if (backendInterviewId && currentBackendQ && currentAnswer.trim()) {
-      try {
-        await interviewAPI.submitAnswer(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer })
-        setShowFeedback(true)
-        setFeedbackLoading(true)
-        setAiFeedback(null)
-        interviewAPI.getQuestionFeedback(backendInterviewId, currentBackendQ.id)
-          .then(({ data }) => {
-            setAiFeedback(data)
-            setFeedbackLoading(false)
-          })
-          .catch(() => {
-            setFeedbackLoading(false)
-            setShowFeedback(false)
-            setQIndex((p) => p + 1)
-            startQTimer()
-          })
-      } catch (e) {
-        console.error(e)
-        setQIndex((p) => p + 1)
-        startQTimer()
-      }
-    } else {
-      if (backendInterviewId && currentBackendQ) {
-        interviewAPI.submitAnswer(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer }).catch(console.error)
-      }
-      setQIndex((p) => p + 1)
-      startQTimer()
+    // 중간 질문: 답변 저장 후 다음 질문으로 이동
+    if (backendInterviewId && currentBackendQ) {
+      interviewAPI.submitAnswer(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer }).catch(console.error)
     }
+    setQIndex((p) => p + 1)
+    startQTimer()
   }, [qIndex, answers, currentQ, answer, activeQuestions.length, backendInterviewId, backendQuestions, resumeId, addInterviewRecord, navigate, stopSTT, totalSec, startQTimer])
 
   handleNextRef.current = handleNext
-
-  const handleFeedbackDismiss = useCallback(() => {
-    setShowFeedback(false)
-    setAiFeedback(null)
-    setFeedbackLoading(false)
-    setQIndex((p) => p + 1)
-    startQTimer()
-  }, [startQTimer])
-
-  feedbackDismissRef.current = handleFeedbackDismiss
-
-  useEffect(() => {
-    if (!showFeedback) return
-    const t = setTimeout(() => feedbackDismissRef.current?.(), 8000)
-    return () => clearTimeout(t)
-  }, [showFeedback])
 
   const handleStart = async () => {
     // handleSetupReady에서 이미 생성된 경우 중복 생성 방지
@@ -506,73 +461,6 @@ export default function RealInterviewPage() {
                 <button onClick={() => navigate(`/interview/${backendInterviewId}/result`)} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>📊 AI 분석 보기</button>
               )}
               <button onClick={() => navigate(`/resume/${resumeId}/history`)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>기록 보기</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* AI 피드백 오버레이 */}
-      {showFeedback && phase === 'interview' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 550, backdropFilter: 'blur(4px)' }}>
-          <div style={{ background: '#111422', borderRadius: 18, padding: '32px 36px', width: 460, maxWidth: '90vw', border: '1px solid rgba(255,255,255,.12)', boxShadow: '0 32px 80px rgba(0,0,0,.7)' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#4f6ef7', letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 20 }}>
-              Q{qIndex + 1} · AI 답변 피드백
-            </div>
-
-            {feedbackLoading ? (
-              <div style={{ textAlign: 'center', padding: '28px 0' }}>
-                <div style={{ fontSize: 36, marginBottom: 14 }}>🤖</div>
-                <div style={{ fontSize: 14, color: 'rgba(255,255,255,.55)' }}>AI가 답변을 분석하고 있습니다...</div>
-              </div>
-            ) : aiFeedback ? (
-              <>
-                {aiFeedback.score != null && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 22 }}>
-                    <div style={{
-                      width: 68, height: 68, borderRadius: '50%', flexShrink: 0,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 22, fontWeight: 800,
-                      background: aiFeedback.score >= 80 ? 'rgba(16,185,129,.15)' : aiFeedback.score >= 60 ? 'rgba(245,158,11,.15)' : 'rgba(239,68,68,.15)',
-                      color: aiFeedback.score >= 80 ? '#10b981' : aiFeedback.score >= 60 ? '#f59e0b' : '#ef4444',
-                      border: `2.5px solid ${aiFeedback.score >= 80 ? '#10b981' : aiFeedback.score >= 60 ? '#f59e0b' : '#ef4444'}`,
-                    }}>
-                      {aiFeedback.score}
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginBottom: 3 }}>답변 점수</div>
-                      <div style={{ fontSize: 17, fontWeight: 700, color: '#fff' }}>
-                        {aiFeedback.score >= 80 ? '훌륭한 답변!' : aiFeedback.score >= 60 ? '좋은 시도입니다!' : '조금 더 구체적으로'}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ background: 'rgba(255,255,255,.05)', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,.4)', letterSpacing: '.05em', marginBottom: 7 }}>💬 피드백</div>
-                  <div style={{ fontSize: 14, color: '#e8eaf0', lineHeight: 1.7 }}>{aiFeedback.feedback}</div>
-                </div>
-
-                {aiFeedback.tip && (
-                  <div style={{ background: 'rgba(79,110,247,.09)', border: '1px solid rgba(79,110,247,.25)', borderRadius: 10, padding: '12px 16px', marginBottom: 22 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: '#6d85f8', letterSpacing: '.05em', marginBottom: 6 }}>💡 다음 답변을 위한 팁</div>
-                    <div style={{ fontSize: 13, color: 'rgba(255,255,255,.7)', lineHeight: 1.65 }}>{aiFeedback.tip}</div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '20px 0 24px' }}>
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>피드백을 불러올 수 없습니다</div>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,.22)' }}>8초 후 자동으로 다음 질문</div>
-              <button
-                onClick={handleFeedbackDismiss}
-                style={{ background: '#4f6ef7', border: 'none', borderRadius: 10, padding: '11px 28px', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
-              >
-                다음 질문 →
-              </button>
             </div>
           </div>
         </div>

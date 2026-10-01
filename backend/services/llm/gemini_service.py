@@ -197,29 +197,37 @@ async def analyze_speech_with_spectrogram(audio_image_bytes: bytes) -> dict:
 async def generate_overall_summary_with_gemini(qna_feedbacks: list[dict]) -> dict:
     default = {
         "feedback_summary": "AI 서비스 일시 오류로 총평을 생성할 수 없습니다. 질문별 피드백을 참고하세요.",
-        "strengths": [
-            "모든 질문에 성실하게 답변하셨습니다",
-            "면접에 끝까지 적극적으로 참여하셨습니다",
-            "자기소개서 기반 맞춤 질문에 빠짐없이 응하셨습니다",
-        ],
-        "improvements": [
-            "구체적인 경험과 수치를 활용해 답변하면 더욱 설득력이 높아집니다",
-            "STAR 기법(상황→과제→행동→결과)으로 답변을 구조화해 보세요",
-            "스토리텔링 방식으로 답변하면 면접관에게 더 인상적으로 전달됩니다",
-        ],
+        "strengths": [],
+        "improvements": [],
     }
 
     if not GEMINI_API_KEY or not qna_feedbacks:
         return default
 
     items_text = "\n\n".join(
-        f"Q{i + 1}: {item['question']}\n답변: {item['answer'] or '없음'}"
+        (
+            f"[질문 {i + 1}]\n"
+            f"질문: {item['question']}\n"
+            f"답변: {item['answer'] or '없음'}\n"
+            f"종합 점수: {item.get('score', '?')}점 "
+            f"(내용:{item.get('content_score', '?')} / 관련성:{item.get('relevance_score', '?')} / 명확성:{item.get('clarity_score', '?')})\n"
+            f"AI 피드백 요약: {(item.get('feedback') or '').strip()[:300] or '없음'}"
+        )
         for i, item in enumerate(qna_feedbacks)
     )
 
     prompt = (
-        "당신은 10년 차 전문 인사담당자입니다. 아래 면접 전체 내용을 종합 분석하여 반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지).\n"
-        '{"feedback_summary":"전체 면접에 대한 종합 총평 2~3문장","strengths":["잘한 점 1","잘한 점 2","잘한 점 3"],"improvements":["개선할 점 1","개선할 점 2","개선할 점 3"]}\n\n'
+        "당신은 10년 차 전문 인사담당자입니다.\n"
+        "아래 면접 내용과 각 질문별 AI 점수·피드백을 종합 분석하여 지원자 전체 평가를 작성하세요.\n"
+        "반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지).\n\n"
+        '{"feedback_summary":"전체 면접 종합 총평 3~4문장 (점수 패턴·두드러진 강점·약점 기반)",'
+        '"strengths":["실제 답변·점수에 근거한 구체적 강점 1","강점 2","강점 3"],'
+        '"improvements":["점수가 낮거나 피드백에서 반복 지적된 구체적 개선점 1","개선점 2","개선점 3"]}\n\n'
+        "작성 규칙:\n"
+        "1. 강점·개선점은 이 지원자의 실제 답변 내용과 점수를 근거로 구체적으로 서술할 것\n"
+        "2. '성실하게 답변했습니다' 같은 일반적·추상적 표현 금지\n"
+        "3. 여러 질문에서 반복되는 패턴(예: 수치 활용 부족, 논리 구조 일관성 등)을 우선 언급\n"
+        "4. 점수가 높은 항목→강점, 낮은 항목→개선점으로 연결\n\n"
         f"면접 내용:\n{items_text}"
     )
 
@@ -227,7 +235,7 @@ async def generate_overall_summary_with_gemini(qna_feedbacks: list[dict]) -> dic
         try:
             response = await asyncio.wait_for(
                 client.aio.models.generate_content(model=MODEL_NAME, contents=prompt),
-                timeout=45.0,
+                timeout=60.0,
             )
             result = _parse_json(response.text)
             if isinstance(result, dict) and "feedback_summary" in result:
@@ -236,7 +244,7 @@ async def generate_overall_summary_with_gemini(qna_feedbacks: list[dict]) -> dic
                 return result
         except Exception as e:
             print(f"Gemini 총평 생성 오류 (시도 {attempt + 1}/3): {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(5 + attempt * 5)
 
     return default
 

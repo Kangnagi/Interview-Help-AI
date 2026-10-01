@@ -35,7 +35,10 @@ export default function LoginPage() {
             style={styles.input}
           />
 
-          <label style={styles.label}>비밀번호</label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label style={styles.label}>비밀번호</label>
+            <Link to="/forgot-password" style={{ fontSize: 12, color: 'var(--primary)' }}>비밀번호를 잊으셨나요?</Link>
+          </div>
           <input
             type="password"
             value={password}

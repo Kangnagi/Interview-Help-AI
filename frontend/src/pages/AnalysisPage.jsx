@@ -18,12 +18,22 @@ export default function AnalysisPage() {
 
   useEffect(() => {
     let count = 0
+    let nullStreak = 0
     const timer = setInterval(async () => {
       const data = await fetchAnalysis(id)
       count++
-      // strengths가 채워졌거나(완전한 결과), 40회(120s) 이상 대기 시 종료
-      const isComplete = data?.strengths?.length > 0 || data?.improvements?.length > 0
-      if (isComplete || count > 40) {
+      if (data === null) {
+        nullStreak++
+      } else {
+        nullStreak = 0
+      }
+      // 완료: total_score가 채워진 경우
+      // 타임아웃: 80회(240s) 초과
+      // 빠른 실패: 연속 3회 null(백엔드 다운 또는 레코드 없음)
+      const isComplete = data?.total_score != null
+      const timedOut = count > 80
+      const backendDown = nullStreak >= 3
+      if (isComplete || timedOut || backendDown) {
         clearInterval(timer)
         setPolling(false)
       }
@@ -31,17 +41,17 @@ export default function AnalysisPage() {
     return () => clearInterval(timer)
   }, [id])
 
-  if (polling && !analysis) {
+  if (polling) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <div className="spinner" style={{ margin: '0 auto 16px' }} />
         <p style={{ color: 'var(--text-secondary)' }}>AI가 면접을 분석하고 있습니다...</p>
-        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>최대 2분 소요될 수 있습니다</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>최대 4분 소요될 수 있습니다</p>
       </div>
     )
   }
 
-  if (!analysis) {
+  if (analysis?.total_score == null) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <p>분석 결과를 불러올 수 없습니다</p>

@@ -3,6 +3,8 @@ import { useAuthStore } from '@/store/authStore'                     // 로그�
 import Layout from '@/components/Common/Layout'                      // 메인 레이아웃 (사이드바, 헤더)
 import LoginPage from '@/pages/LoginPage'                             // 로그인 페이지
 import RegisterPage from '@/pages/RegisterPage'                       // 회원가입 페이지
+import ForgotPasswordPage from '@/pages/ForgotPasswordPage'           // 비밀번호 찾기 페이지
+import ResetPasswordPage from '@/pages/ResetPasswordPage'             // 비밀번호 재설정 페이지
 import DashboardPage from '@/pages/DashboardPage'                     // 대시보드 (통계·시작 가이드)
 import InterviewPage from '@/pages/InterviewPage'                     // 면접 진행 페이지 (미사용?)
 import AnalysisPage from '@/pages/AnalysisPage'                       // 면접 분석 결과 페이지
@@ -13,6 +15,7 @@ import ResumeHistoryPage from '@/pages/ResumeHistoryPage'             // 자기�
 import PracticeInterviewPage from '@/pages/PracticeInterviewPage'     // 연습 면접 풀스크린 페이지
 import RealInterviewPage from '@/pages/RealInterviewPage'             // 실전 면접 풀스크린 페이지 (타이머·제한시간)
 import InterviewResultPage from '@/pages/InterviewResultPage'         // 면접 상세 분석 리포트 페이지
+import AdminReviewPage from '@/pages/AdminReviewPage'                 // 관리자 검토 (AI 채점 바로잡기 → 재학습 데이터)
 
 // 보호된 라우트 — 로그인한 사용자만 접근 가능 (토큰 확인)
 function PrivateRoute({ children }) {
@@ -24,8 +27,10 @@ export default function App() {
   return (
     <Routes>
       {/* 공개 라우트 (로그인 불필요) */}
-      <Route path="/login"    element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/login"            element={<LoginPage />} />
+      <Route path="/register"         element={<RegisterPage />} />
+      <Route path="/forgot-password"  element={<ForgotPasswordPage />} />
+      <Route path="/reset-password"   element={<ResetPasswordPage />} />
 
       {/* 풀스크린 면접 라우트 (Layout 밖 — 사이드바/헤더 없음) */}
       <Route path="/interview/practice/:resumeId" element={<PrivateRoute><PracticeInterviewPage /></PrivateRoute>} />
@@ -44,6 +49,7 @@ export default function App() {
         <Route path="analysis/:id"         element={<AnalysisPage />} />                              {/* 실전 면접 후 AI 분석 결과 */}
         <Route path="interview/:id/report" element={<InterviewResultPage />} />                       {/* 세부 분석 리포트 (4e522951) */}
         <Route path="history"              element={<HistoryPage />} />                               {/* 전체 면접 이력 (미사용?) */}
+        <Route path="admin/review"         element={<AdminReviewPage />} />                           {/* 관리자 검토 (관리자만, 서버에서도 확인) */}
       </Route>
 
       {/* 정의되지 않은 경로 → 루트로 리다이렉트 */}

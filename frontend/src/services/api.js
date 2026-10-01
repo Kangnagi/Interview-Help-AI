@@ -30,8 +30,10 @@ api.interceptors.response.use(
 
 // ── Auth API (인증 관련 엔드포인트) ─────────────────────────────────
 export const authAPI = {
-  register: (data) => api.post('/auth/register', data),               // POST /auth/register — 회원가입
-  login:    (data) => api.post('/auth/login', data),                 // POST /auth/login — 로그인 (JWT 발급)
+  register:             (data) => api.post('/auth/register', data),
+  login:                (data) => api.post('/auth/login', data),
+  requestPasswordReset: (data) => api.post('/auth/password-reset/request', data),
+  confirmPasswordReset: (data) => api.post('/auth/password-reset/confirm', data),
 }
 
 // ── Interview API (면접 관련 엔드포인트) ────────────────────────────
@@ -51,6 +53,11 @@ export const analysisAPI = {
   start:       (id)   => api.post(`/analysis/${id}/start`),
   get:         (id)   => api.get(`/analysis/${id}`),
   getFeedback: (data) => api.post('/analysis/feedback', data),        // POST — 질문별 즉시 AI 피드백
+}
+
+// ── Stats API (통계 대시보드) ────────────────────────────────
+export const statsAPI = {
+  dashboard: () => api.get('/stats/dashboard'),
 }
 
 export default api

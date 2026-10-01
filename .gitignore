@@ -22,6 +22,9 @@ Thumbs.db
 logs/
 # 로컬 실행 도구 (node, cloudflared) — scripts/start_all.ps1이 사용
 .tools/
+# 예전 파이썬 가상환경, 설계기획서 pptx 압축 해제본
+backend/.venv311/
+unpacked/
 backend/interview.db
 backend/interview.db-wal
 backend/interview.db-shm

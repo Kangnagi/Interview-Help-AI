@@ -46,6 +46,17 @@ class TokenResponse(BaseModel):
     user: UserResponse          # 로그인 직후 사용자 프로필도 함께 전달해 프론트 왕복 절약
 
 
+class PasswordResetRequest(BaseModel):
+    """POST /auth/password-reset/request — 재설정 이메일 요청"""
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    """POST /auth/password-reset/confirm — 새 비밀번호 설정"""
+    token: str
+    new_password: str
+
+
 # ─── Interview (면접) ─────────────────────────────────────────────────────────
 
 class InterviewCreate(BaseModel):
