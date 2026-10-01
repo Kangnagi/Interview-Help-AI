@@ -89,7 +89,9 @@ class InterviewQuestion(Base):
     ai_score         = Column(Float, nullable=True)            # 분석 파이프라인 AI 채점 (0~100)
     ai_feedback      = Column(Text, nullable=True)             # 분석 파이프라인 AI 피드백 텍스트
     ai_model_version = Column(String, nullable=True)           # 채점한 모델 (예: llama-score-adapter-v21, rule) — 재학습 시 버전별 비교용
+    ai_tip           = Column(Text, nullable=True)             # AI 개선 팁 한 문장 (재학습 데이터에 필요해 함께 저장)
     created_at       = Column(DateTime, default=datetime.utcnow)
 
     interview = relationship("Interview", back_populates="questions")
     ratings   = relationship("AnswerRating", back_populates="question", cascade="all, delete-orphan")
+    review    = relationship("AnswerReview", back_populates="question", uselist=False, cascade="all, delete-orphan")

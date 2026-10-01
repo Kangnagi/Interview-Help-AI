@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     ACCOUNT_LOCK_THRESHOLD: int = 5              # 연속 로그인 실패 허용 횟수
     ACCOUNT_LOCK_MINUTES: int = 15               # 잠금 유지 시간(분)
 
+    # ── 관리자 ───────────────────────────────────────────────
+    ADMIN_EMAILS: str = ""                       # 관리자 검토 화면(/admin/review)을 쓸 계정 이메일 (콤마 구분)
+
+    @property
+    def admin_emails(self) -> List[str]:
+        return [e.strip().lower() for e in self.ADMIN_EMAILS.split(",") if e.strip()]
+
     # ── 요청 크기 제한 ───────────────────────────────────────────
     MAX_REQUEST_SIZE_MB: int = 10                # 일반 API 요청 본문 최대 크기
     MAX_UPLOAD_REQUEST_SIZE_MB: int = 200        # 업로드 경로(STT 등) 최대 크기

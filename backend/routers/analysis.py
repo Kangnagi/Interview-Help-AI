@@ -138,6 +138,7 @@ async def _run_analysis_pipeline(interview_id: int):
                 if isinstance(llama_r, dict):
                     sp_score = _safe_int(llama_r.get("speech_score"))
                     fb_text  = llama_r.get("feedback", "")
+                    tip_text = llama_r.get("tip") or None
                     model_version = llama_r.get("model_version")
 
                     # content / clarity: Llama 채점 어댑터의 종합 점수 (현재 세 항목 모두 같은 값)
@@ -156,6 +157,7 @@ async def _run_analysis_pipeline(interview_id: int):
                     # Llama 배치 결과가 없으면 KoBERT 전체 폴백
                     sp_score    = 70
                     fb_text     = ""
+                    tip_text    = None
                     model_version = "kobert"
                     q_content   = kobert_r["content_score"]   if kobert_r.get("status") == "success" else 70
                     q_relevance = kobert_r["relevance_score"]  if kobert_r.get("status") == "success" else 70
@@ -195,6 +197,7 @@ async def _run_analysis_pipeline(interview_id: int):
                         if single.get("score"):
                             q_score = int(single["score"])
                             model_version = single.get("model_version", model_version)
+                            tip_text = single.get("tip") or tip_text
                     except Exception as fb_err:
                         logger.error(f"[Analysis] 단건 피드백 생성 실패: {fb_err}")
                     # 단건도 실패하면 점수 기반 자동 생성
@@ -209,6 +212,7 @@ async def _run_analysis_pipeline(interview_id: int):
                 q.ai_score    = max(0, min(100, q_score))
                 q.ai_feedback = fb_text
                 q.ai_model_version = model_version
+                q.ai_tip = tip_text
                 db.add(q)
 
             # 녹음을 분석한 발화 점수(speech_scores)가 있으면 그것을, 없으면 배치 결과의 기본값을 쓴다

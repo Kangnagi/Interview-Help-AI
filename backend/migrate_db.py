@@ -16,7 +16,8 @@ MIGRATIONS = [
     ("users", "ALTER TABLE users ADD COLUMN training_consent BOOLEAN"),
     ("users", "ALTER TABLE users ADD COLUMN training_consent_at DATETIME"),
     ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN ai_model_version VARCHAR"),
-    # 새 테이블(answer_ratings)은 서버 시작 시 init_db의 create_all이 자동으로 만든다.
+    ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN ai_tip TEXT"),
+    # 새 테이블(answer_ratings, answer_reviews)은 서버 시작 시 init_db의 create_all이 자동으로 만든다.
 ]
 
 def run():

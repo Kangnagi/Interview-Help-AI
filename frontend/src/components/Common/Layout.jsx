@@ -1,8 +1,9 @@
-import { useState } from 'react'                              // 모달 상태 관리
+import { useEffect, useState } from 'react'                   // 모달 상태 관리, 관리자 여부 조회
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'   // 라우팅
 import { useAuthStore } from '@/store/authStore'                 // 사용자 정보 및 로그아웃
 import SettingsModal from '@/components/Common/SettingsModal'     // 설정 모달 (미구현?)
 import toast from 'react-hot-toast'                              // 토스트 알림
+import { adminAPI } from '@/services/adminAPI'                   // 관리자 여부 확인 (관리자 메뉴 표시용)
 
 // 사이드바 네비게이션 메뉴
 const NAV_ITEMS = [
@@ -15,6 +16,13 @@ export default function Layout() {
   const { user, logout } = useAuthStore()                        // 사용자 정보 및 로그아웃 함수
   const navigate = useNavigate()                                 // 페이지 네비게이션
   const [showSettings, setShowSettings] = useState(false)        // 설정 모달 표시 여부
+  const [isAdmin, setIsAdmin] = useState(false)                  // 관리자면 '관리자 검토' 메뉴 표시
+
+  useEffect(() => {
+    adminAPI.me().then((r) => setIsAdmin(r.data.is_admin)).catch(() => setIsAdmin(false))
+  }, [user?.email])
+
+  const navItems = isAdmin ? [...NAV_ITEMS, { to: '/admin/review', icon: '🛠️', label: '관리자 검토' }] : NAV_ITEMS
 
   const handleLogout = () => {
     logout()                                                     // 로그아웃 처리 (토큰/사용자 정보 삭제)
@@ -33,7 +41,7 @@ export default function Layout() {
 
         {/* 네비게이션 메뉴 */}
         <nav className="sidebar__nav">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
