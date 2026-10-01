@@ -13,7 +13,9 @@ _vision_buffers: Dict[int, List[dict]] = {}
 
 
 def init_buffer(interview_id: int) -> None:
-    _vision_buffers[interview_id] = []
+    # 이미 있으면 유지 — 면접 도중 소켓이 재연결돼도 앞서 쌓인 프레임 결과를 지우지 않는다
+    # (버퍼는 면접 종료 후 분석 단계의 get_and_clear_vision_scores가 비운다)
+    _vision_buffers.setdefault(interview_id, [])
 
 
 def add_frame_result(interview_id: int, result: dict) -> None:

@@ -15,6 +15,7 @@ MediaPipe/OpenCV가 설치되지 않은 경우 Stub 모드로 자동 폴백.
 """
 import logging
 import os
+import threading
 import urllib.request
 import numpy as np
 from typing import Optional
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 # 어깨 랜드마크 인덱스 (MediaPipe Pose 기준)
 _LEFT_SHOULDER  = 11
 _RIGHT_SHOULDER = 12
+
+# 랜드마커 동시 실행 방지 — MediaPipe Tasks 인스턴스는 여러 스레드에서 동시에 쓰기에 안전하다고 보장되지 않는다
+_DETECT_LOCK = threading.Lock()
 
 # 모델 파일 저장 경로 (서비스 파일 옆 models/ 폴더)
 _MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
@@ -187,10 +191,15 @@ class MediaPipeService:
         return diff < 0.05
 
     def _run_detection(self, rgb: np.ndarray):
-        """RGB 배열을 MediaPipe Image로 변환 후 두 랜드마커를 실행."""
-        mp_image    = self._to_mp_image(rgb)
-        face_result = self._face_landmarker.detect(mp_image)
-        pose_result = self._pose_landmarker.detect(mp_image)
+        """RGB 배열을 MediaPipe Image로 변환 후 두 랜드마커를 실행.
+
+        랜드마커 인스턴스 하나를 여러 사용자의 프레임(각각 별도 스레드)이 함께 쓰므로 잠금으로 한 번에 하나씩 실행한다.
+        (프레임 1장 약 9ms — 초당 3장 기준 동시 사용자 수십 명까지 여유)
+        """
+        mp_image = self._to_mp_image(rgb)
+        with _DETECT_LOCK:
+            face_result = self._face_landmarker.detect(mp_image)
+            pose_result = self._pose_landmarker.detect(mp_image)
         return face_result, pose_result
 
     def analyze_frame_sync(self, frame_bytes: bytes) -> dict:

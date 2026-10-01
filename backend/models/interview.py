@@ -84,7 +84,9 @@ class InterviewQuestion(Base):
     order            = Column(Integer, nullable=False)          # 질문 순서 (1-based)
     question_text    = Column(Text, nullable=False)
     answer_text      = Column(Text, nullable=True)             # 답변 저장 전까지 None
-    audio_path       = Column(String, nullable=True)           # 답변 오디오 파일 (Whisper 변환용)
+    audio_path       = Column(String, nullable=True)           # 답변 오디오 파일 (면접 전체 녹음 1개를 질문들이 공유할 수 있음)
+    audio_start_sec  = Column(Float, nullable=True)            # 녹음 파일 안에서 이 답변이 시작하는 시각(초) — None이면 처음부터
+    audio_end_sec    = Column(Float, nullable=True)            # 이 답변이 끝나는 시각(초) — None이면 파일 끝까지
     duration_seconds = Column(Integer, nullable=True)          # 해당 질문 답변에 걸린 시간
     ai_score         = Column(Float, nullable=True)            # 분석 파이프라인 AI 채점 (0~100)
     ai_feedback      = Column(Text, nullable=True)             # 분석 파이프라인 AI 피드백 텍스트

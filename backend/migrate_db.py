@@ -17,6 +17,8 @@ MIGRATIONS = [
     ("users", "ALTER TABLE users ADD COLUMN training_consent_at DATETIME"),
     ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN ai_model_version VARCHAR"),
     ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN ai_tip TEXT"),
+    ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN audio_start_sec FLOAT"),
+    ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN audio_end_sec FLOAT"),
     # 새 테이블(answer_ratings, answer_reviews)은 서버 시작 시 init_db의 create_all이 자동으로 만든다.
 ]
 

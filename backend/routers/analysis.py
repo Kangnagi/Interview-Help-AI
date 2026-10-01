@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from core import audio_sessions
 from core.database import get_db, AsyncSessionLocal
 from core.config import settings
 from core.security import get_current_user_id
@@ -38,6 +39,23 @@ def _safe_int(val, default: int = 80) -> int:
 # 백그라운드 작업: 면접 종료 후 종합 분석 수행
 # ───────────────────────────────────────────────────────────
 async def _run_analysis_pipeline(interview_id: int):
+    """분석 진입점 — 같은 면접의 중복 실행을 막고, 녹음 저장이 진행 중이면 끝날 때까지 기다린다.
+
+    (화면은 '종료 → 분석 시작 → 결과 화면 이동' 순으로 호출하고 녹음 소켓은 화면을 떠날 때 닫혀서,
+     예전엔 녹음 없이 한 번, 녹음 저장 후 한 번 — 분석이 두 번 돌았다)
+    """
+    if not audio_sessions.try_start_analysis(interview_id):
+        logger.info(f"[Analysis] interview_id={interview_id} 이미 분석 중 — 중복 실행 건너뜀")
+        return
+    try:
+        if not await audio_sessions.wait_for_audio(interview_id):
+            logger.warning(f"[Analysis] interview_id={interview_id} 녹음 저장 대기 시간 초과 — 녹음 없이 진행")
+        await _run_analysis_pipeline_impl(interview_id)
+    finally:
+        audio_sessions.end_analysis(interview_id)
+
+
+async def _run_analysis_pipeline_impl(interview_id: int):
     logger.info(f"[Analysis] interview_id={interview_id} 분석 시작")
 
     try:
@@ -86,7 +104,7 @@ async def _run_analysis_pipeline(interview_id: int):
                
                 # 발화 속도 기록 (WPM). 점수는 아래 로컬 발화 분석(analyze_speech)이 매긴다.
                 # get_audio_duration은 동기 함수라 별도 스레드로 넘겨 이벤트 루프를 막지 않는다.
-                duration = await asyncio.to_thread(get_audio_duration, q.audio_path)
+                duration = await asyncio.to_thread(get_audio_duration, q.audio_path, q.audio_start_sec, q.audio_end_sec)
                 if duration > 0:
                     word_count = len(q.answer_text.split())
                     speech_paces.append(round((word_count / duration) * 60, 1))
@@ -95,7 +113,8 @@ async def _run_analysis_pipeline(interview_id: int):
             # (예전엔 스펙트로그램 이미지를 만들어 Gemini에 보냈지만, 서버에 webm 디코더가 없어 이미지 생성이
             #  실패하면서 음성 평가가 사실상 기본값으로만 채워졌다. 이제 파형을 직접 분석한다.)
             qna_list = [
-                {"question": q.question_text, "answer": q.answer_text, "audio_path": q.audio_path}
+                {"question": q.question_text, "answer": q.answer_text, "audio_path": q.audio_path,
+                 "audio_start_sec": q.audio_start_sec, "audio_end_sec": q.audio_end_sec}
                 for q in valid_questions
             ]
 
@@ -107,7 +126,8 @@ async def _run_analysis_pipeline(interview_id: int):
 
             # 2. 오디오 개별 분석 Tasks (녹음이 없거나 분석 불가면 None)
             speech_tasks = [
-                analyze_speech(qna["audio_path"], qna["answer"]) if qna.get("audio_path")
+                analyze_speech(qna["audio_path"], qna["answer"], qna["audio_start_sec"], qna["audio_end_sec"])
+                if qna.get("audio_path")
                 else asyncio.sleep(0, result=None)
                 for qna in qna_list
             ]

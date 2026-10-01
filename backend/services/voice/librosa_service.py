@@ -133,6 +133,21 @@ LONG_PAUSE_SECONDS = 2.0     # 이보다 긴 침묵은 '긴 멈춤'
 FILLER_WORDS = {"음", "어", "그", "저", "뭐", "음...", "어...", "그...", "아", "으"}
 
 
+def _load_segment(audio_path: str, sr: int, start_sec: float | None, end_sec: float | None,
+                  max_seconds: float | None = None) -> np.ndarray:
+    """녹음 파일에서 [start_sec, end_sec) 구간만 꺼낸다 (질문별 구간 — 면접 전체가 파일 1개로 녹음됨).
+
+    webm은 중간부터 바로 읽을 수 없어 앞에서부터 end_sec까지 디코딩한 뒤 잘라낸다.
+    """
+    start = max(0.0, start_sec or 0.0)
+    limit = end_sec if end_sec is not None else (start + max_seconds if max_seconds else None)
+    y = _load_audio(audio_path, sr=sr, max_seconds=limit)
+    y = y[int(start * sr):]
+    if max_seconds:
+        y = y[: int(max_seconds * sr)]
+    return y
+
+
 def _load_audio(audio_path: str, sr: int = 16000, max_seconds: float | None = None) -> np.ndarray:
     """오디오를 모노 float32 파형으로 읽는다.
 
@@ -167,13 +182,14 @@ def _count_syllables(text: str) -> int:
     return sum(1 for ch in text or "" if "가" <= ch <= "힣")
 
 
-def extract_speech_features(audio_path: str, transcript: str = "") -> dict | None:
-    """오디오 파형 + 인식된 텍스트에서 발화 지표를 계산한다. 실패하면 None."""
+def extract_speech_features(audio_path: str, transcript: str = "",
+                            start_sec: float | None = None, end_sec: float | None = None) -> dict | None:
+    """오디오 파형 + 인식된 텍스트에서 발화 지표를 계산한다. start/end를 주면 그 구간만. 실패하면 None."""
     if not audio_path or not os.path.isfile(audio_path):
         return None
     try:
         sr = 16000
-        y = _load_audio(audio_path, sr=sr, max_seconds=MAX_SPEECH_ANALYSIS_SECONDS)
+        y = _load_segment(audio_path, sr, start_sec, end_sec, max_seconds=MAX_SPEECH_ANALYSIS_SECONDS)
         duration = len(y) / sr
         if duration < 1.0 or float(np.max(np.abs(y))) < 1e-4:
             return None
@@ -255,21 +271,27 @@ def score_speech(f: dict) -> dict:
     return {"speech_score": score, "feedback": feedback}
 
 
-async def analyze_speech(audio_path: str, transcript: str = "") -> dict | None:
-    """녹음 파일의 발화를 로컬에서 분석해 {"speech_score", "feedback", "metrics"}를 돌려준다. 분석 불가면 None."""
-    features = await asyncio.to_thread(extract_speech_features, audio_path, transcript)
+async def analyze_speech(audio_path: str, transcript: str = "",
+                         start_sec: float | None = None, end_sec: float | None = None) -> dict | None:
+    """녹음 파일의 발화를 로컬에서 분석해 {"speech_score", "feedback", "metrics"}를 돌려준다. 분석 불가면 None.
+
+    음성 모델 담당이 새 모델로 바꿀 때 이 함수의 입출력 규약(인자 4개, 반환 형식)을 유지하면
+    분석 파이프라인(routers/analysis.py)은 고치지 않아도 된다.
+    start_sec/end_sec: 면접 전체 녹음 안에서 이 답변의 구간 (None이면 파일 처음/끝).
+    """
+    features = await asyncio.to_thread(extract_speech_features, audio_path, transcript, start_sec, end_sec)
     if not features:
         return None
     return {**score_speech(features), "metrics": features}
 
 
-def get_audio_duration(audio_path: str) -> float:
-    """오디오 파일의 길이를 초(second) 단위로 반환합니다."""
+def get_audio_duration(audio_path: str, start_sec: float | None = None, end_sec: float | None = None) -> float:
+    """오디오 파일(또는 그 안의 [start_sec, end_sec) 구간)의 길이를 초 단위로 반환합니다."""
     if not audio_path or not os.path.exists(audio_path):
         return 0.0
 
     try:
         # webm은 길이 메타데이터가 없는 경우가 많아 실제로 디코딩한 샘플 수로 잰다.
-        return len(_load_audio(audio_path, sr=8000)) / 8000
+        return len(_load_segment(audio_path, 8000, start_sec, end_sec)) / 8000
     except Exception:
         return 0.0
