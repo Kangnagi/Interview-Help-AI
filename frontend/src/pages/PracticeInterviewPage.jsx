@@ -4,6 +4,7 @@ import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
+import { wsUrl } from '@/services/websocket'
 import { useAuthStore } from '@/store/authStore'
 
 const PHASE = {
@@ -66,8 +67,14 @@ export default function PracticeInterviewPage() {
   const startAudioStreaming = useCallback(() => {
     if (!backendInterviewId) return
     
-    const wsUrl = `ws://${window.location.hostname}:8000/ws/interview_audio/${backendInterviewId}?token=${token}`
-    wsRef.current = new WebSocket(wsUrl)
+    const ws = new WebSocket(wsUrl(`/ws/interview_audio/${backendInterviewId}?token=${token}`))
+    wsRef.current = ws
+    // 답변마다 연결을 새로 여므로, 열리자마자 '이 녹음은 어느 질문의 답변인지' 알린다.
+    // (안 보내면 서버가 녹음을 첫 질문에 연결해 매 답변이 첫 질문 녹음을 덮어쓴다)
+    const questionId = currentQuestion?.id
+    ws.onopen = () => {
+      if (questionId) ws.send(JSON.stringify({ type: 'question', question_id: questionId }))
+    }
 
     navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
@@ -81,7 +88,7 @@ export default function PracticeInterviewPage() {
       // 500ms 단위로 오디오 조각을 서버에 전송
       recorder.start(500)
     })
-  }, [backendInterviewId, token])
+  }, [backendInterviewId, token, currentQuestion?.id])
 
   // 오디오 스트리밍 종료
   const stopAudioStreaming = useCallback(() => {

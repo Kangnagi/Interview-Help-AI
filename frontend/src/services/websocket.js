@@ -3,6 +3,16 @@
  * 프레임 전송 / 분석 결과 수신
  */
 
+/**
+ * 실시간 연결 주소 — 페이지와 같은 주소(도메인·포트)의 /ws 경로로 연결한다.
+ * https 사이트(www.neailview.com)에서는 wss, 로컬 개발(http://localhost:5173)에서는 ws.
+ * Vite 프록시(vite.config.js의 '/ws')가 백엔드(:8000)로 넘긴다.
+ * (예전엔 ws://호스트:8000 고정이라 https 사이트에서는 연결이 막혔다 — 8000번은 외부에 열려 있지 않음)
+ * @param {string} path  예: `/ws/interview_audio/${id}?token=${token}`
+ */
+export const wsUrl = (path) =>
+  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${path}`
+
 class InterviewWebSocket {
   constructor() {
     this.ws = null                // WebSocket 연결 객체
@@ -18,11 +28,12 @@ class InterviewWebSocket {
   connect(interviewId) {
     // WebSocket 연결 시작 — 백엔드 /ws/interview/{id} 엔드포인트로 연결
     this.interviewId = interviewId
-    const url = `ws://${window.location.hostname}:8000/ws/interview/${interviewId}`
+    // TODO(MediaPipe 담당): 서버는 ?token=JWT 와 면접 소유자 확인을 요구한다 — 토큰을 붙여야 연결된다 (전달 문서 3-2)
+    const url = wsUrl(`/ws/interview/${interviewId}`)
     this.ws = new WebSocket(url)
 
     //추가: 신규 음성 전용 연결
-    const audioUrl = `ws://${window.location.hostname}:8000/ws/interview_audio/${interviewId}`
+    const audioUrl = wsUrl(`/ws/interview_audio/${interviewId}`)
     this.audioWs = new WebSocket(audioUrl)
 
     this.ws.onopen = () => {
