@@ -16,7 +16,7 @@ import os
 
 import torch
 from datasets import load_dataset
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -47,6 +47,14 @@ def parse_args():
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--resume", action="store_true", help="output_dir의 마지막 체크포인트부터 이어서 학습")
+    parser.add_argument(
+        "--init_adapter",
+        default=None,
+        help="이미 학습된 LoRA 어댑터에서 출발해 이어서 학습 (예: 바탕화면 llama-finetune의 best). "
+             "지정하면 --lora_r/--lora_alpha 대신 그 어댑터의 설정을 그대로 쓴다.",
+    )
+    parser.add_argument("--save_steps", type=int, default=0,
+                        help="0이면 에포크마다 저장, 양수면 N 스텝마다 저장 (긴 학습이 중간에 끊겨도 --resume으로 이어가기 위함)")
     return parser.parse_args()
 
 
@@ -104,18 +112,23 @@ def main():
 
     model, tokenizer = load_model_and_tokenizer(args)
 
-    lora_config = LoraConfig(
-        r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        bias="none",
-        task_type="CAUSAL_LM",
-        target_modules=[
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj",
-        ],
-    )
-    model = get_peft_model(model, lora_config)
+    if args.init_adapter:
+        # 기존 어댑터 가중치에서 출발 — 그 어댑터가 배운 것(예: 실제 면접 답변 피드백)을 유지한 채 새 과제를 추가로 배운다
+        model = PeftModel.from_pretrained(model, args.init_adapter, is_trainable=True)
+        print(f"기존 어댑터에서 이어서 학습: {args.init_adapter}")
+    else:
+        lora_config = LoraConfig(
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            bias="none",
+            task_type="CAUSAL_LM",
+            target_modules=[
+                "q_proj", "k_proj", "v_proj", "o_proj",
+                "gate_proj", "up_proj", "down_proj",
+            ],
+        )
+        model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
     bf16_ok = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -129,7 +142,9 @@ def main():
         learning_rate=args.learning_rate,
         optim="paged_adamw_8bit" if not args.no_4bit else "adamw_torch",
         logging_steps=10,
-        save_strategy="epoch",
+        save_strategy="steps" if args.save_steps > 0 else "epoch",
+        save_steps=args.save_steps if args.save_steps > 0 else 500,
+        save_total_limit=3,
         bf16=bf16_ok,
         fp16=not bf16_ok,
         max_seq_length=args.max_seq_length,
