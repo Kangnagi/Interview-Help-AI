@@ -44,6 +44,9 @@ backend/training/data/real_pool.jsonl
 backend/training/data/score_teacher_real.jsonl
 backend/training/data/mix_*.jsonl
 backend/training/data/real_eval.jsonl
+# Claude 채점 데이터 · 사람 보정 점수 (같은 바탕화면 원문 포함)
+backend/training/data/claude_*
+backend/training/data/human_*
 # 학습 산출물(어댑터 가중치)은 용량이 커서 제외
 backend/training/output/
 
