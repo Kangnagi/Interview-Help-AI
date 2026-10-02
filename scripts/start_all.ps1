@@ -1,5 +1,9 @@
 ﻿# 백엔드(FastAPI) · 프런트엔드(Vite) · Cloudflare 터널을 각각 감시 루프(run_forever.ps1)로 창 없이 띄운다.
 # 이미 감시 중인 서비스는 건너뛰므로 여러 번 실행해도 안전하다. 로그온 시 작업 스케줄러가 자동 실행한다.
+# 프런트엔드는 기본이 운영 방식(npm run serve: 빌드 후 vite preview — 첫 화면이 빠름)이다.
+# -Dev를 주면 개발 서버(npm run dev: 화면 코드 수정이 바로 반영되지만 첫 로딩이 느림)로 띄운다.
+# 이미 떠 있는 프런트엔드의 방식을 바꾸거나 다시 빌드하려면 restart_frontend.ps1을 쓴다.
+param([switch]$Dev)
 $root = Split-Path -Parent $PSScriptRoot
 $runner = Join-Path $PSScriptRoot "run_forever.ps1"
 # node·cloudflared는 저장소의 .tools/ 에 둔다 (gitignore). AppData에 설치한 사본은 로그온 시 작업 스케줄러에서
@@ -10,7 +14,7 @@ $cloudflared = "$root\.tools\cloudflared\cloudflared.exe"
 $services = @(
     @{ Name = "backend";  FilePath = "$root\backend\.venv\Scripts\python.exe"; Arguments = "main.py";
        WorkingDirectory = "$root\backend" },
-    @{ Name = "frontend"; FilePath = "$node\npm.cmd"; Arguments = "run dev";
+    @{ Name = "frontend"; FilePath = "$node\npm.cmd"; Arguments = $(if ($Dev) { "run dev" } else { "run serve" });
        WorkingDirectory = "$root\frontend"; ExtraPath = $node },
     @{ Name = "tunnel";   FilePath = $cloudflared;
        Arguments = "tunnel --config $env:USERPROFILE\.cloudflared\config.yml run"; WorkingDirectory = $env:USERPROFILE }
