@@ -35,6 +35,7 @@ def parse_json(text: str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter_dir", required=True)
+    parser.add_argument("--base_model", default=BASE_MODEL, help="어댑터를 학습한 기본 모델 (예: Bllossom 경로)")
     parser.add_argument("--eval_path", required=True)
     parser.add_argument("--batch_size", type=int, default=8)
     args = parser.parse_args()
@@ -42,7 +43,9 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.adapter_dir, padding_side="left")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    base = AutoModelForCausalLM.from_pretrained(BASE_MODEL, torch_dtype=torch.bfloat16, device_map={"": 0})
+    base = AutoModelForCausalLM.from_pretrained(args.base_model, torch_dtype=torch.bfloat16, device_map={"": 0})
+    # 대화 한 턴의 끝(<|eot_id|>)에서 멈춤 — Bllossom은 generation_config에 없어 직접 지정 (Llama는 원래 포함)
+    eos = [tokenizer.eos_token_id, tokenizer.convert_tokens_to_ids("<|eot_id|>")]
     model = PeftModel.from_pretrained(base, args.adapter_dir)
     model.eval()
 
@@ -57,7 +60,7 @@ def main():
         enc = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=700, do_sample=False,
-                                 pad_token_id=tokenizer.pad_token_id)
+                                 pad_token_id=tokenizer.pad_token_id, eos_token_id=eos)
         for k, (ex, o) in enumerate(zip(batch, out), b + 1):
             label = json.loads(ex["messages"][2]["content"])
             text = tokenizer.decode(o[enc["input_ids"].shape[-1]:], skip_special_tokens=True)

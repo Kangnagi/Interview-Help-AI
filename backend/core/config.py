@@ -70,13 +70,17 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"   # 재설정 링크에 사용할 프론트 주소
 
     # ── AI 모델 설정 ────────────────────────────────────────
-    LLAMA_BASE_MODEL: str = "meta-llama/Llama-3.2-3B-Instruct"   # 게이트 모델 — HuggingFace 라이선스 동의 + 로그인 필요
-    LLAMA_ADAPTER_PATH: str = "./ai_models/llama-interview-adapter"  # 파인튜닝된 LoRA 어댑터 경로 (피드백 텍스트 폴백용)
-    LLAMA_SCORE_ADAPTER_PATH: str = "./ai_models/llama-score-adapter-a1"  # 점수·피드백·팁 채점 어댑터 (합성 v2.1 + 실제 면접 답변 채점 데이터로 학습; 이전 버전 llama-score-adapter-v21 보관)
+    # 기본 모델: Bllossom-3B (Llama-3.2-3B를 한국어 약 150GB로 추가 학습한 모델) — 채점·질문 생성·총평을 모델 하나로.
+    # 예전 구성(Llama-3.2-3B + a1)으로 되돌리려면: LLAMA_BASE_MODEL=meta-llama/Llama-3.2-3B-Instruct,
+    # LLAMA_ADAPTER_PATH=./ai_models/llama-interview-adapter, LLAMA_SCORE_ADAPTER_PATH=./ai_models/llama-score-adapter-a1,
+    # TEXT_MODEL=Bllossom/llama-3.2-Korean-Bllossom-3B
+    LLAMA_BASE_MODEL: str = "Bllossom/llama-3.2-Korean-Bllossom-3B"
+    LLAMA_ADAPTER_PATH: str = ""   # 예비 피드백용 LoRA — Llama 위에서 학습한 것이라 Bllossom에선 비움 (예비 피드백은 기본 모델이 씀)
+    LLAMA_SCORE_ADAPTER_PATH: str = "./ai_models/bllossom-score-adapter-b1"  # 점수·피드백·팁 채점 어댑터 (a1과 같은 데이터로 Bllossom 위에서 학습)
     LLAMA_USE_4BIT: bool = False                            # VRAM이 부족하면 True (QLoRA 4bit 로드)
     LLAMA_MAX_NEW_TOKENS: int = 512                         # 피드백 생성 최대 토큰 수
-    # 질문 생성 · 종합 총평을 맡는 한국어 글쓰기 모델 (GPU 약 6GB 추가). 빈 값이면 베이스 Llama가 맡는다.
-    TEXT_MODEL: str = "Bllossom/llama-3.2-Korean-Bllossom-3B"
+    # 질문 생성 · 종합 총평을 따로 맡길 모델 (GPU 약 6GB 추가). 빈 값이면 위 기본 모델이 어댑터 없이 맡는다.
+    TEXT_MODEL: str = ""
 
     class Config:
         env_file = ".env"          # 프로젝트 루트의 .env 파일에서 환경 변수 로드

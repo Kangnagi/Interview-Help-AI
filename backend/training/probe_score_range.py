@@ -62,10 +62,12 @@ def parse_score(text):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter_dir", required=True)
+    parser.add_argument("--base_model", default=BASE_MODEL, help="어댑터를 학습한 기본 모델 (예: Bllossom 경로)")
     args = parser.parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(args.adapter_dir)
-    base = AutoModelForCausalLM.from_pretrained(BASE_MODEL, torch_dtype=torch.bfloat16, device_map={"": 0})
+    base = AutoModelForCausalLM.from_pretrained(args.base_model, torch_dtype=torch.bfloat16, device_map={"": 0})
+    eos = [tokenizer.eos_token_id, tokenizer.convert_tokens_to_ids("<|eot_id|>")]   # Bllossom은 <|eot_id|> 직접 지정
     model = PeftModel.from_pretrained(base, args.adapter_dir)
     model.eval()
 
@@ -78,7 +80,7 @@ def main():
         enc = tokenizer(prompt, return_tensors="pt").to(model.device)
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=700, do_sample=False,
-                                 pad_token_id=tokenizer.eos_token_id)
+                                 pad_token_id=tokenizer.eos_token_id, eos_token_id=eos)
         text = tokenizer.decode(out[0][enc["input_ids"].shape[-1]:], skip_special_tokens=True)
         print(f"[{quality:>2}] {question[:20]:<20} → 점수 {parse_score(text)}", flush=True)
 

@@ -127,6 +127,7 @@ class LlamaService:
             self.tokenizer = None
             self.model = None
             self.has_score_adapter = False
+            self.has_feedback_adapter = False
             # generate()는 스레드로 넘어가므로, 같은 모델 인스턴스에 대한 동시
             # 호출(어댑터 전환 포함)이 서로 섞이지 않도록 직렬화한다.
             self._lock = asyncio.Lock()
@@ -148,6 +149,7 @@ class LlamaService:
             self.model = None
             self.tokenizer = None
             self.has_score_adapter = False
+            self.has_feedback_adapter = False
 
         if settings.TEXT_MODEL:
             logger.info(f"한국어 글쓰기 모델 로딩 중: {settings.TEXT_MODEL}")
@@ -198,7 +200,13 @@ class LlamaService:
                 bnb_4bit_use_double_quant=True,
             )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(settings.LLAMA_ADAPTER_PATH)
+        # 피드백 어댑터는 선택 — 기본 모델을 Bllossom으로 바꾸면 Llama 위에서 학습한 이 어댑터는 맞지 않아 비워 둔다
+        # (LLAMA_ADAPTER_PATH=). 그때 예비 피드백은 어댑터 없이 기본 모델이 쓴다.
+        feedback_dir = settings.LLAMA_ADAPTER_PATH if settings.LLAMA_ADAPTER_PATH and os.path.isdir(settings.LLAMA_ADAPTER_PATH) else None
+        score_dir = settings.LLAMA_SCORE_ADAPTER_PATH if os.path.isdir(settings.LLAMA_SCORE_ADAPTER_PATH) else None
+
+        # 토크나이저: 피드백 어댑터 → 채점 어댑터(학습 때 저장된 그대로) → 기본 모델 순
+        self.tokenizer = AutoTokenizer.from_pretrained(feedback_dir or score_dir or settings.LLAMA_BASE_MODEL)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "left"   # 여러 답변을 한 번에 생성(배치)할 때 필요
@@ -209,13 +217,17 @@ class LlamaService:
             torch_dtype=compute_dtype,
             device_map={"": 0} if self.device == "cuda" else None,
         )
-        self.model = PeftModel.from_pretrained(
-            base_model, settings.LLAMA_ADAPTER_PATH, adapter_name=FEEDBACK_ADAPTER
-        )
-        if os.path.isdir(settings.LLAMA_SCORE_ADAPTER_PATH):
-            self.model.load_adapter(settings.LLAMA_SCORE_ADAPTER_PATH, adapter_name=SCORE_ADAPTER)
-            self.has_score_adapter = True
+        if feedback_dir:
+            self.model = PeftModel.from_pretrained(base_model, feedback_dir, adapter_name=FEEDBACK_ADAPTER)
+            self.has_feedback_adapter = True
+            if score_dir:
+                self.model.load_adapter(score_dir, adapter_name=SCORE_ADAPTER)
+        elif score_dir:
+            self.model = PeftModel.from_pretrained(base_model, score_dir, adapter_name=SCORE_ADAPTER)
         else:
+            self.model = base_model
+        self.has_score_adapter = score_dir is not None
+        if not score_dir:
             logger.warning(f"채점 어댑터 없음: {settings.LLAMA_SCORE_ADAPTER_PATH} — 규칙 기반 채점으로 동작")
         self.model.eval()
 
@@ -224,8 +236,10 @@ class LlamaService:
         if adapter:
             self.model.set_adapter(adapter)
             ctx = nullcontext()
-        else:
+        elif isinstance(self.model, PeftModel):
             ctx = self.model.disable_adapter()
+        else:
+            ctx = nullcontext()   # 어댑터가 하나도 없는 경우
 
         if greedy:
             # 채점: 학습·평가와 같은 조건(탐욕적 디코딩)으로 — 같은 답변엔 항상 같은 점수
@@ -245,11 +259,14 @@ class LlamaService:
             ]
             encoding = self.tokenizer(prompts, return_tensors="pt", padding=True).to(self.model.device)
             input_len = encoding["input_ids"].shape[-1]
+            # 대화 한 턴의 끝(<|eot_id|>)에서 멈춤 — 기본 모델이 Bllossom이면 generation_config에 없어 직접 지정해야 한다
+            eos = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
             with torch.no_grad():
                 output = self.model.generate(
                     **encoding,
                     max_new_tokens=max_new_tokens,
                     pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=eos,
                     **gen_kwargs,
                 )
             return [self.tokenizer.decode(o[input_len:], skip_special_tokens=True) for o in output]
@@ -264,7 +281,7 @@ class LlamaService:
     async def generate(self, messages: list, max_new_tokens: int = None, use_adapter: bool = True,
                        sampling: Optional[dict] = None) -> str:
         max_new_tokens = max_new_tokens or settings.LLAMA_MAX_NEW_TOKENS
-        adapter = FEEDBACK_ADAPTER if use_adapter else None
+        adapter = FEEDBACK_ADAPTER if (use_adapter and self.has_feedback_adapter) else None
         return (await self.generate_batch([messages], max_new_tokens, adapter, sampling=sampling))[0]
 
 
@@ -391,8 +408,10 @@ FEEDBACK_MAX_NEW_TOKENS = 200  # 학습 데이터의 assistant 응답 길이(평
 async def generate_feedback_text(question: str, answer: str) -> Optional[str]:
     """피드백 어댑터로 단일 질문/답변 피드백 텍스트 생성. 실패 시 None."""
     try:
+        # 피드백 어댑터가 없으면(기본 모델 Bllossom) 기본 모델이 한국어 글쓰기 샘플링으로 쓴다
         text = await llama_service.generate(
-            _feedback_messages(question, answer), max_new_tokens=FEEDBACK_MAX_NEW_TOKENS, use_adapter=True
+            _feedback_messages(question, answer), max_new_tokens=FEEDBACK_MAX_NEW_TOKENS, use_adapter=True,
+            sampling=None if llama_service.has_feedback_adapter else KOREAN_TEXT_SAMPLING,
         )
         return text.strip() or None
     except Exception as e:
@@ -484,30 +503,69 @@ def _summary_messages(qna_feedbacks: list) -> list:
     ]
 
 
+_TEMPLATE_ECHO = re.compile(r"종합 총평\s*\d+\s*~\s*\d+\s*문장")   # 형식 예시를 그대로 베낀 총평
+
+
+def _parse_summary(text: str) -> dict:
+    """총평 출력 → {"feedback_summary", "strengths", "improvements"} — 3B 모델의 흔한 형식 실수를 받아 준다.
+
+    실제로 본 실수: 강점을 목록 대신 문장 하나로 씀, 키 이름 오타('strongnesses'),
+    따옴표·쉼표가 빠져 JSON이 깨짐. 깨지면 키별로 값을 정규식으로 꺼낸다.
+    """
+    try:
+        raw = _parse_json(text)
+    except Exception:
+        raw = None
+    if not isinstance(raw, dict):
+        raw = {}
+        m = re.search(r'"feedback_summary"\s*:\s*"(.+?)"(?=\s*[,}\n"])', text, re.S)   # 뒤 쉼표가 빠져도
+        if m:
+            raw["feedback_summary"] = m.group(1)
+        for key in ("strengths", "improvements"):
+            m = re.search(rf'"{key}"\s*:\s*\[(.*?)\]', text, re.S)
+            if m:
+                raw[key] = re.findall(r'"((?:[^"\\]|\\.)+)"', m.group(1))
+    out = {"feedback_summary": raw.get("feedback_summary") if isinstance(raw.get("feedback_summary"), str) else None}
+    for key, prefix in (("strengths", "str"), ("improvements", "impro")):
+        val = raw.get(key)
+        if val is None:   # 키 이름 오타
+            val = next((v for k, v in raw.items() if isinstance(k, str) and k.lower().startswith(prefix)), None)
+        if isinstance(val, str):
+            val = [val]
+        out[key] = [s.strip() for s in val if isinstance(s, str)] if isinstance(val, list) else []
+    return out
+
+
 async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
     """한국어 글쓰기 모델(없으면 베이스 Llama)로 종합 총평 생성. 실패하면 규칙 기반 총평으로 대체."""
     if not qna_feedbacks:
         return _rule_based_summary(qna_feedbacks)
 
     messages = _summary_messages(qna_feedbacks)
-    try:
-        text = await llama_service.generate_text(messages, max_new_tokens=600)
-        result = _parse_json(text)
-        if isinstance(result, dict) and _is_clean_korean(result.get("feedback_summary"), 0.5):
-            # 강점·개선점은 깨진 항목만 빼고 쓰고, 비면 질문별 피드백에서 뽑은 규칙 기반 항목으로 채운다
-            rule = _rule_based_summary(qna_feedbacks)
-            for key in ("strengths", "improvements"):
-                items = result.get(key)
-                items = [s for s in items if _is_clean_summary_item(s)] if isinstance(items, list) else []
-                result[key] = items or rule[key]
-            return result
-        logger.warning(f"Llama 총평 형식·글자 이상 — 규칙 기반 총평으로 대체: {text[:120]!r}")
-    except Exception as e:
-        logger.error(f"Llama 총평 생성 실패, 규칙 기반 총평으로 대체: {e}")
+    # 샘플링이라 가끔 JSON이 깨진다(쉼표 누락 등) → 한 번 더 생성해 보고, 그래도 안 되면 규칙 기반 총평
+    for attempt in range(SUMMARY_GEN_ATTEMPTS):
+        try:
+            text = await llama_service.generate_text(messages, max_new_tokens=600)
+            result = _parse_summary(text)
+            summary_text = result.get("feedback_summary")
+            if (_is_clean_korean(summary_text, 0.5) and len(summary_text.strip()) >= 20
+                    and not _TEMPLATE_ECHO.search(summary_text)):
+                # 강점·개선점은 깨진 항목만 빼고 쓰고, 비면 질문별 피드백에서 뽑은 규칙 기반 항목으로 채운다
+                rule = _rule_based_summary(qna_feedbacks)
+                for key in ("strengths", "improvements"):
+                    items = result.get(key)
+                    items = [s for s in items if _is_clean_summary_item(s)] if isinstance(items, list) else []
+                    result[key] = items or rule[key]
+                return result
+            logger.warning(f"총평 형식·글자 이상 ({attempt + 1}회차): {text[:120]!r}")
+        except Exception as e:
+            logger.warning(f"총평 생성 실패 ({attempt + 1}회차): {e}")
+    logger.error("총평 생성 실패 — 규칙 기반 총평으로 대체")
     return _rule_based_summary(qna_feedbacks)
 
 
 QUESTION_GEN_ATTEMPTS = 2   # 깨진 질문을 걸러내고 모자라면 한 번 더 생성 (한 번에 약 수 초)
+SUMMARY_GEN_ATTEMPTS = 2    # 총평 JSON이 깨지면 한 번 더 (한 번에 약 2~3초)
 
 
 def _question_messages(resume_text: str, count: int) -> list:
