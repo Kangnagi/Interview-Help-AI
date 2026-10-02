@@ -39,11 +39,12 @@ def _parse_json(text: str):
     if "```" in text:
         m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
         text = m.group(1).strip() if m else re.sub(r"```(?:json)?", "", text).strip()
+    # strict=False: 모델이 문자열 안에 줄바꿈 기호 대신 실제 줄바꿈을 쓰는 경우(b3 평가 427개 중 1건)도 받아 준다
     for s, e in [("{", "}"), ("[", "]")]:
         si, ei = text.find(s), text.rfind(e)
         if si != -1 and ei > si:
-            return json.loads(text[si:ei + 1])
-    return json.loads(text)
+            return json.loads(text[si:ei + 1], strict=False)
+    return json.loads(text, strict=False)
 
 FEEDBACK_ADAPTER = "interview_feedback"
 SCORE_ADAPTER = "interview_score"

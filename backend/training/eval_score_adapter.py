@@ -29,7 +29,7 @@ def parse_json(text: str):
     si, ei = text.find("{"), text.rfind("}")
     if si == -1 or ei <= si:
         raise ValueError("JSON 객체 없음")
-    return json.loads(text[si:ei + 1])
+    return json.loads(text[si:ei + 1], strict=False)   # 서비스 _parse_json과 같게
 
 
 def main():

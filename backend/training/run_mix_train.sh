@@ -5,8 +5,9 @@
 #   bash run_mix_train.sh train a1  [--resume] : 기본 모델에서 새로 학습 (A1만, 비교용)
 #   bash run_mix_train.sh train b1  [--resume] : Bllossom-3B(한국어 Llama)에서 a1과 같은 데이터·설정으로 학습
 #   bash run_mix_train.sh train b2  [--resume] : b1에서 이어서 Claude 채점 데이터(280개, 기준표 claude_rubric_v3.md)로 학습
+#   bash run_mix_train.sh train b3  [--resume] : b1에서 이어서 Claude 채점 280 + 양 끝 보강(기준표 v3.1)으로 학습
 #   bash run_mix_train.sh eval v21|a1|a12|b1|b2  : 같은 평가셋(합성·실제)과 프로브로 평가 → eval_mix_<이름>.log
-#   bash run_mix_train.sh evalh b1|b2       : 사람 점수 20개 + Claude 검토용 20개로 평가 → eval_human_<이름>.log
+#   bash run_mix_train.sh evalh b1|b2|b3      : 사람 점수 20개 + Claude 검토용 20개로 평가 → eval_human_<이름>.log
 SRC=/mnt/c/Users/Owner/Desktop/Interview-Help-AI/backend/training
 DESKTOP_ADAPTER=/mnt/c/Users/Owner/Desktop/llama-finetune/llama-finetune/training/output/llama-3.2-3b-interview/best
 BLLOSSOM=~/models/llama-3.2-Korean-Bllossom-3B   # Windows HF 캐시에서 복사해 둔 Bllossom-3B
@@ -14,7 +15,7 @@ PY=~/venvs/llama-finetune/bin/python
 cd ~/llama-train
 cp $SRC/finetune_llama.py $SRC/build_mix_dataset.py $SRC/eval_score_adapter.py $SRC/probe_score_range.py .
 # Claude 채점 학습 데이터와 사람 점수 평가셋 (Windows 쪽 data/에서 만든 것, git 제외)
-cp $SRC/data/claude_train_msgs.jsonl $SRC/data/claude_holdout20_eval.jsonl $SRC/data/human_calib20_eval.jsonl data/ 2>/dev/null
+cp $SRC/data/claude_train_msgs.jsonl $SRC/data/claude_b3_train_msgs.jsonl $SRC/data/claude_holdout20_eval.jsonl $SRC/data/human_calib20_eval.jsonl data/ 2>/dev/null
 # 이름이 b로 시작하면 Bllossom 위에서 학습·평가 (그 외는 기본 Llama-3.2-3B)
 BASE_ARGS=""; [[ "$2" == b* ]] && BASE_ARGS="--base_model $BLLOSSOM"
 
@@ -28,6 +29,11 @@ elif [ "$1" = "train" ]; then
   if [ "$NAME" = "b2" ]; then
     # b1에서 이어서, 적은 데이터라 학습률을 낮춰 기존 형식·눈금을 크게 흔들지 않게
     DATA=data/claude_train_msgs.jsonl
+    INIT="--model_name $BLLOSSOM --init_adapter output/llama-3.2-3b-score-b1"
+    EXTRA="--learning_rate 1e-4"
+  elif [ "$NAME" = "b3" ]; then
+    # b1에서 이어서, Claude 채점 280 + 양 끝 보강(실제 209 + 합성 64) — 80점 이상·25점 이하는 2배 (b2의 가운데 쏠림 보정)
+    DATA=data/claude_b3_train_msgs.jsonl
     INIT="--model_name $BLLOSSOM --init_adapter output/llama-3.2-3b-score-b1"
     EXTRA="--learning_rate 1e-4"
   fi

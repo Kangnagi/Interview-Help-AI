@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     # TEXT_MODEL=Bllossom/llama-3.2-Korean-Bllossom-3B
     LLAMA_BASE_MODEL: str = "Bllossom/llama-3.2-Korean-Bllossom-3B"
     LLAMA_ADAPTER_PATH: str = ""   # 예비 피드백용 LoRA — Llama 위에서 학습한 것이라 Bllossom에선 비움 (예비 피드백은 기본 모델이 씀)
-    LLAMA_SCORE_ADAPTER_PATH: str = "./ai_models/bllossom-score-adapter-b1"  # 점수·피드백·팁 채점 어댑터 (a1과 같은 데이터로 Bllossom 위에서 학습)
+    LLAMA_SCORE_ADAPTER_PATH: str = "./ai_models/bllossom-score-adapter-b3"  # 점수·피드백·팁 채점 어댑터 (b1에서 Claude 채점 553개로 이어 학습, 되돌리기: …-b2 / -b1)
     LLAMA_USE_4BIT: bool = False                            # VRAM이 부족하면 True (QLoRA 4bit 로드)
     LLAMA_MAX_NEW_TOKENS: int = 512                         # 피드백 생성 최대 토큰 수
     # 질문 생성 · 종합 총평을 따로 맡길 모델 (GPU 약 6GB 추가). 빈 값이면 위 기본 모델이 어댑터 없이 맡는다.
