@@ -31,9 +31,11 @@ export default function AnalysisPage() {
       // 타임아웃: 80회(240s) 초과
       // 빠른 실패: 연속 3회 null(백엔드 다운 또는 레코드 없음)
       const isComplete = data?.total_score != null
+      // 실패: 서버가 점수 없이 안내 문구만 남긴 경우 (분석 오류) — 더 기다리지 않는다
+      const failed = data != null && data.total_score == null && !!data.feedback_summary
       const timedOut = count > 80
       const backendDown = nullStreak >= 3
-      if (isComplete || timedOut || backendDown) {
+      if (isComplete || failed || timedOut || backendDown) {
         clearInterval(timer)
         setPolling(false)
       }
@@ -55,6 +57,9 @@ export default function AnalysisPage() {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <p>분석 결과를 불러올 수 없습니다</p>
+        {analysis?.feedback_summary && (
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 8 }}>{analysis.feedback_summary}</p>
+        )}
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 12 }}>
           <button className="btn btn-outline btn-sm" onClick={() => window.location.reload()}>다시 시도</button>
           <button className="btn btn-outline btn-sm" onClick={() => navigate('/dashboard')}>대시보드로</button>

@@ -60,7 +60,7 @@ export default function PracticeInterviewPage() {
   const currentQuestion = backendQuestions[qIndex]
   const currentQ = currentQuestion?.question_text || ''
 
-  const { listening, interim, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
+  const { listening, interim, toggle: toggleSTT, start: startSTT, stop: stopSTT, isSupported: sttSupported } =
     useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
 
   // 오디오 스트리밍 시작 (WebSocket 연결)
@@ -77,6 +77,11 @@ export default function PracticeInterviewPage() {
     }
 
     navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      // 마이크 허용을 기다리는 사이 답변이 끝났으면(연결이 이미 바뀜/닫힘) 녹음을 시작하지 않고 마이크를 놓는다
+      if (wsRef.current !== ws || ws.readyState > WebSocket.OPEN) {
+        stream.getTracks().forEach((t) => t.stop())
+        return
+      }
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
       mediaRecorderRef.current = recorder
       
@@ -92,23 +97,38 @@ export default function PracticeInterviewPage() {
 
   // 오디오 스트리밍 종료
   const stopAudioStreaming = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop()
-    }
-    if (wsRef.current) {
-      wsRef.current.close()
+    const recorder = mediaRecorderRef.current
+    const ws = wsRef.current
+    mediaRecorderRef.current = null
+    wsRef.current = null
+    const closeWs = () => ws?.close()
+    if (recorder && recorder.state !== 'inactive') {
+      // stop() 뒤에 마지막 조각(dataavailable)이 한 번 더 오므로, 그걸 보낸 다음 연결을 닫는다
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) ws.send(e.data)
+      }
+      recorder.onstop = () => {
+        recorder.stream.getTracks().forEach((t) => t.stop())   // 답변이 끝나면 마이크를 놓는다
+        closeWs()
+      }
+      recorder.stop()
+    } else {
+      recorder?.stream.getTracks().forEach((t) => t.stop())
+      closeWs()
     }
   }, [])
 
   useEffect(() => {
     if (phase === PHASE.ANSWERING) {
       startAudioStreaming()
+      // 답변 시간이 되면 음성 입력을 자동으로 켠다 (예전엔 🎤 버튼을 눌러야 해서, 말만 하면 답변이 빈 칸으로 저장됐다)
+      if (sttSupported) startSTT()
     } else {
       stopSTT()
       stopAudioStreaming()
     }
     return () => stopAudioStreaming()
-  }, [phase, stopSTT, startAudioStreaming, stopAudioStreaming])
+  }, [phase, stopSTT, startSTT, sttSupported, startAudioStreaming, stopAudioStreaming])
 
   const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
     setDeviceIds({ cameraId, micId })
@@ -206,11 +226,15 @@ export default function PracticeInterviewPage() {
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
   const submitAnswer = async () => {
+    // 아직 확정되지 않은 음성 인식 중간 결과(interim)까지 답변에 포함한다 (말을 끝내자마자 누르면 마지막 문장이 빠졌다)
+    const capturedAnswer = [answer, interim].filter(Boolean).join(' ').trim()
+    if (!capturedAnswer && !window.confirm('답변이 비어 있습니다. 이대로 넘어가면 이 질문은 0점 처리됩니다.\n그래도 다음으로 넘어갈까요?')) {
+      return
+    }
     stopSTT()
     clearInterval(answerTimer.current)
 
     const capturedQId = currentQuestion?.id
-    const capturedAnswer = answer
 
     // 1. 답변 저장
     if (backendInterviewId && capturedQId) {

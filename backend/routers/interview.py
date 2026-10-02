@@ -14,12 +14,18 @@ from core.database import get_db
 from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from schemas.schemas import InterviewCreate, InterviewResponse
-from services.llm.llama_service import generate_questions_from_resume, analyze_answer_with_llama
+from services.llm.llama_service import generate_questions_from_resume, analyze_answer_with_llama, is_valid_question
+from services.llm.question_bank import fallback_questions
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/interviews", tags=["면접"])
 
 QUESTION_CACHE_FILE = "question_cache.json"
+FIXED_QUESTIONS = [
+    "간단한 자기소개 부탁드립니다.",
+    "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?",
+]
+AI_QUESTIONS_PER_INTERVIEW = 3   # 고정 질문 뒤에 붙는 AI(또는 직무 기본) 질문 수
 
 def load_question_cache():
     if os.path.exists(QUESTION_CACHE_FILE):
@@ -45,7 +51,60 @@ async def create_interview(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    # 1. 면접 엔티티 생성
+    # 1. 질문 먼저 준비 — Llama 생성(수 초~십수 초) 동안 DB 쓰기 잠금을 잡고 있지 않도록 면접 레코드보다 먼저 만든다
+    #    (SQLite는 쓰기 잠금이 DB 전체 하나라, 예전처럼 flush 후 생성하면 그동안 다른 사용자의 저장이 막혔다)
+    resume_text = body.resume_text or ""
+    selected_ai = []
+    try:
+        resume_hash = hashlib.sha256(resume_text.encode('utf-8')).hexdigest() if resume_text else ""
+        cache_entry = _question_cache.get(resume_hash) if resume_hash else None
+        # 구버전 캐시(리스트 형태) 호환성 처리
+        if isinstance(cache_entry, list):
+            cache_entry = {"ai_questions": cache_entry[2:] if len(cache_entry) > 2 else cache_entry, "index": 0}
+        if cache_entry:
+            # 예전에 캐시된 깨진 질문(일본어·영어 섞임 등)은 버리고, 쓸 만한 질문이 모자라면 새로 생성
+            pool = [q for q in cache_entry.get("ai_questions", []) if is_valid_question(q)]
+            cache_entry = {"ai_questions": pool, "index": cache_entry.get("index", 0) % max(1, len(pool))} \
+                if len(pool) >= AI_QUESTIONS_PER_INTERVIEW else None
+
+        if cache_entry:
+            logger.info("면접 생성: 캐시된 질문 풀 사용")
+        elif len(resume_text.strip()) > 10:
+            logger.info("면접 생성: 로컬 Llama로 질문 풀 생성")
+            category_val = body.category.value if hasattr(body.category, "value") else str(body.category)
+            pool = await generate_questions_from_resume(
+                resume_text=resume_text,
+                category=category_val,
+                num_questions=8,  # 고정 2개 + AI 질문 6개 (다음 면접들에서 3개씩 돌려 씀)
+            )
+            if len(pool) >= AI_QUESTIONS_PER_INTERVIEW:
+                cache_entry = {"ai_questions": pool, "index": 0}
+            else:
+                # 모자란 결과는 캐시하지 않는다 (다음 면접에서 다시 생성 시도)
+                selected_ai = pool
+                logger.warning(f"면접 생성: 사용할 수 있는 AI 질문 {len(pool)}개 — 직무 기본 질문으로 채움")
+        else:
+            logger.info("면접 생성: 지원 정보가 부족해 직무 기본 질문 사용")
+
+        if cache_entry:
+            ai_pool = cache_entry["ai_questions"]
+            idx = cache_entry["index"]
+            for _ in range(AI_QUESTIONS_PER_INTERVIEW):
+                selected_ai.append(ai_pool[idx])
+                idx = (idx + 1) % len(ai_pool)
+            # 다음 면접을 위해 회전된 인덱스 저장
+            cache_entry["index"] = idx
+            _question_cache[resume_hash] = cache_entry
+            save_question_cache(_question_cache)
+    except Exception as e:
+        logger.error(f"면접 생성: 질문 생성 중 예외 발생, 직무 기본 질문 사용: {e}")
+
+    # AI 질문이 모자라면 직무 기본 질문으로 채운다 (항상 고정 2개 + 3개 = 5개)
+    if len(selected_ai) < AI_QUESTIONS_PER_INTERVIEW:
+        selected_ai += fallback_questions(resume_text, AI_QUESTIONS_PER_INTERVIEW - len(selected_ai), exclude=selected_ai)
+    questions_list = FIXED_QUESTIONS + selected_ai
+
+    # 2. 면접 엔티티 생성
     interview = Interview(
         user_id=user_id,
         title=body.title,
@@ -54,76 +113,7 @@ async def create_interview(
     db.add(interview)
     await db.flush()  # ID 생성을 위해 flush
 
-    questions_list = []
-    try:
-        resume_hash = ""
-        if body.resume_text:
-            resume_hash = hashlib.sha256(body.resume_text.encode('utf-8')).hexdigest()
-
-        if resume_hash and resume_hash in _question_cache:
-            cache_entry = _question_cache[resume_hash]
-            # 구버전 캐시(리스트 형태) 호환성 처리
-            if isinstance(cache_entry, list):
-                cache_entry = {
-                    "ai_questions": cache_entry[2:] if len(cache_entry) > 2 else cache_entry,
-                    "index": 0
-                }
-            logger.info(f"Interview {interview.id}: 캐시된 질문 풀에서 3개를 가져옵니다. (API 절약)")
-        elif body.resume_text and len(body.resume_text.strip()) > 10:
-            logger.info(f"Interview {interview.id}: 로컬 Llama로 질문 풀 생성을 시도합니다.")
-            category_val = body.category.value if hasattr(body.category, "value") else str(body.category)
-            raw_questions = await generate_questions_from_resume(
-                resume_text=body.resume_text,
-                category=category_val,
-                num_questions=8  # 타임아웃 방지: 고정 2개 + AI 질문 6개로 축소
-            )
-            if raw_questions and len(raw_questions) > 2:
-                cache_entry = {
-                    "ai_questions": raw_questions[2:],
-                    "index": 0
-                }
-            else:
-                cache_entry = None
-                logger.warning(f"Interview {interview.id}: Llama가 질문을 반환하지 않았습니다. 폴백 로직을 사용합니다.")
-        else:
-            cache_entry = None
-            logger.info(f"Interview {interview.id}: 자기소개서 내용이 부족하여 폴백 로직을 사용합니다.")
-
-        if cache_entry and "ai_questions" in cache_entry:
-            ai_pool = cache_entry["ai_questions"]
-            idx = cache_entry.get("index", 0)
-
-            selected_ai = []
-            count_to_pick = min(3, len(ai_pool))
-            for _ in range(count_to_pick):
-                selected_ai.append(ai_pool[idx])
-                idx = (idx + 1) % len(ai_pool)
-
-            # 다음 면접을 위해 회전된 인덱스 저장
-            cache_entry["index"] = idx
-            _question_cache[resume_hash] = cache_entry
-            save_question_cache(_question_cache)
-
-            questions_list = [
-                "간단한 자기소개 부탁드립니다.",
-                "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?"
-            ] + selected_ai
-
-    except Exception as e:
-        logger.error(f"Interview {interview.id}: 질문 생성 중 예외 발생, 폴백 로직 실행: {e}")
-
-    # 3. AI 질문 생성에 실패한 경우, 기본 폴백 질문 사용
-    if not questions_list or len(questions_list) <= 2:
-        DEFAULT_QUESTIONS = [
-            "간단한 자기소개 부탁드립니다.",
-            "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?",
-            "자기소개서에 작성하신 경험에 대해 더 자세히 설명해 주세요.",
-            "지원하신 직무와 관련하여 본인만의 강점은 무엇인가요?",
-            "가장 힘들었던 경험과 이를 어떻게 극복했는지 말씀해 주세요.",
-        ]
-        questions_list = DEFAULT_QUESTIONS[:5]
-
-    # 4. 생성된 질문을 DB에 저장
+    # 3. 질문을 DB에 저장
     for i, q_text in enumerate(questions_list):
         new_q = InterviewQuestion(
             interview_id=interview.id,
@@ -134,7 +124,7 @@ async def create_interview(
 
     interview.total_questions = len(questions_list)
 
-    # 5. 최종 커밋 및 데이터 반환
+    # 4. 최종 커밋 및 데이터 반환
     await db.commit() 
     await db.refresh(interview)
     return interview

@@ -56,6 +56,43 @@ SCORE_MAX_NEW_TOKENS = 600   # 학습 라벨(JSON) 길이 기준 여유치 — �
 SCORE_BATCH_SIZE = 8         # 한 번에 채점할 답변 수 (VRAM·지연 시간 균형)
 MAX_ANSWER_CHARS = 2000      # 비정상적으로 긴 답변은 잘라서 채점
 
+# 베이스 모델로 한국어 글(질문·총평)을 쓸 때의 샘플링 설정.
+# 기본 설정의 no_repeat_ngram_size=3은 한국어에서 해롭다 — 한글 한 글자가 토큰 여러 개(바이트 조각)로
+# 쪼개지므로 같은 글자·조사가 다시 나오는 것까지 막혀, '인터�efe스'처럼 글자가 깨지거나 일본어·영어로 새었다.
+KOREAN_TEXT_SAMPLING = {"do_sample": True, "temperature": 0.6, "top_p": 0.9, "repetition_penalty": 1.05}
+
+_FOREIGN_OR_BROKEN = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿�]")  # 가나·한자·깨진 글자
+_LOWER_EN_PHRASE = re.compile(r"\b[a-z]+\s+[a-z]+\b")  # 'how to'처럼 소문자 영어 단어가 이어짐 (기술 용어는 보통 대문자 시작)
+
+
+_LOWER_EN_WORD = re.compile(r"(?<![A-Za-z])[a-z]{2,}(?![A-Za-z])")  # 소문자로만 된 영어 단어 ('experiences에서', 'comment')
+
+
+def _is_clean_korean(text: str, min_hangul_ratio: float = 0.6, strict: bool = False) -> bool:
+    """깨진 글자·외국 문자·영어 문장이 섞이지 않은 한국어 글인지.
+
+    글자는 한글·영문 알파벳만 허용한다 (베트남어 'bảo', 힌디어 'बत' 같은 다른 문자는 거부).
+    strict=True(질문)면 소문자 영어 단어도 거부 — 기술 용어는 보통 대문자로 시작한다 (Java, Kafka, HBM).
+    """
+    if not isinstance(text, str) or _FOREIGN_OR_BROKEN.search(text) or _LOWER_EN_PHRASE.search(text):
+        return False
+    letters = [c for c in text if c.isalpha()]
+    if any(not ("가" <= c <= "힣" or c.isascii()) for c in letters):
+        return False
+    if strict and _LOWER_EN_WORD.search(text):
+        return False
+    hangul = sum("가" <= c <= "힣" for c in letters)
+    return bool(letters) and hangul / len(letters) >= min_hangul_ratio
+
+
+def is_valid_question(question: str) -> bool:
+    """면접 질문으로 쓸 수 있는지 — 깨끗한 한국어, 적당한 길이, 질문·요청 형태로 끝남."""
+    if not isinstance(question, str):
+        return False
+    q = question.strip()
+    return (15 <= len(q) <= 200 and q[0] not in "[{\"'" and _is_clean_korean(q, strict=True)
+            and q.rstrip(" .!\"'”")[-1:] in ("?", "요", "까", "오", "다"))
+
 
 class LlamaService:
     """싱글톤. 베이스 모델 1개 + LoRA 어댑터들을 메모리에 유지한다."""
@@ -124,7 +161,8 @@ class LlamaService:
             logger.warning(f"채점 어댑터 없음: {settings.LLAMA_SCORE_ADAPTER_PATH} — 규칙 기반 채점으로 동작")
         self.model.eval()
 
-    def _generate_sync(self, conversations: list, max_new_tokens: int, adapter: Optional[str], greedy: bool) -> list:
+    def _generate_sync(self, conversations: list, max_new_tokens: int, adapter: Optional[str], greedy: bool,
+                       sampling: Optional[dict] = None) -> list:
         if adapter:
             self.model.set_adapter(adapter)
             ctx = nullcontext()
@@ -134,6 +172,8 @@ class LlamaService:
         if greedy:
             # 채점: 학습·평가와 같은 조건(탐욕적 디코딩)으로 — 같은 답변엔 항상 같은 점수
             gen_kwargs = {"do_sample": False}
+        elif sampling is not None:
+            gen_kwargs = sampling
         else:
             gen_kwargs = {
                 "do_sample": True, "temperature": 0.7, "top_p": 0.9,
@@ -157,16 +197,17 @@ class LlamaService:
             return [self.tokenizer.decode(o[input_len:], skip_special_tokens=True) for o in output]
 
     async def generate_batch(self, conversations: list, max_new_tokens: int,
-                             adapter: Optional[str], greedy: bool = False) -> list:
+                             adapter: Optional[str], greedy: bool = False, sampling: Optional[dict] = None) -> list:
         if self.model is None:
             raise RuntimeError("Llama 모델이 로드되지 않았습니다.")
         async with self._lock:
-            return await asyncio.to_thread(self._generate_sync, conversations, max_new_tokens, adapter, greedy)
+            return await asyncio.to_thread(self._generate_sync, conversations, max_new_tokens, adapter, greedy, sampling)
 
-    async def generate(self, messages: list, max_new_tokens: int = None, use_adapter: bool = True) -> str:
+    async def generate(self, messages: list, max_new_tokens: int = None, use_adapter: bool = True,
+                       sampling: Optional[dict] = None) -> str:
         max_new_tokens = max_new_tokens or settings.LLAMA_MAX_NEW_TOKENS
         adapter = FEEDBACK_ADAPTER if use_adapter else None
-        return (await self.generate_batch([messages], max_new_tokens, adapter))[0]
+        return (await self.generate_batch([messages], max_new_tokens, adapter, sampling=sampling))[0]
 
 
 llama_service = LlamaService()
@@ -384,50 +425,83 @@ async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
         )},
     ]
     try:
-        text = await llama_service.generate(messages, max_new_tokens=600, use_adapter=False)
+        text = await llama_service.generate(messages, max_new_tokens=600, use_adapter=False,
+                                            sampling=KOREAN_TEXT_SAMPLING)
         result = _parse_json(text)
-        if isinstance(result, dict) and "feedback_summary" in result:
-            result.setdefault("strengths", [])
-            result.setdefault("improvements", [])
+        if isinstance(result, dict) and _is_clean_korean(result.get("feedback_summary"), 0.5):
+            # 강점·개선점은 깨진 항목만 빼고 쓰고, 비면 질문별 피드백에서 뽑은 규칙 기반 항목으로 채운다
+            rule = _rule_based_summary(qna_feedbacks)
+            for key in ("strengths", "improvements"):
+                items = result.get(key)
+                items = [s for s in items if _is_clean_korean(s, 0.5)] if isinstance(items, list) else []
+                result[key] = items or rule[key]
             return result
+        logger.warning(f"Llama 총평 형식·글자 이상 — 규칙 기반 총평으로 대체: {text[:120]!r}")
     except Exception as e:
         logger.error(f"Llama 총평 생성 실패, 규칙 기반 총평으로 대체: {e}")
     return _rule_based_summary(qna_feedbacks)
 
 
-async def generate_questions_from_resume(resume_text: str, category: str, num_questions: int = 5) -> list:
-    """베이스 Llama(어댑터 비활성화)로 자기소개서 기반 질문 생성. 완전 로컬 — Gemini 미사용.
+QUESTION_GEN_ATTEMPTS = 2   # 깨진 질문을 걸러내고 모자라면 한 번 더 생성 (한 번에 약 수 초)
 
-    실패 시 빈 리스트를 반환 (호출부인 routers/interview.py 가 자체 폴백 질문 목록을 사용).
-    """
-    ai_num = max(0, num_questions - 2)
-    messages = [
-        {"role": "system", "content": "당신은 채용 담당자입니다."},
+
+def _question_messages(resume_text: str, count: int) -> list:
+    return [
+        {"role": "system", "content": "당신은 한국 기업의 채용 면접관입니다. 모든 질문은 자연스러운 한국어 존댓말로만 작성합니다."},
         {"role": "user", "content": (
-            f"아래 자기소개서를 바탕으로 면접 질문 {ai_num}개를 생성하세요.\n\n"
+            f"아래 지원 정보를 바탕으로 면접 질문 {count}개를 만드세요.\n\n"
             "규칙:\n"
-            "1. 자기소개·지원동기는 제외 (이미 진행됨)\n"
-            "2. 자기소개서 내용에 직접 기반한 구체적 질문\n"
-            "3. 독립적으로 답할 수 있는 질문 (꼬리 질문 제외)\n"
-            "4. 순수 JSON 배열로만 반환: [\"질문1\", \"질문2\"]\n\n"
-            f"직무: {category}\n\n"
-            f"자기소개서:\n{resume_text[:2000]}"
+            "1. 자기소개·지원동기 질문은 제외 (이미 진행됨)\n"
+            "2. 지원 회사·직무·직무 설명에 나온 내용과 직접 연결된 구체적인 질문\n"
+            "3. 한 질문은 한 문장, 40~120자, '~말씀해 주세요.' 또는 '~무엇인가요?'처럼 끝내기\n"
+            "4. 한국어로만 작성 (일본어·한자·영어 문장 금지, 기술 용어만 영어 허용)\n"
+            "5. 지원자의 실제 경험(상황, 본인이 한 일, 결과)을 묻는 질문을 우선\n"
+            "6. 순수 JSON 배열로만 출력: [\"질문1\", \"질문2\"]\n\n"
+            # (구체적인 예시 문장을 넣으면 3B 모델이 다른 직무 면접에도 그대로 베껴 써서 넣지 않는다)
+            f"지원 정보:\n{resume_text[:2000]}"
         )},
     ]
+
+
+def _extract_questions(text: str) -> list:
+    """모델 출력에서 질문 문자열 목록을 꺼낸다 (JSON 배열 · {"questions": [...]} · 번호 목록 모두 허용)."""
     try:
-        text = await llama_service.generate(messages, max_new_tokens=400, use_adapter=False)
-        questions = _parse_json(text)
-        if isinstance(questions, dict):
-            for val in questions.values():
-                if isinstance(val, list):
-                    questions = val
-                    break
-        fixed = [
-            "간단한 자기소개 부탁드립니다.",
-            "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?",
-        ]
-        if isinstance(questions, list) and all(isinstance(q, str) for q in questions):
-            return fixed + questions[:ai_num]
-    except Exception as e:
-        logger.error(f"Llama 질문 생성 실패: {e}")
-    return []
+        parsed = _parse_json(text)
+        if isinstance(parsed, dict):
+            parsed = next((v for v in parsed.values() if isinstance(v, list)), [])
+        if isinstance(parsed, list):
+            return [q for q in parsed if isinstance(q, str)]
+    except Exception:
+        pass
+    # JSON이 깨졌으면 줄 단위로 ('1. 질문', '- 질문', '"질문",')
+    return [re.sub(r'^\s*(?:\d+[.)]|[-•*])\s*', "", line).strip(' ",[]')
+            for line in text.splitlines() if line.strip()]
+
+
+async def generate_questions_from_resume(resume_text: str, category: str, num_questions: int = 5) -> list:
+    """베이스 Llama(어댑터 비활성화)로 지원 정보 기반 질문 생성 — 고정 질문(자기소개·지원동기)은 빼고 AI 질문만 반환.
+
+    3B 베이스 모델은 한국어가 약해 깨진 질문(일본어·영어 섞임, 글자 깨짐)을 낼 때가 있다
+    → is_valid_question으로 거르고, 모자라면 한 번 더 생성한다. 그래도 모자라면 있는 만큼만 반환하고
+    호출부(routers/interview.py)가 직무 기본 질문(question_bank)으로 채운다. 실패 시 빈 리스트.
+    """
+    ai_num = max(0, num_questions - 2)
+    if ai_num == 0 or llama_service.model is None:
+        return []
+    questions, seen = [], set()
+    for attempt in range(QUESTION_GEN_ATTEMPTS):
+        try:
+            text = await llama_service.generate(_question_messages(resume_text, ai_num + 1), max_new_tokens=500,
+                                                use_adapter=False, sampling=KOREAN_TEXT_SAMPLING)
+        except Exception as e:
+            logger.error(f"Llama 질문 생성 실패: {e}")
+            break
+        candidates = [q.strip() for q in _extract_questions(text)]
+        valid = [q for q in candidates if is_valid_question(q) and q not in seen]
+        logger.info(f"Llama 질문 생성 {attempt + 1}회차: 후보 {len(candidates)}개 중 사용 가능 {len(valid)}개")
+        for q in valid:
+            seen.add(q)
+            questions.append(q)
+        if len(questions) >= ai_num:
+            break
+    return questions[:ai_num]

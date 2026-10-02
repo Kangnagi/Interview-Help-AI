@@ -21,6 +21,19 @@ from services.vision.mediapipe_service import mediapipe_service
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["분석"])
 
+# 답변이 하나도 저장되지 않은 면접의 결과 안내
+NO_ANSWER_SUMMARY = (
+    "저장된 답변이 없어 채점하지 못했습니다. 답변 시간에 음성 입력이 켜져 있었는지(빨간 '인식 중지' 버튼), "
+    "또는 답변 칸에 글이 들어갔는지 확인한 뒤 다시 면접을 진행해 주세요."
+)
+NO_ANSWER_FEEDBACK = "답변이 저장되지 않았습니다. 음성 입력 또는 직접 입력으로 답변을 남겨 주세요."
+NO_ANSWER_IMPROVEMENTS = [
+    "답변 시간에 음성 입력이 켜져 있는지 확인하세요 (말한 내용이 답변 칸에 글자로 나타나야 저장됩니다)",
+    "음성 입력이 안 되면 답변 칸에 직접 입력해도 됩니다",
+]
+# 분석 도중 오류 — 결과 화면은 '점수 없음 + 이 문구'를 보고 기다리기를 멈춘다
+ANALYSIS_FAILED_SUMMARY = "분석 중 오류가 발생해 결과를 만들지 못했습니다. 같은 문제가 반복되면 관리자에게 알려 주세요."
+
 
 def _avg(values):
     """None/빈 리스트 안전한 평균."""
@@ -78,7 +91,20 @@ async def _run_analysis_pipeline_impl(interview_id: int):
 
             valid_questions = [q for q in interview.questions if q.answer_text]
             if not valid_questions:
-                logger.warning(f"[Analysis] 답변이 있는 질문 없음 — 분석 중단")
+                # 예전엔 여기서 조용히 끝나서, 결과 화면이 빈 결과를 4분 동안 기다리다 '불러올 수 없음'으로 끝났다
+                # → 0점 결과와 이유를 저장해 바로 보여 준다
+                logger.warning(f"[Analysis] 답변이 있는 질문 없음 — 0점 결과와 안내 저장")
+                for q in interview.questions:
+                    q.ai_score, q.ai_feedback, q.ai_tip, q.ai_model_version = 0, NO_ANSWER_FEEDBACK, None, "rule"
+                    db.add(q)
+                for field in ("total_score", "content_score", "relevance_score", "clarity_score",
+                              "speech_score", "posture_score", "eye_contact_score"):
+                    setattr(analysis, field, 0.0)
+                analysis.feedback_summary = NO_ANSWER_SUMMARY
+                analysis.strengths = []
+                analysis.improvements = NO_ANSWER_IMPROVEMENTS
+                db.add(analysis)
+                await db.commit()
                 return
 
             # ── 2) KoBERT(관련성 보정) 및 Llama(점수·피드백)·로컬 발화 분석 ─────────
@@ -304,6 +330,15 @@ async def _run_analysis_pipeline_impl(interview_id: int):
         logger.info(f"[Analysis] interview_id={interview_id} 분석 완료")
     except Exception as e:
         logger.error(f"[Analysis] 파이프라인 치명적 오류: {e}", exc_info=True)
+        # 점수 없이 안내 문구만 남긴다 — 결과 화면은 '점수 없음 + 안내 문구'를 실패로 보고 기다리기를 멈춘다
+        try:
+            async with AsyncSessionLocal() as db:
+                row = (await db.execute(select(Analysis).where(Analysis.interview_id == interview_id))).scalar_one_or_none()
+                if row and row.total_score is None:
+                    row.feedback_summary = ANALYSIS_FAILED_SUMMARY
+                    await db.commit()
+        except Exception as mark_err:
+            logger.error(f"[Analysis] 실패 표시 저장 실패: {mark_err}")
 
 
 # ───────────────────────────────────────────────────────────
