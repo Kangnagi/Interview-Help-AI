@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     LLAMA_SCORE_ADAPTER_PATH: str = "./ai_models/llama-score-adapter-a1"  # 점수·피드백·팁 채점 어댑터 (합성 v2.1 + 실제 면접 답변 채점 데이터로 학습; 이전 버전 llama-score-adapter-v21 보관)
     LLAMA_USE_4BIT: bool = False                            # VRAM이 부족하면 True (QLoRA 4bit 로드)
     LLAMA_MAX_NEW_TOKENS: int = 512                         # 피드백 생성 최대 토큰 수
+    # 질문 생성 · 종합 총평을 맡는 한국어 글쓰기 모델 (GPU 약 6GB 추가). 빈 값이면 베이스 Llama가 맡는다.
+    TEXT_MODEL: str = "Bllossom/llama-3.2-Korean-Bllossom-3B"
 
     class Config:
         env_file = ".env"          # 프로젝트 루트의 .env 파일에서 환경 변수 로드

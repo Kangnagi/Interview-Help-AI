@@ -5,7 +5,12 @@
   - interview_score    : 질문+답변 -> {"score","feedback","tip"} JSON (메인 채점기)
                          training/generate_teacher_scores.py가 만든 선생님(Qwen2.5-14B) 데이터로 학습.
   - interview_feedback : 질문+답변 -> 피드백 텍스트 (채점 어댑터가 실패했을 때 피드백 폴백용)
-  - 어댑터 없음(베이스) : 종합 총평, 자기소개서 기반 질문 생성
+  - 어댑터 없음(베이스) : 한국어 글쓰기 모델을 못 불러왔을 때의 질문 생성 · 종합 총평
+
+질문 생성 · 종합 총평은 한국어 글쓰기 모델(settings.TEXT_MODEL, 기본 Bllossom-3B — Llama-3.2-3B를 한국어
+약 150GB로 추가 학습한 모델)이 따로 맡는다. 같은 7개 직무 비교에서 쓸 수 있는 질문 비율이 베이스 Llama 54% →
+Bllossom 97% (베이스 Llama는 베트남어·태국어·힌디어·일본어가 자주 섞임). 채점은 a1 어댑터가 Llama 위에서
+학습됐으므로 그대로 Llama.
 
 채점·총평이 실패하면(모델 미로딩, JSON 파싱 실패 등) Gemini로 넘기지 않고 규칙 기반으로 대체한다.
 음성(발화) 분석은 services/voice/librosa_service.analyze_speech가 파형을 직접 분석한다.
@@ -57,8 +62,9 @@ SCORE_BATCH_SIZE = 8         # 한 번에 채점할 답변 수 (VRAM·지연 시
 MAX_ANSWER_CHARS = 2000      # 비정상적으로 긴 답변은 잘라서 채점
 
 # 베이스 모델로 한국어 글(질문·총평)을 쓸 때의 샘플링 설정.
-# 기본 설정의 no_repeat_ngram_size=3은 한국어에서 해롭다 — 한글 한 글자가 토큰 여러 개(바이트 조각)로
-# 쪼개지므로 같은 글자·조사가 다시 나오는 것까지 막혀, '인터�efe스'처럼 글자가 깨지거나 일본어·영어로 새었다.
+# 기본 설정의 no_repeat_ngram_size=3은 한국어에서 해롭다 — 같은 조사·어미가 다시 나오는 것까지 막고,
+# 드문 한글 글자는 바이트 조각 토큰 여러 개로 쪼개지는데(실제 서비스 문장 기준 토큰의 약 5%) 그 조각 조합까지 막혀
+# '인터�efe스'처럼 글자가 깨지거나 일본어·영어로 새었다.
 KOREAN_TEXT_SAMPLING = {"do_sample": True, "temperature": 0.6, "top_p": 0.9, "repetition_penalty": 1.05}
 
 _FOREIGN_OR_BROKEN = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿�]")  # 가나·한자·깨진 글자
@@ -85,13 +91,24 @@ def _is_clean_korean(text: str, min_hangul_ratio: float = 0.6, strict: bool = Fa
     return bool(letters) and hangul / len(letters) >= min_hangul_ratio
 
 
+_QUESTION_ENDINGS = ("?", "요", "까", "오", "궁금합니다", "바랍니다")      # '~했습니다.' 같은 서술문은 제외
+_NOT_A_QUESTION_START = ("질문", "다음 질문", "저는", "제가", "무엇")      # '질문1.', '저는 … 담당했습니다' 등
+_PLACEHOLDER = re.compile(r"^(강점|개선점|질문)\s*\d*$|한 문장$")            # 형식 예시를 그대로 채운 항목 ('강점1', '…강점 한 문장')
+
+
 def is_valid_question(question: str) -> bool:
     """면접 질문으로 쓸 수 있는지 — 깨끗한 한국어, 적당한 길이, 질문·요청 형태로 끝남."""
     if not isinstance(question, str):
         return False
     q = question.strip()
-    return (15 <= len(q) <= 200 and q[0] not in "[{\"'" and _is_clean_korean(q, strict=True)
-            and q.rstrip(" .!\"'”")[-1:] in ("?", "요", "까", "오", "다"))
+    return (15 <= len(q) <= 200 and q[0] not in "[{\"'" and not q.startswith(_NOT_A_QUESTION_START)
+            and '", "' not in q and "assistant" not in q          # 여러 질문이 한 줄로 붙었거나 대화 표시가 섞인 출력
+            and _is_clean_korean(q, strict=True) and q.rstrip(" .!\"'”").endswith(_QUESTION_ENDINGS))
+
+
+def _is_clean_summary_item(text: str) -> bool:
+    """총평의 강점·개선점 한 항목 — 깨끗한 한국어이고 '강점1' 같은 빈 틀이 아님."""
+    return _is_clean_korean(text, 0.5) and not _PLACEHOLDER.search(text.strip()) and len(text.strip()) >= 6
 
 
 class LlamaService:
@@ -113,6 +130,10 @@ class LlamaService:
             # generate()는 스레드로 넘어가므로, 같은 모델 인스턴스에 대한 동시
             # 호출(어댑터 전환 포함)이 서로 섞이지 않도록 직렬화한다.
             self._lock = asyncio.Lock()
+            # 한국어 글쓰기 모델 (질문 생성 · 종합 총평) — 채점 모델과 따로 두므로 잠금도 따로
+            self.text_model = None
+            self.text_tokenizer = None
+            self._text_lock = asyncio.Lock()
             self.initialized = True
 
     async def load_model(self):
@@ -127,6 +148,43 @@ class LlamaService:
             self.model = None
             self.tokenizer = None
             self.has_score_adapter = False
+
+        if settings.TEXT_MODEL:
+            logger.info(f"한국어 글쓰기 모델 로딩 중: {settings.TEXT_MODEL}")
+            try:
+                await asyncio.to_thread(self._load_text_model_sync)
+                logger.info("한국어 글쓰기 모델 로딩 완료 (질문 생성 · 총평)")
+            except Exception as e:
+                logger.error(f"한국어 글쓰기 모델 로딩 실패 — 질문 생성 · 총평은 베이스 Llama로: {e}")
+                self.text_model = None
+                self.text_tokenizer = None
+
+    def _load_text_model_sync(self):
+        dtype = torch.bfloat16 if (self.device == "cuda" and torch.cuda.is_bf16_supported()) else torch.float16
+        self.text_tokenizer = AutoTokenizer.from_pretrained(settings.TEXT_MODEL)
+        self.text_model = AutoModelForCausalLM.from_pretrained(
+            settings.TEXT_MODEL, dtype=dtype, device_map={"": 0} if self.device == "cuda" else None,
+        ).eval()
+
+    def _generate_text_sync(self, messages: list, max_new_tokens: int, sampling: dict) -> str:
+        tok = self.text_tokenizer
+        prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        enc = tok(prompt, return_tensors="pt").to(self.text_model.device)
+        # 대화 한 턴의 끝(<|eot_id|>)에서 멈추게 한다 — Bllossom은 generation_config에 이게 빠져 있어서
+        # 지정하지 않으면 'assistant…'를 붙이며 같은 답을 최대 길이까지 반복했다
+        eos = [tok.eos_token_id, tok.convert_tokens_to_ids("<|eot_id|>")]
+        with torch.no_grad():
+            out = self.text_model.generate(**enc, max_new_tokens=max_new_tokens, pad_token_id=tok.eos_token_id,
+                                           eos_token_id=eos, **sampling)
+        return tok.decode(out[0][enc["input_ids"].shape[-1]:], skip_special_tokens=True)
+
+    async def generate_text(self, messages: list, max_new_tokens: int) -> str:
+        """한국어 글(질문 · 총평) 생성 — 한국어 글쓰기 모델이 있으면 그것으로, 없으면 베이스 Llama로."""
+        if self.text_model is not None:
+            async with self._text_lock:
+                return await asyncio.to_thread(self._generate_text_sync, messages, max_new_tokens, KOREAN_TEXT_SAMPLING)
+        return await self.generate(messages, max_new_tokens=max_new_tokens, use_adapter=False,
+                                   sampling=KOREAN_TEXT_SAMPLING)
 
     def _load_model_sync(self):
         compute_dtype = torch.bfloat16 if (self.device == "cuda" and torch.cuda.is_bf16_supported()) else torch.float16
@@ -405,35 +463,42 @@ def _rule_based_summary(qna_feedbacks: list) -> dict:
     return {"feedback_summary": summary, "strengths": strengths, "improvements": improvements}
 
 
-async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
-    """베이스 Llama(어댑터 비활성화)로 종합 총평 생성. 실패하면 규칙 기반 총평으로 대체."""
-    if not qna_feedbacks:
-        return _rule_based_summary(qna_feedbacks)
-
+def _summary_messages(qna_feedbacks: list) -> list:
     items_text = "\n\n".join(
         f"[질문 {i + 1}]\n질문: {item['question']}\n답변: {item['answer'] or '없음'}\n"
         f"종합 점수: {item.get('score', '?')}점\nAI 피드백: {(item.get('feedback') or '').strip()[:300] or '없음'}"
         for i, item in enumerate(qna_feedbacks)
     )
-    messages = [
+    return [
         {"role": "system", "content": "당신은 10년 차 전문 인사담당자입니다."},
         {"role": "user", "content": (
             "아래 면접 내용과 각 질문별 점수·피드백을 종합 분석하여 지원자 전체 평가를 작성하세요.\n"
-            "반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지).\n\n"
-            '{"feedback_summary":"전체 면접 종합 총평 3~4문장","strengths":["강점1","강점2"],"improvements":["개선점1","개선점2"]}\n\n'
+            "반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지). 강점·개선점은 각각 2~3개,\n"
+            "답변 내용에 근거한 구체적인 한 문장으로 쓰세요.\n\n"
+            # ('강점1' 같은 짧은 틀을 주면 3B 모델이 그 글자를 그대로 채워 넣어서, 설명형 틀을 준다)
+            '{"feedback_summary":"전체 면접 종합 총평 3~4문장",'
+            '"strengths":["답변에서 드러난 구체적인 강점 한 문장"],'
+            '"improvements":["다음 면접을 위한 구체적인 개선점 한 문장"]}\n\n'
             f"면접 내용:\n{items_text}"
         )},
     ]
+
+
+async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
+    """한국어 글쓰기 모델(없으면 베이스 Llama)로 종합 총평 생성. 실패하면 규칙 기반 총평으로 대체."""
+    if not qna_feedbacks:
+        return _rule_based_summary(qna_feedbacks)
+
+    messages = _summary_messages(qna_feedbacks)
     try:
-        text = await llama_service.generate(messages, max_new_tokens=600, use_adapter=False,
-                                            sampling=KOREAN_TEXT_SAMPLING)
+        text = await llama_service.generate_text(messages, max_new_tokens=600)
         result = _parse_json(text)
         if isinstance(result, dict) and _is_clean_korean(result.get("feedback_summary"), 0.5):
             # 강점·개선점은 깨진 항목만 빼고 쓰고, 비면 질문별 피드백에서 뽑은 규칙 기반 항목으로 채운다
             rule = _rule_based_summary(qna_feedbacks)
             for key in ("strengths", "improvements"):
                 items = result.get(key)
-                items = [s for s in items if _is_clean_korean(s, 0.5)] if isinstance(items, list) else []
+                items = [s for s in items if _is_clean_summary_item(s)] if isinstance(items, list) else []
                 result[key] = items or rule[key]
             return result
         logger.warning(f"Llama 총평 형식·글자 이상 — 규칙 기반 총평으로 대체: {text[:120]!r}")
@@ -479,26 +544,25 @@ def _extract_questions(text: str) -> list:
 
 
 async def generate_questions_from_resume(resume_text: str, category: str, num_questions: int = 5) -> list:
-    """베이스 Llama(어댑터 비활성화)로 지원 정보 기반 질문 생성 — 고정 질문(자기소개·지원동기)은 빼고 AI 질문만 반환.
+    """한국어 글쓰기 모델(없으면 베이스 Llama)로 지원 정보 기반 질문 생성 — 고정 질문(자기소개·지원동기)은 빼고 AI 질문만 반환.
 
-    3B 베이스 모델은 한국어가 약해 깨진 질문(일본어·영어 섞임, 글자 깨짐)을 낼 때가 있다
+    3B 모델은 깨진 질문(외국 문자·영어 섞임, 서술문, 여러 질문이 한 줄로 붙음)을 낼 때가 있다
     → is_valid_question으로 거르고, 모자라면 한 번 더 생성한다. 그래도 모자라면 있는 만큼만 반환하고
     호출부(routers/interview.py)가 직무 기본 질문(question_bank)으로 채운다. 실패 시 빈 리스트.
     """
     ai_num = max(0, num_questions - 2)
-    if ai_num == 0 or llama_service.model is None:
+    if ai_num == 0 or (llama_service.model is None and llama_service.text_model is None):
         return []
     questions, seen = [], set()
     for attempt in range(QUESTION_GEN_ATTEMPTS):
         try:
-            text = await llama_service.generate(_question_messages(resume_text, ai_num + 1), max_new_tokens=500,
-                                                use_adapter=False, sampling=KOREAN_TEXT_SAMPLING)
+            text = await llama_service.generate_text(_question_messages(resume_text, ai_num + 1), max_new_tokens=500)
         except Exception as e:
             logger.error(f"Llama 질문 생성 실패: {e}")
             break
         candidates = [q.strip() for q in _extract_questions(text)]
         valid = [q for q in candidates if is_valid_question(q) and q not in seen]
-        logger.info(f"Llama 질문 생성 {attempt + 1}회차: 후보 {len(candidates)}개 중 사용 가능 {len(valid)}개")
+        logger.info(f"질문 생성 {attempt + 1}회차: 후보 {len(candidates)}개 중 사용 가능 {len(valid)}개")
         for q in valid:
             seen.add(q)
             questions.append(q)
