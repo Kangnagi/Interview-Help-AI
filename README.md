@@ -183,6 +183,7 @@ http://localhost:5173 으로 접속합니다. 화면 코드를 고치면 바로 
 | `scripts/stop_all.ps1` | 모두 중지 |
 | `scripts/restart_frontend.ps1` | 프런트엔드만 다시 빌드 · 재시작 (화면 코드 수정 후 반영할 때) |
 | `scripts/register_autostart.ps1` | 로그온 시 자동 실행 작업 등록 |
+| `scripts/backup.ps1 -Dest E:\` | git에 없는 것(.env · 터널 인증 · DB · 어댑터 · 학습 데이터)을 USB로 백업 (`-Full`이면 예전 어댑터 전부까지) |
 
 이 스크립트들은 저장소의 `.tools/`(git 제외)에 둔 node · cloudflared와 서버 PC의 터널 인증 정보를 쓰므로 개인 PC에서는 쓰지 않습니다.
 
