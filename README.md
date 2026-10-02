@@ -1,7 +1,10 @@
 # 🎤 AI 면접 도우미 (Interview Help AI)
 
-AI 기반 실시간 면접 연습 플랫폼입니다.  
-카메라·마이크를 통해 면접을 진행하고, AI가 답변·표정·음성을 분석해 피드백을 제공합니다.
+AI 기반 실시간 면접 연습 플랫폼입니다. 카메라·마이크로 면접을 진행하면 AI가 답변·표정·자세·음성을 분석해 점수와 피드백을 줍니다.
+외부 AI API 없이 서버 PC 안의 모델만으로 동작합니다.
+
+- 서비스 주소: https://www.neailview.com
+- 개발 브랜치: `feature/release`
 
 ---
 
@@ -9,9 +12,13 @@ AI 기반 실시간 면접 연습 플랫폼입니다.
 
 | 영역 | 기술 |
 |------|------|
-| Frontend | React 18, Vite, Zustand, Recharts, Axios |
-| Backend | FastAPI, SQLAlchemy (async), SQLite, JWT |
-| AI (예정) | KoBERT, Whisper, MediaPipe, py-feat, Librosa |
+| Frontend | React 18, Vite 5, Zustand, Recharts, Axios |
+| Backend | FastAPI, SQLAlchemy (async), SQLite(WAL), JWT |
+| 답변 채점 · 질문 생성 · 총평 | Bllossom-3B (한국어 Llama-3.2-3B) + 채점 LoRA 어댑터 |
+| 발화 분석 | librosa (말 속도 · 침묵 · 억양 · 음량), PyAV (브라우저 녹음 디코딩) |
+| 표정 · 자세 분석 | MediaPipe (CPU) |
+| 음성 → 글자 | 브라우저 Web Speech API (Chrome 권장) |
+| 배포 | Cloudflare Tunnel → Vite preview(:5173) → FastAPI(:8000) |
 
 ---
 
@@ -20,214 +27,169 @@ AI 기반 실시간 면접 연습 플랫폼입니다.
 ```
 Interview-Help-AI/
 ├── backend/
-│   ├── main.py              # FastAPI 앱 진입점
-│   ├── env.example          # 환경변수 템플릿
-│   ├── requirements.txt     # Python 패키지 목록
-│   ├── core/                # 설정, DB, 보안
-│   ├── models/              # SQLAlchemy ORM 모델
-│   ├── routers/             # API 라우터
-│   ├── schemas/             # Pydantic 스키마
-│   └── services/            # AI 모델 서비스 (Stub)
-│       ├── llm/             # KoBERT 답변 분석
-│       ├── voice/           # Whisper STT
-│       └── vision/          # MediaPipe 표정/자세
-│
-└── frontend/
-    ├── src/
-    │   ├── pages/           # 라우트 페이지
-    │   ├── components/      # 공통 컴포넌트
-    │   ├── services/        # API·WebSocket 클라이언트
-    │   ├── store/           # Zustand 상태관리
-    │   └── styles/          # 전역 CSS
-    ├── vite.config.js
-    └── package.json
+│   ├── main.py                 # FastAPI 앱 진입점 (시작할 때 모델을 GPU에 올림)
+│   ├── env.example             # 환경변수 템플릿 → .env로 복사해서 사용
+│   ├── requirements.txt
+│   ├── migrate_db.py           # 기존 DB에 새 컬럼 추가 (새 DB는 자동 생성)
+│   ├── core/                   # 설정, DB, 보안, 메일
+│   ├── models/ · schemas/      # DB 모델 · 요청/응답 형식
+│   ├── routers/                # API (auth, interview, analysis, feedback, stats, admin_review, websocket)
+│   ├── services/
+│   │   ├── llm/llama_service.py   # 채점 · 피드백 · 질문 생성 · 총평
+│   │   ├── llm/question_bank.py   # 질문 생성이 모자랄 때 쓰는 직무별 기본 질문
+│   │   ├── voice/librosa_service.py
+│   │   └── vision/mediapipe_service.py
+│   ├── training/               # 채점 모델 학습 · 평가 스크립트, 채점 기준표(claude_rubric_v3.md)
+│   └── ai_models/              # 채점 어댑터 (git 제외 — 따로 전달받아 넣음)
+├── frontend/
+│   ├── src/                    # pages, components, services(API·WebSocket), store, hooks
+│   └── vite.config.js          # /api, /ws 요청을 백엔드(:8000)로 전달
+└── scripts/                    # 서버 PC 전용 실행 · 자동 시작 스크립트
 ```
 
 ---
 
-## ⚙️ 실행 방법
+## ⚙️ 개인 PC에서 실행하기 (Windows 기준)
 
-### 사전 요구사항
+### 1. 준비물
 
-| | Windows | macOS |
-|---|---|---|
-| Python | 3.11 이상 | 3.11 이상 |
-| Node.js | 18 이상 | 18 이상 |
-| pip | 포함됨 | 포함됨 |
+| 항목 | 권장 |
+|------|------|
+| Python | 3.11 이상 (서버 PC는 3.13) |
+| Node.js | 18 이상 (22 · 24에서 확인) |
+| NVIDIA GPU | 메모리 8GB 이상 — 모델이 약 7.3GB 사용. GPU가 없으면 채점이 매우 느려 실사용이 어렵습니다 |
+| 디스크 | 약 15GB (가상환경 + 모델 다운로드 6.4GB) |
+| 브라우저 | Chrome (음성 입력이 Web Speech API를 사용) |
 
----
-
-### 🖥️ Backend 실행
-
-#### Windows
+### 2. 코드 받기
 
 ```cmd
-:: 1. backend 폴더로 이동
-cd backend
+git clone -b feature/release https://github.com/Kangnagi/Interview-Help-AI.git
+cd Interview-Help-AI
+```
 
-:: 2. 가상환경 생성 및 활성화
+이미 받아 둔 경우에는 `git checkout feature/release` 후 `git pull`.
+
+### 3. 백엔드
+
+```cmd
+cd backend
 python -m venv .venv
 .venv\Scripts\activate
 
-:: 3. 패키지 설치
+:: (1) GPU용 PyTorch를 먼저 설치 — 그냥 pip install torch를 하면 GPU를 못 쓰는 CPU 버전이 깔릴 수 있음
+::     https://pytorch.org/get-started/locally/ 에서 본인 CUDA 버전에 맞는 명령을 고르세요. 예:
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+
+:: (2) 나머지 패키지
 pip install -r requirements.txt
 
-:: 4. 환경변수 파일 생성
+:: (3) GPU 인식 확인 — True가 나와야 함
+python -c "import torch; print(torch.cuda.is_available())"
+
+:: (4) 환경변수 파일
 copy env.example .env
-
-:: 5. (선택) .env 파일에서 SECRET_KEY 수정
-
-:: 6. 서버 실행
-python main.py
 ```
 
-#### macOS / Linux
-
-```bash
-# 1. backend 폴더로 이동
-cd backend
-
-# 2. 가상환경 생성 및 활성화
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 3. 패키지 설치
-pip install -r requirements.txt
-
-# 4. 환경변수 파일 생성
-cp env.example .env
-
-# 5. (선택) .env 파일에서 SECRET_KEY 수정
-
-# 6. 서버 실행
-python main.py
-```
-
-백엔드 실행 후 접속 주소:
-- **서버**: http://localhost:8000
-- **API 문서 (Swagger)**: http://localhost:8000/docs
-
----
-
-### 🌐 Frontend 실행
-
-> **참고**: 압축 파일에 `node_modules`가 포함되어 있습니다.  
-> macOS 또는 다른 환경에서 실행 시 `npm install`을 한 번 실행해 주세요.
-
-#### Windows
-
-```cmd
-:: 1. frontend 폴더로 이동
-cd frontend
-
-:: 2. 패키지 설치 (node_modules가 없거나 오류 발생 시)
-npm install
-
-:: 3. 개발 서버 실행
-npm run dev
-```
-
-#### macOS / Linux
-
-```bash
-# 1. frontend 폴더로 이동
-cd frontend
-
-# 2. 패키지 설치
-npm install
-
-# 3. 개발 서버 실행
-npm run dev
-```
-
-프론트엔드 실행 후 접속 주소:
-- **앱**: http://localhost:5173
-
----
-
-### 🔄 동시 실행 순서
-
-백엔드와 프론트엔드를 **각각 별도의 터미널**에서 실행합니다.
-
-```
-터미널 1 → backend 실행 (포트 8000)
-터미널 2 → frontend 실행 (포트 5173)
-```
-
-Vite가 `/api` 요청은 `localhost:8000`으로, `/ws` WebSocket은 `ws://localhost:8000`으로 자동 프록시합니다.
-
----
-
-## 🔑 환경변수 (.env)
-
-`backend/env.example`을 복사해 `.env`로 사용합니다. 주요 항목:
+`.env`에서 `SECRET_KEY`를 아무 긴 문자열로 바꾸세요. 모델 설정은 `env.example` 그대로 쓰면 됩니다.
 
 ```env
-# 보안 (운영 환경에서 반드시 변경)
-SECRET_KEY=your-secret-key-change-this-in-production
-
-# 데이터베이스 (SQLite, 자동 생성)
-DATABASE_URL=sqlite+aiosqlite:///./interview.db
-
-# CORS 허용 주소
-ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
-
-# 서버 포트
-PORT=8000
+LLAMA_BASE_MODEL=Bllossom/llama-3.2-Korean-Bllossom-3B
+LLAMA_ADAPTER_PATH=
+LLAMA_SCORE_ADAPTER_PATH=./ai_models/bllossom-score-adapter-b3
+TEXT_MODEL=
 ```
+
+### 4. 채점 어댑터 넣기
+
+채점 어댑터(`bllossom-score-adapter-b3.zip`, 약 90MB)는 저장소에 없으므로 LLM 담당에게 받아서 압축을 풉니다. 아래 경로가 되면 정상입니다.
+
+```
+backend/ai_models/bllossom-score-adapter-b3/adapter_model.safetensors
+```
+
+`ai_models/bllossom-score-adapter-b3/bllossom-score-adapter-b3/...`처럼 폴더가 두 번 겹치지 않게 주의하세요.
+어댑터가 없어도 서버는 켜지지만 점수가 답변 길이 기반 기본값(45 · 55 · 65점)으로만 나옵니다.
+
+### 5. 백엔드 실행
+
+```cmd
+python main.py
+```
+
+- 처음 실행할 때 Bllossom-3B(약 6.4GB)를 Hugging Face에서 자동으로 내려받습니다 (한 번만).
+- 모델을 GPU에 올리는 데 30초 정도 걸리고, 로그에 `AI 모델 준비 완료`가 나오면 준비된 것입니다.
+- DB(`backend/interview.db`)는 처음 실행할 때 자동으로 만들어집니다.
+- API 문서: http://localhost:8000/docs (`.env`의 `DEBUG=true`일 때)
+
+### 6. 프런트엔드 (새 터미널)
+
+```cmd
+cd frontend
+npm ci
+npm run dev
+```
+
+http://localhost:5173 으로 접속합니다. 화면 코드를 고치면 바로 반영됩니다.
+
+> `npm run serve`는 운영용입니다 (빌드 후 실행). 코드를 고칠 때마다 다시 실행해야 반영되므로 개발할 때는 `npm run dev`를 쓰세요.
+
+### 7. 동작 확인
+
+1. 회원가입 → 로그인 → 연습면접 시작 → 질문 5개가 3~8초 안에 나오면 질문 생성 정상
+2. 답변 후 면접 종료 → 10~15초 뒤 결과 화면에 질문별 점수와 피드백 3줄이 나오면 채점 정상
+3. 모든 질문이 45 · 55 · 65점에 피드백도 똑같다면 어댑터를 못 읽은 것 → 4번의 폴더 위치를 확인
 
 ---
 
-## 📡 API 엔드포인트
+## 🔑 환경변수 (.env) 주요 항목
+
+| 항목 | 설명 |
+|------|------|
+| `SECRET_KEY` | 로그인 토큰 서명 키 — 반드시 바꿀 것 |
+| `DATABASE_URL` | 기본 `sqlite+aiosqlite:///./interview.db` (자동 생성) |
+| `ALLOWED_ORIGINS` | 접속을 허용할 화면 주소 (개인 PC는 `http://localhost:5173` 포함) |
+| `LLAMA_*`, `TEXT_MODEL` | 모델 설정 (위 3번 참고, 예전 구성으로 되돌리는 방법은 env.example 주석) |
+| `SMTP_*`, `FRONTEND_URL` | 비밀번호 재설정 메일 — 메일을 시험할 때만 필요 |
+| `ADMIN_EMAILS` | 관리자 검토 화면을 쓸 계정 이메일 (쉼표로 구분) |
+
+`.env`에는 비밀값이 들어가므로 절대 커밋하지 마세요 (`.gitignore`에 등록되어 있음).
+
+---
+
+## 📡 주요 API (`/api/v1`)
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| POST | `/api/v1/auth/register` | 회원가입 |
-| POST | `/api/v1/auth/login` | 로그인 (JWT 발급) |
-| POST | `/api/v1/interviews` | 면접 세션 생성 |
-| GET | `/api/v1/interviews` | 면접 목록 조회 |
-| GET | `/api/v1/interviews/{id}/questions` | 질문 목록 조회 |
-| POST | `/api/v1/interviews/{id}/questions/{qid}/answer` | 답변 저장 |
-| PATCH | `/api/v1/interviews/{id}/finish` | 면접 종료 |
-| POST | `/api/v1/analysis/{id}/start` | 분석 시작 |
-| GET | `/api/v1/analysis/{id}` | 분석 결과 조회 |
-| WS | `/ws/interview/{id}` | 실시간 영상 스트림 |
+| POST | `/auth/register` · `/auth/login` | 회원가입 · 로그인 (JWT) |
+| POST | `/auth/password-reset/request` · `/confirm` | 비밀번호 재설정 |
+| POST · GET | `/interviews` | 면접 생성(질문 생성 포함) · 목록 |
+| POST | `/interviews/{id}/questions/{qid}/answer` | 답변 저장 |
+| PATCH | `/interviews/{id}/finish` | 면접 종료 |
+| POST · GET | `/analysis/{id}/start` · `/analysis/{id}` | 분석 시작 · 결과 |
+| GET · PUT | `/users/me/training-consent` | AI 학습 활용 동의 |
+| PUT | `/interviews/{id}/questions/{qid}/rating` | 질문별 AI 채점 평가 |
+| GET | `/stats/dashboard` | 통계 대시보드 |
+| GET · PUT | `/admin/review/...` | 관리자 검토 (ADMIN_EMAILS 계정만) |
+| WS | `/ws/interview/{id}` · `/ws/interview_audio/{id}` | 실시간 영상 · 녹음 (토큰 + 면접 소유자 확인) |
 
 ---
 
-## 🤖 AI 모델 연동 (다음 단계)
+## 🖥️ 서버 PC 운영 (서버 담당 전용)
 
-현재 AI 서비스는 Stub(더미) 상태입니다.  
-아래 순서대로 `requirements.txt`의 주석을 해제하고 서비스 파일의 `TODO`를 구현하면 실제 AI가 동작합니다.
+| 스크립트 | 역할 |
+|----------|------|
+| `scripts/start_all.ps1` | 백엔드 · 프런트엔드(운영 빌드) · Cloudflare 터널을 감시 루프로 시작 (`-Dev`면 개발 서버) |
+| `scripts/stop_all.ps1` | 모두 중지 |
+| `scripts/restart_frontend.ps1` | 프런트엔드만 다시 빌드 · 재시작 (화면 코드 수정 후 반영할 때) |
+| `scripts/register_autostart.ps1` | 로그온 시 자동 실행 작업 등록 |
 
-**1단계 — KoBERT (답변 내용 분석)**
-```bash
-# requirements.txt에서 주석 해제 후 설치
-pip install transformers==4.41.0 torch==2.3.0 sentencepiece==0.2.0
-# backend/services/llm/kobert_service.py 의 TODO 구현
-```
-
-**2단계 — Whisper (음성 → 텍스트)**
-```bash
-pip install openai-whisper==20231117 ffmpeg-python==0.2.0
-# backend/services/voice/whisper_service.py 의 TODO 구현
-```
-
-**3단계 — MediaPipe (표정·자세 분석)**
-```bash
-pip install mediapipe==0.10.14 opencv-python==4.9.0.80 numpy==1.26.4
-# backend/services/vision/mediapipe_service.py 의 TODO 구현
-```
-
-**4단계 — 고도화**
-```bash
-pip install py-feat==0.6.1 librosa==0.10.2
-```
+이 스크립트들은 저장소의 `.tools/`(git 제외)에 둔 node · cloudflared와 서버 PC의 터널 인증 정보를 쓰므로 개인 PC에서는 쓰지 않습니다.
 
 ---
 
 ## ⚠️ 주의사항
 
-- 압축 파일에 포함된 `.venv`는 **Windows 전용**입니다. macOS에서는 반드시 새로 생성해야 합니다.
-- `interview.db`(SQLite)는 백엔드 첫 실행 시 자동 생성됩니다.
-- 카메라·마이크 권한은 브라우저에서 허용해야 면접 기능이 동작합니다.
+- git에 없는 것: `.env`, DB, 업로드 파일(녹화 · 녹음), 채점 어댑터(`ai_models/`), 학습 데이터, 터널 인증 정보
+- 학교 와이파이에서는 neailview.com 접속이 차단됩니다 (학교 방화벽). 휴대폰 데이터 · 핫스팟으로 접속하세요.
+- 카메라 · 마이크 권한을 브라우저에서 허용해야 면접 기능이 동작합니다.
