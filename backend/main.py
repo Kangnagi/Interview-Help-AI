@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -39,7 +40,12 @@ async def lifespan(app: FastAPI):
     await mediapipe_service.initialize()
     logger.info("AI 모델 준비 완료")
 
+    # 분석 도중 서버가 꺼져 멈춘 면접을 다시 분석 (백그라운드 — 서버 시작을 늦추지 않는다)
+    resume_task = asyncio.create_task(analysis.resume_stuck_analyses())
+
     yield
+
+    resume_task.cancel()
 
     logger.info("앱 종료")
 

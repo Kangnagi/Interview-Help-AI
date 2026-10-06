@@ -306,9 +306,10 @@ async def _run_analysis_pipeline_impl(interview_id: int):
                 analysis.eye_contact_score,
             ])
 
-            # ── 6) 종합 총평 / 강점 / 개선점 (베이스 Llama, 실패 시 규칙 기반 총평) ──
+            # ── 6) 종합 총평 / 강점 / 개선점 (규칙 기반 — 질문별 채점 피드백에서 뽑음, SUMMARY_USE_MODEL 참고) ──
             qna_feedbacks = [
                 {
+                    "order":           q.order,              # 총평에서 결과 화면과 같은 'Q{order}'로 부름
                     "question":        q.question_text,
                     "answer":          q.answer_text or "",
                     "score":           q.ai_score,
@@ -339,6 +340,35 @@ async def _run_analysis_pipeline_impl(interview_id: int):
                     await db.commit()
         except Exception as mark_err:
             logger.error(f"[Analysis] 실패 표시 저장 실패: {mark_err}")
+
+
+async def resume_stuck_analyses():
+    """서버가 켜질 때, 분석 도중 서버가 꺼져 멈춘 면접을 다시 분석한다.
+
+    멈춘 상태 = 분석 기록은 있는데 점수도 안내 문구도 없음 (시작 직후 만든 빈 기록 그대로).
+    결과 화면은 이 상태를 '분석 중'으로 보고 계속 기다리다 실패한다 (10/1 실제 면접 1건).
+    다시 분석하기 전에 실패 문구를 먼저 저장한다 — 분석이 서버를 또 죽이더라도 다음 시작 때 무한 반복하지 않게
+    (성공하면 분석 결과가 그 문구를 덮어쓴다).
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(Analysis)
+                .join(Interview, Interview.id == Analysis.interview_id)
+                .where(Analysis.total_score.is_(None), Analysis.feedback_summary.is_(None),
+                       Interview.status == InterviewStatus.COMPLETED)
+            )).scalars().all()
+            for row in rows:
+                row.feedback_summary = ANALYSIS_FAILED_SUMMARY
+            await db.commit()
+            stuck = [row.interview_id for row in rows]
+    except Exception as e:
+        logger.error(f"[Analysis] 멈춘 분석 확인 실패: {e}")
+        return
+    if stuck:
+        logger.warning(f"[Analysis] 멈춘 분석 {len(stuck)}건 다시 실행: {stuck}")
+    for interview_id in stuck:
+        await _run_analysis_pipeline(interview_id)
 
 
 # ───────────────────────────────────────────────────────────

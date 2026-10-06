@@ -457,35 +457,70 @@ def _feedback_line(feedback: str, number: int) -> Optional[str]:
     return m.group(1) if m else None
 
 
+STRENGTH_MIN_SCORE = 40   # 가장 높은 질문 점수가 이보다 낮으면 강점을 쓰지 않는다
+# 답변이 모두 짧아 질문별 피드백에서 개선점을 뽑을 수 없을 때 (예전엔 강점 · 개선점이 둘 다 빈칸이었다)
+DEFAULT_IMPROVEMENTS = [
+    "질문마다 본인의 경험 하나를 골라 상황 → 본인이 한 행동 → 결과 순서로 1분 안팎으로 말해 보세요",
+    "'잘 모르겠습니다'로 끝내기보다 관련된 경험이나 지금 알고 있는 만큼이라도 이유와 함께 말해 보세요",
+]
+
+
+def _question_label(item: dict, index: int) -> str:
+    """총평에서 질문을 부르는 이름 — 결과 화면의 'Q{order}'와 같게 (예전엔 질문 문장을 30자에서 잘라 인용해 따옴표가 겹쳤다)."""
+    order = item.get("order")
+    return f"Q{order}" if isinstance(order, int) else f"{index + 1}번째 질문"
+
+
+def _model_feedback(item: dict) -> bool:
+    """채점 모델이 쓴 '1. 2. 3.' 피드백인지 (짧은 답변 · 빈 답변은 규칙 문구 한 줄)."""
+    return _feedback_line(item.get("feedback"), 1) is not None
+
+
 def _rule_based_summary(qna_feedbacks: list) -> dict:
     """Llama 총평 생성이 실패했을 때: 질문별 점수·피드백으로 총평을 만든다 (Gemini 미사용).
 
     강점 = 점수가 높은 질문들의 피드백 1번(잘한 점), 개선점 = 점수가 낮은 질문들의 피드백 2번(아쉬운 점).
+    짧은 답변의 규칙 문구('답변이 너무 짧습니다…')는 번호가 없어 그 문구를 그대로 개선점으로 쓴다.
     """
     if not qna_feedbacks:
-        return {"feedback_summary": "분석할 답변이 없습니다.", "strengths": [], "improvements": []}
+        return {"feedback_summary": "분석할 답변이 없습니다.", "strengths": [], "improvements": list(DEFAULT_IMPROVEMENTS)}
 
-    scored = [item for item in qna_feedbacks if isinstance(item.get("score"), (int, float))]
-    avg = round(sum(i["score"] for i in scored) / len(scored)) if scored else None
-    level = ("전반적으로 구체적이고 완성도 높은 답변을 했습니다" if avg is not None and avg >= 75 else
-             "질문에 맞게 답했지만 구체적인 사례와 근거를 보완하면 더 좋아집니다" if avg is not None and avg >= 50 else
-             "답변의 구체성과 완성도를 높이는 연습이 필요합니다")
-    summary = f"총 {len(qna_feedbacks)}개 질문" + (f"의 평균 점수는 {avg}점으로, {level}." if avg is not None else f"에 답했습니다. {level}.")
-    if len(scored) >= 2:
-        best, worst = max(scored, key=lambda i: i["score"]), min(scored, key=lambda i: i["score"])
-        if best["score"] != worst["score"]:
-            summary += (f" 가장 좋았던 답변은 '{best['question'][:30]}'({best['score']}점), "
-                        f"가장 보완이 필요한 답변은 '{worst['question'][:30]}'({worst['score']}점)입니다.")
+    labeled = [(item, _question_label(item, i)) for i, item in enumerate(qna_feedbacks)]
+    scored = [(item, label) for item, label in labeled if isinstance(item.get("score"), (int, float))]
+    avg = round(sum(i["score"] for i, _ in scored) / len(scored)) if scored else None
+    if qna_feedbacks and not any(_model_feedback(i) for i in qna_feedbacks):
+        summary = (f"총 {len(qna_feedbacks)}개 질문 모두 답변이 너무 짧아 내용을 평가하기 어려웠습니다. "
+                   "다음 면접에서는 질문마다 본인의 경험을 구체적으로 이야기해 보세요.")
+    else:
+        level = ("전반적으로 구체적이고 완성도 높은 답변을 했습니다" if avg is not None and avg >= 75 else
+                 "질문에 맞게 답했지만 구체적인 사례와 근거를 보완하면 더 좋아집니다" if avg is not None and avg >= 50 else
+                 "답변의 구체성과 완성도를 높이는 연습이 필요합니다")
+        summary = f"총 {len(qna_feedbacks)}개 질문" + (f"의 평균 점수는 {avg}점으로, {level}." if avg is not None else f"에 답했습니다. {level}.")
+        if len(scored) >= 2:
+            (best, best_label), (worst, worst_label) = max(scored, key=lambda s: s[0]["score"]), min(scored, key=lambda s: s[0]["score"])
+            if best["score"] != worst["score"]:
+                summary += (f" 가장 좋았던 답변은 {best_label}({round(best['score'])}점), "
+                            f"가장 보완이 필요한 답변은 {worst_label}({round(worst['score'])}점)입니다.")
 
-    ordered = sorted(scored, key=lambda i: i["score"], reverse=True)
-    strengths = [s for s in (_feedback_line(i.get("feedback"), 1) for i in ordered[:3]) if s]
-    improvements = [s for s in (_feedback_line(i.get("feedback"), 2) for i in reversed(ordered[-3:])) if s]
-    return {"feedback_summary": summary, "strengths": strengths, "improvements": improvements}
+    ordered = sorted((i for i, _ in scored), key=lambda i: i["score"], reverse=True)
+    strengths = []
+    if ordered and ordered[0]["score"] >= STRENGTH_MIN_SCORE:
+        strengths = [s for s in (_feedback_line(i.get("feedback"), 1) for i in ordered[:3]) if s]
+    improvements = []
+    for i in reversed(ordered[-3:]):
+        line = _feedback_line(i.get("feedback"), 2)
+        if line is None:   # 규칙 문구 — 음성 코칭이 뒤에 붙어 있으면 떼어 낸다
+            line = (i.get("feedback") or "").split("\n\n")[0].strip() or None
+        if line and line not in improvements:
+            improvements.append(line)
+    if not any(_model_feedback(i) for i in qna_feedbacks):   # 모두 짧은 답변 — 같은 문구 하나뿐이라 일반 안내를 덧붙인다
+        improvements = (improvements + [s for s in DEFAULT_IMPROVEMENTS if s not in improvements])[:3]
+    return {"feedback_summary": summary, "strengths": strengths, "improvements": improvements or list(DEFAULT_IMPROVEMENTS)}
 
 
 def _summary_messages(qna_feedbacks: list) -> list:
     items_text = "\n\n".join(
-        f"[질문 {i + 1}]\n질문: {item['question']}\n답변: {item['answer'] or '없음'}\n"
+        f"[{_question_label(item, i)}]\n질문: {item['question']}\n답변: {item['answer'] or '없음'}\n"
         f"종합 점수: {item.get('score', '?')}점\nAI 피드백: {(item.get('feedback') or '').strip()[:300] or '없음'}"
         for i, item in enumerate(qna_feedbacks)
     )
@@ -539,7 +574,11 @@ def _parse_summary(text: str) -> dict:
 
 async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
     """한국어 글쓰기 모델(없으면 베이스 Llama)로 종합 총평 생성. 실패하면 규칙 기반 총평으로 대체."""
-    if not qna_feedbacks:
+    if not qna_feedbacks or not SUMMARY_USE_MODEL:
+        return _rule_based_summary(qna_feedbacks)
+    # 답변이 모두 짧으면(모델이 채점하지 않은 규칙 문구뿐) 모델에 맡기지 않는다
+    # — 10/4 실제 면접: '네' 같은 답변 5개에 모델이 '직무에 대한 이해가 깊었음'을 강점으로 썼다
+    if not any(_model_feedback(i) for i in qna_feedbacks):
         return _rule_based_summary(qna_feedbacks)
 
     messages = _summary_messages(qna_feedbacks)
@@ -557,6 +596,10 @@ async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
                     items = result.get(key)
                     items = [s for s in items if _is_clean_summary_item(s)] if isinstance(items, list) else []
                     result[key] = items or rule[key]
+                # 채점 점수가 모두 낮으면 모델이 쓴 강점도 근거가 없다 (규칙 쪽과 같은 기준)
+                scores = [i["score"] for i in qna_feedbacks if isinstance(i.get("score"), (int, float))]
+                if scores and max(scores) < STRENGTH_MIN_SCORE:
+                    result["strengths"] = []
                 return result
             logger.warning(f"총평 형식·글자 이상 ({attempt + 1}회차): {text[:120]!r}")
         except Exception as e:
@@ -567,6 +610,11 @@ async def generate_overall_summary_with_llama(qna_feedbacks: list) -> dict:
 
 QUESTION_GEN_ATTEMPTS = 2   # 깨진 질문을 걸러내고 모자라면 한 번 더 생성 (한 번에 약 수 초)
 SUMMARY_GEN_ATTEMPTS = 2    # 총평 JSON이 깨지면 한 번 더 (한 번에 약 2~3초)
+# 총평을 베이스 모델에 맡길지 — 10/6 시험(같은 면접 2개 × 5회)에서 10번 중 약 4번이 지시문을 되풀이한 빈 총평
+# ('강점과 개선점을 종합하여 총평을 작성하였습니다'), 21점 면접에 '역량을 잘 제시했습니다', 개선점을 강점 칸에 씀.
+# → 꺼 두고 규칙 기반 총평(평균 · 최고/최저 질문 + 채점 모델이 질문별로 쓴 잘한 점 · 아쉬운 점)을 쓴다.
+#   총평 전용 학습 등으로 품질이 확인되면 다시 켠다.
+SUMMARY_USE_MODEL = False
 
 
 def _question_messages(resume_text: str, count: int) -> list:
