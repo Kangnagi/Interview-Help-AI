@@ -129,7 +129,8 @@ export default function RealInterviewPage() {
             } catch { setFaceStatus('detected') }
           }, 800)
         } else {
-          setTimeout(() => setFaceStatus('detected'), 1000)
+          // 얼굴 인식 기능(FaceDetector)이 없는 브라우저(대부분의 Chrome) — 확인 없이 '얼굴 인식됨'을 띄우던 것을 '카메라 연결됨'으로
+          setFaceStatus('camera')
         }
       })
       .catch(() => {
@@ -426,6 +427,7 @@ export default function RealInterviewPage() {
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
               {faceStatus === 'detecting' && <div className="face-badge detecting"><span className="face-dot" />인식 중...</div>}
               {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
+              {faceStatus === 'camera' && <div className="face-badge detected"><span className="face-dot" />카메라 연결됨</div>}
               {faceStatus === 'lost' && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
             </div>
           </div>

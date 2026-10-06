@@ -57,6 +57,12 @@ export default function PracticeInterviewPage() {
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  // 영상 칸이 화면에 나타날 때 카메라를 붙인다 — 카메라는 '준비 완료' 직후(아직 환경 설정 화면)에 켜져서,
+  // 예전엔 붙일 칸이 없어 연결이 버려지고 면접 화면의 내 카메라가 검은 화면으로 남았다
+  const attachVideo = useCallback((el) => {
+    videoRef.current = el
+    if (el && streamRef.current && el.srcObject !== streamRef.current) el.srcObject = streamRef.current
+  }, [])
   const totalTimer = useRef(null)
   const answerTimer = useRef(null)
   const detectionRef = useRef(null)
@@ -137,6 +143,8 @@ export default function PracticeInterviewPage() {
   const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
     setDeviceIds({ cameraId, micId })
     setSessionStarted(true)
+    // 질문을 만드는 동안(5~7초) 면접 화면의 'AI 면접 준비 중...'을 보여 준다 (예전엔 환경 설정 화면에 표시 없이 멈춰 있었다)
+    setPhase(PHASE.WAITING)
 
     const resumeText = resume ? [
       resume.title         && `제목: ${resume.title}`,
@@ -165,8 +173,6 @@ export default function PracticeInterviewPage() {
         FALLBACK_QUESTIONS.map((q, i) => ({ id: null, order: i + 1, question_text: q }))
       )
     }
-
-    setPhase(PHASE.WAITING)
   }, [resume, resumeId])
 
   useEffect(() => {
@@ -196,7 +202,8 @@ export default function PracticeInterviewPage() {
             } catch { setFaceStatus('detected') }
           }, 800)
         } else {
-          setTimeout(() => setFaceStatus('detected'), 1000)
+          // 얼굴 인식 기능(FaceDetector)이 없는 브라우저(대부분의 Chrome) — 확인 없이 '얼굴 인식됨'을 띄우던 것을 '카메라 연결됨'으로
+          setFaceStatus('camera')
         }
       })
       .catch(() => {
@@ -496,10 +503,11 @@ export default function PracticeInterviewPage() {
           {/* Camera */}
           <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
             <div style={{ width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative', border: '2px solid rgba(255,255,255,.1)', boxShadow: '0 4px 20px rgba(0,0,0,.5)', background: '#111827' }}>
-              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
+              <video ref={attachVideo} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
               {faceStatus === 'detecting' && <div className="face-badge detecting"><span className="face-dot" />인식 중...</div>}
               {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
+              {faceStatus === 'camera' && <div className="face-badge detected"><span className="face-dot" />카메라 연결됨</div>}
               {faceStatus === 'lost' && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
             </div>
           </div>
