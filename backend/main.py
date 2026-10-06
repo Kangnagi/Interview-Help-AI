@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -89,7 +88,8 @@ app.add_middleware(
 # Cloudflare Tunnel을 경유하므로 응답을 압축하면 전송량이 줄어 체감 속도가 개선된다.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+# 녹음 · 음성 그래프(uploads)는 웹으로 내보내지 않는다 — 분석은 서버가 파일을 직접 읽는다.
+# (예전엔 /uploads로 로그인 없이 열려 있어, 같은 네트워크에서 :8000으로 남의 녹음을 받을 수 있었다)
 
 API_PREFIX = "/api/v1"
 app.include_router(auth.router,      prefix=API_PREFIX)
