@@ -92,6 +92,7 @@ class InterviewQuestion(Base):
     ai_feedback      = Column(Text, nullable=True)             # 분석 파이프라인 AI 피드백 텍스트
     ai_model_version = Column(String, nullable=True)           # 채점한 모델 (예: llama-score-adapter-v21, rule) — 재학습 시 버전별 비교용
     ai_tip           = Column(Text, nullable=True)             # AI 개선 팁 한 문장 (재학습 데이터에 필요해 함께 저장)
+    follow_up_of     = Column(Integer, nullable=True)           # 꼬리 질문이면 원래 질문 id (답변을 보고 면접 중에 추가됨). 같은 표를 가리키는 외래 키는 면접 삭제 순서 문제가 있어 두지 않음
     created_at       = Column(DateTime, default=datetime.utcnow)
 
     interview = relationship("Interview", back_populates="questions")

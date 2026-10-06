@@ -685,11 +685,25 @@ def _grounded(kw: str, intro: str) -> bool:
     return hits[0] and sum(hits) / len(hits) >= 0.6
 
 
-def _sentence_of(intro: str, kw: str) -> str:
-    """키워드 단어가 가장 많이 들어 있는 문장."""
-    sents = [s for s in re.split(r"(?<=[.!?])\s+|\n+", intro) if s.strip()]
-    tokens = kw.split()
-    return max(sents, key=lambda s: sum(_token_in(t, s) for t in tokens), default="")
+def _context_of(text: str, kw: str, max_sentence: int = 160, after: int = 60) -> str:
+    """포부 문장인지 볼 범위 — 키워드가 든 문장이 짧으면(자기소개서처럼 마침표가 있는 글) 그 문장 전체,
+    길면 키워드 자리부터 뒤로 after자. (마침표가 없는 음성 인식 답변은 전체가 한 문장이라, 문장 단위로 보면
+    끝의 '되고 싶습니다' 하나로 모든 키워드가 걸렸다)"""
+    first = kw.split()[0] if kw.split() else kw
+    i = text.find(kw)
+    if i < 0:
+        i = text.find(first)
+    if i < 0 and len(first) > 2:
+        i = text.find(first[:2])
+    if i < 0:
+        return ""
+    if not re.search(r"[.!?\n]", text):            # 마침표가 없는 글(음성 인식 답변) → 키워드 뒤 범위만
+        return text[i:i + len(kw) + after]
+    starts = [m.end() for m in re.finditer(r"[.!?]\s+|\n+", text[:i])]
+    start = starts[-1] if starts else 0
+    m = re.search(r"[.!?](\s|$)|\n", text[i:])
+    end = i + m.end() if m else len(text)
+    return text[start:end] if end - start <= max_sentence else text[i:i + len(kw) + after]
 
 
 def _parse_keywords(text: str, intro: str, limit: int = 5) -> list:
@@ -706,7 +720,7 @@ def _parse_keywords(text: str, intro: str, limit: int = 5) -> list:
                 and not (" " not in kw and len(kw) <= 2 and not kw.isascii())   # '병실' · '실습' 같은 두 글자 한 단어는 너무 일반적
                 and _is_clean_korean(kw, min_hangul_ratio=0.0, strict=True)   # 외국 문자 · 소문자 영어 → 질문 검사에서 걸림
                 and kw not in _GENERIC_KEYWORDS and not any(kw in k or k in kw for k in out)
-                and not _ASPIRATION.search(_sentence_of(intro, kw))):   # 포부 · 지원 동기 문장의 단어는 경험이 아님
+                and not _ASPIRATION.search(_context_of(intro, kw))):   # 포부 · 지원 동기 문장의 단어는 경험이 아님
             out.append(kw)
         if len(out) >= limit:
             break
@@ -799,3 +813,67 @@ async def generate_questions_from_resume(resume_text: str, category: str, num_qu
     if len(job_qs) < need_job:
         job_qs += await _generate_job_questions(info_text, need_job - len(job_qs))
     return _interleave(kw_qs, job_qs, ai_num)
+
+
+# ── 실시간 꼬리 질문 ──────────────────────────────────────────────────────────
+# 답변을 듣고 바로 이어 묻는 질문. 자기소개서 질문과 같은 구조: 모델은 답변에서 파고들 키워드만 뽑고(탐욕적 생성),
+# 질문 문장은 틀로 만든다. 묻는 각도는 답변에 빠진 것을 보고 고른다 (본인 행동 → 결과 근거 → 어려움 → 다시 한다면).
+FOLLOW_UP_MAX_PER_INTERVIEW = 2    # 면접 하나에 꼬리 질문 최대 개수 (기본 5개 → 최대 7개)
+FOLLOW_UP_MIN_ANSWER = 40          # 이보다 짧은 답변은 파고들 내용이 없어 묻지 않는다
+
+_FU_ACTION = "방금 말씀하신 '{kw}'에 대해 조금 더 여쭙겠습니다. 그때 본인이 직접 한 일을 순서대로 말씀해 주세요."
+_FU_RESULT = "방금 말씀하신 '{kw}' 경험의 결과를 어떻게 확인하셨는지, 수치나 주변 반응 같은 근거를 들어 말씀해 주세요."
+_FU_HARD = "방금 말씀하신 '{kw}' 경험에서 가장 어려웠던 순간은 언제였고, 그때 어떻게 대처하셨나요?"
+_FU_AGAIN = "방금 말씀하신 '{kw}' 경험을 다시 한다면 무엇을 다르게 하실지 이유와 함께 말씀해 주세요."
+_HAS_NUMBER = re.compile(r"\d|퍼센트|%|[한일이삼사오육칠팔구십백천만두세네]+\s*(명|개|건|배|시간|분|초|번|회|위|년|개월|주|만\s?원)")
+# 한국어 답변은 주어를 빼고 말하는 일이 많아 '~했습니다 · ~드렸고' 같은 서술어도 본인 행동으로 본다
+_HAS_OWN_ACTION = re.compile(r"제가|저는|직접|맡아|맡았|제안|해결|만들|진행했|개선|분석했|도입|했습니다|했고|했는데|드렸|열었|운영했")
+
+
+def _answer_keyword_messages(question: str, answer: str) -> list:
+    return [
+        {"role": "system", "content": "당신은 채용 면접관입니다. 지원자의 답변에서 꼬리 질문으로 더 파고들 부분을 고릅니다."},
+        {"role": "user", "content": (
+            f"면접 질문: {question}\n지원자 답변: {answer}\n\n"
+            "이 답변에서 면접관이 더 자세히 물어볼 만한 구체적인 경험 · 행동 · 성과를 3개 뽑으세요.\n"
+            "각 항목은 keyword(답변에 실제로 쓰인 짧은 구절 그대로, 2~12자)와 summary(한 문장)로 쓰고,\n"
+            "순수 JSON 배열로만 출력하세요: [{\"keyword\": \"...\", \"summary\": \"...\"}]"
+        )},
+    ]
+
+
+def follow_up_question(keyword: str, answer: str, avoid: set) -> Optional[str]:
+    """답변에 빠진 것을 보고 각도를 고른다 — 본인 행동이 안 보이면 행동, 수치가 없으면 결과 근거, 둘 다 있으면 어려움.
+    이미 같은 질문이 있으면 다음 각도로."""
+    order = ([_FU_ACTION] if not _HAS_OWN_ACTION.search(answer) else []) + \
+            ([_FU_RESULT] if not _HAS_NUMBER.search(answer) else []) + [_FU_HARD, _FU_AGAIN]
+    for t in order:
+        q = t.format(kw=keyword)
+        if q not in avoid and is_valid_question(q):
+            return q
+    return None
+
+
+async def generate_follow_up(question: str, answer: str, existing_questions: list) -> Optional[str]:
+    """방금 답변으로 꼬리 질문 하나. 파고들 키워드가 없거나 실패하면 None (면접은 원래 순서대로 이어진다).
+
+    키워드는 원래 질문에 이미 있던 말보다 답변에서 새로 나온 말을 먼저 쓴다 (같은 얘기를 되묻지 않게)."""
+    answer = (answer or "").strip()
+    if len(answer) < FOLLOW_UP_MIN_ANSWER or llama_service.model is None:
+        return None
+    try:
+        text = (await llama_service.generate_batch([_answer_keyword_messages(question, answer[:SELF_INTRO_MAX])], 250, None, greedy=True))[0]
+    except Exception as e:
+        logger.error(f"꼬리 질문 키워드 추출 실패: {e}")
+        return None
+    keywords = _parse_keywords(text, answer, limit=3)
+    asked = " ".join(existing_questions)
+    keywords.sort(key=lambda k: k in asked)   # 이미 물어본 말은 뒤로 (안정 정렬이라 모델 순서는 유지)
+    avoid = set(existing_questions)
+    for kw in keywords:
+        q = follow_up_question(kw, answer, avoid)
+        if q:
+            logger.info(f"꼬리 질문 키워드 {keywords} → '{kw}'")
+            return q
+    logger.info(f"꼬리 질문 없음 (키워드 {keywords})")
+    return None

@@ -16,6 +16,9 @@ const PHASE = {
   DONE: 'done',
 }
 
+// 이보다 짧은 답변은 꼬리 질문을 요청하지 않는다 (서버 FOLLOW_UP_MIN_ANSWER와 같게)
+const FOLLOW_UP_MIN_ANSWER = 40
+
 const FALLBACK_QUESTIONS = [
   '자기소개를 간략하게 해주세요.',
   '해당 직무에 지원하게 된 이유가 무엇인가요?',
@@ -45,6 +48,7 @@ export default function PracticeInterviewPage() {
   const [backendInterviewId, setBackendInterviewId] = useState(null)
   const [backendQuestions, setBackendQuestions] = useState([])
   const [currentFeedback, setCurrentFeedback] = useState({ loading: false, score: null, feedback: null, tip: null, error: false })
+  const [followUpLoading, setFollowUpLoading] = useState(false)   // 방금 답변으로 꼬리 질문을 만드는 중 (약 2~3초)
 
   // Audio Streaming 관련 Refs
   const wsRef = useRef(null)
@@ -249,13 +253,31 @@ export default function PracticeInterviewPage() {
 
     setLog((prev) => [...prev, { q: currentQ, a: capturedAnswer }])
 
-    // 2. 마지막 질문이면 면접 종료 후 분석 결과 페이지로 이동
-    if (qIndex + 1 >= backendQuestions.length) {
+    // 2. 실시간 꼬리 질문 — 방금 답변을 보고 서버가 이어 물을 질문을 만들면 바로 다음 순서에 끼워 넣는다
+    //    (꼬리 질문에 대한 답변 · 짧은 답변은 요청하지 않음, 서버가 면접당 최대 2개로 제한)
+    let questionsNow = backendQuestions
+    if (backendInterviewId && capturedQId && currentQuestion?.follow_up_of == null && capturedAnswer.length >= FOLLOW_UP_MIN_ANSWER) {
+      setFollowUpLoading(true)
+      try {
+        const { data } = await interviewAPI.followUp(backendInterviewId, capturedQId, { answer_text: capturedAnswer })
+        if (data?.question) {
+          questionsNow = [...backendQuestions.slice(0, qIndex + 1), data.question, ...backendQuestions.slice(qIndex + 1)]
+          setBackendQuestions(questionsNow)
+        }
+      } catch (err) {
+        console.error('꼬리 질문 생성 실패 (원래 순서대로 진행):', err)
+      } finally {
+        setFollowUpLoading(false)
+      }
+    }
+
+    // 3. 마지막 질문이면 면접 종료 후 분석 결과 페이지로 이동
+    if (qIndex + 1 >= questionsNow.length) {
       addInterviewRecord(resumeId, {
         type: 'practice',
         duration: totalSec,
         interviewId: backendInterviewId,
-        questions: backendQuestions.map((q) => ({ question: q.question_text })),
+        questions: questionsNow.map((q) => ({ question: q.question_text })),
       })
       if (backendInterviewId) {
         try {
@@ -272,7 +294,7 @@ export default function PracticeInterviewPage() {
       return
     }
 
-    // 3. 다음 질문으로 바로 이동
+    // 4. 다음 질문(또는 방금 끼워 넣은 꼬리 질문)으로 이동
     setQIndex((p) => p + 1)
     setAnswer('')
     setPhase(PHASE.QUESTION)
@@ -364,7 +386,9 @@ export default function PracticeInterviewPage() {
           {/* Question */}
           {[PHASE.QUESTION, PHASE.ANSWERING, PHASE.FEEDBACK].includes(phase) && (
             <div key={qIndex} className="fade-up-center" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>Q{qIndex + 1} 질문</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: currentQuestion?.follow_up_of != null ? '#f59e0b' : '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>
+                {currentQuestion?.follow_up_of != null ? `Q${qIndex + 1} 꼬리 질문 · 방금 답변을 듣고 이어서 묻습니다` : `Q${qIndex + 1} 질문`}
+              </div>
               <div style={{ fontSize: phase === PHASE.FEEDBACK ? 16 : 20, fontWeight: 700, color: phase === PHASE.FEEDBACK ? 'rgba(255,255,255,.6)' : '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '14px 24px', backdropFilter: 'blur(8px)' }}>
                 {currentQ}
               </div>
@@ -534,8 +558,8 @@ export default function PracticeInterviewPage() {
                 )}
                 <div style={{ display: 'flex', gap: 10, marginTop: 10, justifyContent: 'center' }}>
                   <button onClick={() => { stopSTT(); setPhase(PHASE.QUESTION); setAnswer('') }} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>재시작</button>
-                  <button onClick={submitAnswer} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
-                    {qIndex + 1 >= backendQuestions.length ? '✅ 면접 종료' : '✅ 답변 완료'}
+                  <button onClick={submitAnswer} disabled={followUpLoading} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: followUpLoading ? 'wait' : 'pointer', opacity: followUpLoading ? 0.6 : 1 }}>
+                    {followUpLoading ? '🤔 답변을 살펴보는 중…' : qIndex + 1 >= backendQuestions.length ? '✅ 면접 종료' : '✅ 답변 완료'}
                   </button>
                 </div>
               </div>

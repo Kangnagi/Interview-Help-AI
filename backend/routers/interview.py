@@ -3,18 +3,19 @@ import logging
 import os
 from datetime import datetime
 import hashlib
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from pydantic import BaseModel
 
 from core.database import get_db
 from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from schemas.schemas import InterviewCreate, InterviewResponse
-from services.llm.llama_service import generate_questions_from_resume, analyze_answer_with_llama, is_valid_question
+from services.llm.llama_service import (generate_questions_from_resume, analyze_answer_with_llama, is_valid_question,
+                                        generate_follow_up, FOLLOW_UP_MAX_PER_INTERVIEW)
 from services.llm.question_bank import fallback_questions
 
 logger = logging.getLogger(__name__)
@@ -165,6 +166,30 @@ async def list_interviews(
 class AnswerCreate(BaseModel):
     answer_text: str
 
+
+class FollowUpCreate(BaseModel):
+    answer_text: Optional[str] = None   # 없으면 저장된 답변을 쓴다
+
+
+async def _own_interview(db: AsyncSession, interview_id: int, user_id: int) -> Interview:
+    """본인 면접만 — 예전엔 질문 조회 · 답변 저장 · 피드백 · 종료가 로그인만 확인해서 남의 면접 번호로도 됐다."""
+    interview = (await db.execute(
+        select(Interview).where(Interview.id == interview_id, Interview.user_id == user_id)
+    )).scalar_one_or_none()
+    if not interview:
+        raise HTTPException(status_code=404, detail="면접을 찾을 수 없습니다")
+    return interview
+
+
+async def _own_question(db: AsyncSession, interview_id: int, question_id: int, user_id: int) -> InterviewQuestion:
+    await _own_interview(db, interview_id, user_id)
+    question = (await db.execute(
+        select(InterviewQuestion).where(InterviewQuestion.id == question_id, InterviewQuestion.interview_id == interview_id)
+    )).scalar_one_or_none()
+    if not question:
+        raise HTTPException(status_code=404, detail="질문을 찾을 수 없습니다")
+    return question
+
 @router.get("/{interview_id}/questions")
 async def get_interview_questions(
     interview_id: int,
@@ -172,6 +197,7 @@ async def get_interview_questions(
     db: AsyncSession = Depends(get_db)
 ):
     """특정 면접의 질문 목록을 가져옵니다."""
+    await _own_interview(db, interview_id, user_id)
     result = await db.execute(
         select(InterviewQuestion)
         .where(InterviewQuestion.interview_id == interview_id)
@@ -188,19 +214,62 @@ async def submit_answer(
     db: AsyncSession = Depends(get_db)
 ):
     """면접 질문에 대한 사용자의 답변(JSON)을 서버에 저장합니다."""
-    result = await db.execute(
-        select(InterviewQuestion).where(
-            InterviewQuestion.id == question_id,
-            InterviewQuestion.interview_id == interview_id,
-        )
-    )
-    question = result.scalar_one_or_none()
-    if not question:
-        raise HTTPException(status_code=404, detail="질문을 찾을 수 없습니다")
-
+    question = await _own_question(db, interview_id, question_id, user_id)
     question.answer_text = body.answer_text
     await db.commit()
     return {"message": "답변이 저장되었습니다"}
+
+
+@router.post("/{interview_id}/questions/{question_id}/follow-up")
+async def create_follow_up(
+    interview_id: int,
+    question_id: int,
+    body: FollowUpCreate,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """방금 답변을 보고 꼬리 질문을 하나 만들어 바로 다음 순서에 끼워 넣는다 (뒤 질문들의 순서는 하나씩 밀림).
+
+    만들지 않는 경우 {"question": null, "reason": …}: 꼬리 질문에 대한 답변 · 면접당 최대 개수 초과 · 짧은 답변 · 파고들 키워드 없음.
+    같은 질문에 다시 요청하면 이미 만든 꼬리 질문을 돌려준다 (화면이 두 번 눌러도 하나만 생김).
+    """
+    interview = await _own_interview(db, interview_id, user_id)
+    question = await _own_question(db, interview_id, question_id, user_id)
+    if question.follow_up_of is not None:
+        return {"question": None, "reason": "꼬리 질문에는 다시 묻지 않습니다"}
+
+    questions = (await db.execute(
+        select(InterviewQuestion).where(InterviewQuestion.interview_id == interview_id).order_by(InterviewQuestion.order)
+    )).scalars().all()
+    existing = next((q for q in questions if q.follow_up_of == question.id), None)
+    if existing:
+        return {"question": _question_dict(existing)}
+    if sum(q.follow_up_of is not None for q in questions) >= FOLLOW_UP_MAX_PER_INTERVIEW:
+        return {"question": None, "reason": "꼬리 질문 최대 개수에 도달했습니다"}
+
+    answer = body.answer_text if body.answer_text is not None else (question.answer_text or "")
+    text = await generate_follow_up(question.question_text, answer, [q.question_text for q in questions])
+    if not text:
+        return {"question": None, "reason": "더 물어볼 내용을 찾지 못했습니다"}
+
+    # 뒤 질문을 하나씩 밀고 바로 다음 순서에 넣는다
+    await db.execute(
+        update(InterviewQuestion)
+        .where(InterviewQuestion.interview_id == interview_id, InterviewQuestion.order > question.order)
+        .values(order=InterviewQuestion.order + 1)
+    )
+    follow_up = InterviewQuestion(interview_id=interview_id, order=question.order + 1,
+                                  question_text=text, follow_up_of=question.id)
+    db.add(follow_up)
+    interview.total_questions = len(questions) + 1
+    await db.commit()
+    await db.refresh(follow_up)
+    logger.info(f"[FollowUp] interview={interview_id} q={question_id} → q={follow_up.id}")
+    return {"question": _question_dict(follow_up)}
+
+
+def _question_dict(q: InterviewQuestion) -> dict:
+    return {"id": q.id, "order": q.order, "question_text": q.question_text, "follow_up_of": q.follow_up_of}
 
 
 @router.post("/{interview_id}/questions/{question_id}/feedback")
@@ -211,15 +280,7 @@ async def get_question_feedback(
     db: AsyncSession = Depends(get_db)
 ):
     """저장된 답변에 대해 AI 피드백을 즉시 생성합니다 (점수·피드백·팁 모두 로컬 Llama, Gemini 미사용)."""
-    result = await db.execute(
-        select(InterviewQuestion).where(
-            InterviewQuestion.id == question_id,
-            InterviewQuestion.interview_id == interview_id,
-        )
-    )
-    question = result.scalar_one_or_none()
-    if not question:
-        raise HTTPException(status_code=404, detail="질문을 찾을 수 없습니다")
+    question = await _own_question(db, interview_id, question_id, user_id)
     if not question.answer_text:
         raise HTTPException(status_code=400, detail="저장된 답변이 없습니다")
 
@@ -245,8 +306,7 @@ async def finish_interview(
     db: AsyncSession = Depends(get_db)
 ):
     """면접 상태를 완료(COMPLETED)로 변경합니다."""
-    result = await db.execute(select(Interview).where(Interview.id == interview_id))
-    interview = result.scalar_one_or_none()
+    interview = await _own_interview(db, interview_id, user_id)
     if interview:
         try:
             interview.status = InterviewStatus.COMPLETED

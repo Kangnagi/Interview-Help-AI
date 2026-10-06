@@ -15,6 +15,9 @@ const FALLBACK_QUESTIONS = [
 ]
 const Q_LIMIT = 120
 
+// 이보다 짧은 답변은 꼬리 질문을 요청하지 않는다 (서버 FOLLOW_UP_MIN_ANSWER와 같게)
+const FOLLOW_UP_MIN_ANSWER = 40
+
 export default function RealInterviewPage() {
   const navigate = useNavigate()
   const { resumeId } = useParams()
@@ -37,6 +40,7 @@ export default function RealInterviewPage() {
   const [backendInterviewId, setBackendInterviewId] = useState(null)
   const [backendQuestions, setBackendQuestions] = useState([])
   const [isCreating, setIsCreating] = useState(false)
+  const [followUpLoading, setFollowUpLoading] = useState(false)   // 방금 답변으로 꼬리 질문을 만드는 중 (약 2~3초, 그동안 시간은 멈춤)
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -50,6 +54,7 @@ export default function RealInterviewPage() {
     ? backendQuestions.map((q) => q.question_text)
     : FALLBACK_QUESTIONS
   const currentQ = activeQuestions[qIndex]
+  const isFollowUp = backendQuestions[qIndex]?.follow_up_of != null
 
   const pct = Math.round(((Q_LIMIT - remaining) / Q_LIMIT) * 100)
   const r = 44, circ = 2 * Math.PI * r
@@ -182,13 +187,31 @@ export default function RealInterviewPage() {
     stopSTT()
     clearInterval(timerRef.current)
 
-    const currentAnswer = answer
+    const currentAnswer = [answer, interim].filter(Boolean).join(' ').trim()
     const currentAnswers = [...answers, { q: currentQ, a: currentAnswer }]
-    const isLast = qIndex + 1 >= activeQuestions.length
     const currentBackendQ = backendQuestions[qIndex]
 
     setAnswers(currentAnswers)
     setAnswer('')
+
+    // 실시간 꼬리 질문 — 방금 답변을 보고 서버가 이어 물을 질문을 만들면 바로 다음 순서에 끼워 넣는다
+    // (꼬리 질문에 대한 답변 · 짧은 답변은 요청하지 않음, 서버가 면접당 최대 2개로 제한)
+    let questionsNow = backendQuestions
+    if (backendInterviewId && currentBackendQ?.id && currentBackendQ.follow_up_of == null && currentAnswer.length >= FOLLOW_UP_MIN_ANSWER) {
+      setFollowUpLoading(true)
+      try {
+        const { data } = await interviewAPI.followUp(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer })
+        if (data?.question) {
+          questionsNow = [...backendQuestions.slice(0, qIndex + 1), data.question, ...backendQuestions.slice(qIndex + 1)]
+          setBackendQuestions(questionsNow)
+        }
+      } catch (err) {
+        console.error('꼬리 질문 생성 실패 (원래 순서대로 진행):', err)
+      } finally {
+        setFollowUpLoading(false)
+      }
+    }
+    const isLast = qIndex + 1 >= (questionsNow.length > 0 ? questionsNow.length : activeQuestions.length)
 
     if (isLast) {
       clearInterval(totalRef.current)
@@ -226,7 +249,7 @@ export default function RealInterviewPage() {
     }
     setQIndex((p) => p + 1)
     startQTimer()
-  }, [qIndex, answers, currentQ, answer, activeQuestions.length, backendInterviewId, backendQuestions, resumeId, addInterviewRecord, navigate, stopSTT, totalSec, startQTimer])
+  }, [qIndex, answers, currentQ, answer, interim, activeQuestions.length, backendInterviewId, backendQuestions, resumeId, addInterviewRecord, navigate, stopSTT, totalSec, startQTimer])
 
   handleNextRef.current = handleNext
 
@@ -355,7 +378,9 @@ export default function RealInterviewPage() {
 
           {/* Question */}
           <div key={qIndex} className="fade-up-center" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>Q{qIndex + 1} 질문</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: isFollowUp ? '#f59e0b' : '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>
+              {isFollowUp ? `Q${qIndex + 1} 꼬리 질문 · 방금 답변을 듣고 이어서 묻습니다` : `Q${qIndex + 1} 질문`}
+            </div>
             <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '16px 24px', backdropFilter: 'blur(8px)' }}>
               {currentQ}
             </div>
@@ -432,8 +457,8 @@ export default function RealInterviewPage() {
                 <div style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', fontStyle: 'italic', marginTop: 5, padding: '0 4px' }}>💬 {interim}</div>
               )}
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
-                <button onClick={handleNext} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                  {qIndex + 1 >= activeQuestions.length ? '면접 종료 →' : '다음 질문 →'}
+                <button onClick={handleNext} disabled={followUpLoading} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: followUpLoading ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: followUpLoading ? 0.6 : 1 }}>
+                  {followUpLoading ? '🤔 답변을 살펴보는 중…' : qIndex + 1 >= activeQuestions.length ? '면접 종료 →' : '다음 질문 →'}
                 </button>
               </div>
             </div>

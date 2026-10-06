@@ -43,6 +43,7 @@ export const interviewAPI = {
   get:         (id)            => api.get(`/interviews/${id}`),                                      // GET — 면접 상세 조회
   getQuestions:(id)            => api.get(`/interviews/${id}/questions`),                            // GET — 질문 목록 조회
   submitAnswer:       (id, qId, data) => api.post(`/interviews/${id}/questions/${qId}/answer`, data),      // POST — 질문 답변 저장
+  followUp:           (id, qId, data) => api.post(`/interviews/${id}/questions/${qId}/follow-up`, data, { timeout: 20000 }), // POST — 방금 답변으로 꼬리 질문 (없으면 question: null)
   getQuestionFeedback:(id, qId)      => api.post(`/interviews/${id}/questions/${qId}/feedback`, null, { timeout: 60000 }), // POST — 즉시 AI 피드백 (Gemini 최대 60초)
   finish:             (id)           => api.patch(`/interviews/${id}/finish`),                             // PATCH — 면접 종료 (분석 가능 상태로)
   delete:             (id)           => api.delete(`/interviews/${id}`),                                   // DELETE — 면접 기록 삭제
