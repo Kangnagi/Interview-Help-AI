@@ -57,6 +57,7 @@ export default function PracticeInterviewPage() {
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const setupStartedRef = useRef(false)
   // 영상 칸이 화면에 나타날 때 카메라를 붙인다 — 카메라는 '준비 완료' 직후(아직 환경 설정 화면)에 켜져서,
   // 예전엔 붙일 칸이 없어 연결이 버려지고 면접 화면의 내 카메라가 검은 화면으로 남았다
   const attachVideo = useCallback((el) => {
@@ -141,6 +142,9 @@ export default function PracticeInterviewPage() {
   }, [phase, stopSTT, startSTT, sttSupported, startAudioStreaming, stopAudioStreaming])
 
   const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
+    // '준비 완료'를 여러 번 눌러도 면접은 한 번만 만든다 (질문 생성 5~7초 사이에 다시 눌러 면접이 두 개씩 생겼다 — 10/4 · 10/6)
+    if (setupStartedRef.current) return
+    setupStartedRef.current = true
     setDeviceIds({ cameraId, micId })
     setSessionStarted(true)
     // 질문을 만드는 동안(5~7초) 면접 화면의 'AI 면접 준비 중...'을 보여 준다 (예전엔 환경 설정 화면에 표시 없이 멈춰 있었다)

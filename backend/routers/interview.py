@@ -27,6 +27,9 @@ FIXED_QUESTIONS = [
     "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?",
 ]
 AI_QUESTIONS_PER_INTERVIEW = 3   # 고정 질문 뒤에 붙는 AI(또는 직무 기본) 질문 수
+# 질문 만드는 방식이 바뀌면 올린다 — 버전이 다른 캐시는 버리고 새로 만든다
+# (2: 10/6 직무 설명 여러 줄 · [제목] 처리 — 예전 캐시엔 "'[지원 직무 이해]' 업무" 질문이 남아 있었다)
+QUESTION_POOL_VERSION = 2
 
 def load_question_cache():
     if os.path.exists(QUESTION_CACHE_FILE):
@@ -62,10 +65,13 @@ async def create_interview(
         # 구버전 캐시(리스트 형태) 호환성 처리
         if isinstance(cache_entry, list):
             cache_entry = {"ai_questions": cache_entry[2:] if len(cache_entry) > 2 else cache_entry, "index": 0}
+        if cache_entry and cache_entry.get("version") != QUESTION_POOL_VERSION:
+            cache_entry = None
         if cache_entry:
             # 예전에 캐시된 깨진 질문(일본어·영어 섞임 등)은 버리고, 쓸 만한 질문이 모자라면 새로 생성
             pool = [q for q in cache_entry.get("ai_questions", []) if is_valid_question(q)]
-            cache_entry = {"ai_questions": pool, "index": cache_entry.get("index", 0) % max(1, len(pool))} \
+            cache_entry = {"ai_questions": pool, "index": cache_entry.get("index", 0) % max(1, len(pool)),
+                           "version": QUESTION_POOL_VERSION} \
                 if len(pool) >= AI_QUESTIONS_PER_INTERVIEW else None
 
         if cache_entry:
@@ -79,7 +85,7 @@ async def create_interview(
                 num_questions=8,  # 고정 2개 + AI 질문 6개 (다음 면접들에서 3개씩 돌려 씀)
             )
             if len(pool) >= AI_QUESTIONS_PER_INTERVIEW:
-                cache_entry = {"ai_questions": pool, "index": 0}
+                cache_entry = {"ai_questions": pool, "index": 0, "version": QUESTION_POOL_VERSION}
             else:
                 # 모자란 결과는 캐시하지 않는다 (다음 면접에서 다시 생성 시도)
                 selected_ai = pool

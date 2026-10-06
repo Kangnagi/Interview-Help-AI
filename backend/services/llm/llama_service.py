@@ -715,6 +715,15 @@ def _keyword_messages(intro: str) -> list:
 
 
 _ASPIRATION = re.compile(r"싶습니다|싶어|지원했|지원하게|지원합니다|기여하|되겠습니다|입사|공감해|공감하여")
+# 본인 경험이 아니라 지켜본 세상 이야기 — 키워드 바로 뒤가 '~가 커지면서', '~하는 것을 보고' 같으면 버린다
+# (10/6 실제 연습면접: 지원 동기 "AI 서비스가 커지면서 … 보고" → "'AI 서비스' 경험의 결과를 어떻게 확인하셨는지")
+_OBSERVED = re.compile(r"^.{0,4}?(커지|늘어나|늘면서|확대되|확산되|발전하|주목받|중요해지|떠오르)"
+                       r"|^[^.?!\n]{0,30}?(것을|걸|모습을|뉴스를|기사를)\s*(보고|보며|보면서|접하)")
+
+
+def _observed(text: str, kw: str) -> bool:
+    i = text.find(kw)
+    return i >= 0 and bool(_OBSERVED.search(text[i + len(kw):i + len(kw) + 40]))
 
 
 def _token_in(token: str, text: str) -> bool:
@@ -768,7 +777,8 @@ def _parse_keywords(text: str, intro: str, limit: int = 5) -> list:
                 and not (" " not in kw and len(kw) <= 2 and not kw.isascii())   # '병실' · '실습' 같은 두 글자 한 단어는 너무 일반적
                 and _is_clean_korean(kw, min_hangul_ratio=0.0, strict=True)   # 외국 문자 · 소문자 영어 → 질문 검사에서 걸림
                 and kw not in _GENERIC_KEYWORDS and not any(kw in k or k in kw for k in out)
-                and not _ASPIRATION.search(_context_of(intro, kw))):   # 포부 · 지원 동기 문장의 단어는 경험이 아님
+                and not _ASPIRATION.search(_context_of(intro, kw))   # 포부 · 지원 동기 문장의 단어는 경험이 아님
+                and not _observed(intro, kw)):                       # 지켜본 일('…가 커지면서')도 경험이 아님
             out.append(kw)
         if len(out) >= limit:
             break
@@ -812,12 +822,16 @@ _DUTY_TEMPLATES = [
 def duty_questions(info_text: str, limit: int = 2) -> list:
     """직무 설명을 쉼표 · 가운뎃점 · '및' 등으로 나눠 짧은 업무 항목(4~20자)만 질문 틀에 넣는다.
     긴 문장으로 쓴 직무 설명은 항목이 안 나오므로 빈 리스트 → 호출부가 모델 생성으로 채운다."""
-    m = re.search(r"^직무 설명\s*:\s*(.+)$", info_text or "", re.MULTILINE)
+    # 여러 줄로 쓴 직무 설명은 다음 항목('인재상:' 등) 전까지 전부 — 예전엔 첫 줄만 읽어서, 첫 줄이 '[지원 직무 이해]' 같은
+    # 제목이면 그 제목이 업무 이름으로 들어갔다 (10/6 실제 연습면접: "직무 설명에 있는 '[지원 직무 이해]' 업무와 관련해…")
+    m = re.search(r"^직무 설명\s*:\s*(.+?)(?=^\s*(?:인재상|자기소개서)\s*:|\Z)", info_text or "", re.MULTILINE | re.DOTALL)
     if not m:
         return []
+    body = re.sub(r"\[[^\]\n]*\]|【[^】\n]*】|<[^>\n]*>", " ", m.group(1))   # [제목] · 【제목】 · <제목> 같은 머리말
     duties = []
-    for part in re.split(r"[,，·/;]|\s및\s|\s그리고\s", m.group(1)):
-        d = re.sub(r"\s*등$", "", part.strip(" .")).strip()
+    for part in re.split(r"[,，·/;\n]|\s및\s|\s그리고\s", body):
+        d = re.sub(r"^\s*(?:[-•*▪◦○●]|\d+[.)])\s*", "", part)   # 줄머리 기호 · 번호
+        d = re.sub(r"\s*등$", "", d.strip(" .:")).strip()
         if 4 <= len(d) <= 20 and "'" not in d and _is_clean_korean(d, min_hangul_ratio=0.0, strict=True) and d not in duties:   # "운영" 같은 한 단어는 제외
             duties.append(d)
     return [_DUTY_TEMPLATES[i % len(_DUTY_TEMPLATES)].format(duty=d) for i, d in enumerate(duties[:limit])]
@@ -890,11 +904,40 @@ def _answer_keyword_messages(question: str, answer: str) -> list:
     ]
 
 
-def follow_up_question(keyword: str, answer: str, avoid: set) -> Optional[str]:
+# 면접의 다른 질문(자기소개서 질문 틀 포함)이 이미 쓴 각도 — 꼬리 질문은 다른 각도로 묻는다
+_ANGLE_MARKERS = {
+    _FU_ACTION: re.compile(r"직접 한 (일|행동)|맡은 역할"),
+    _FU_RESULT: re.compile(r"결과를 어떻게 확인"),
+    _FU_HARD: re.compile(r"가장 어려웠"),
+    _FU_AGAIN: re.compile(r"다시 한다면"),
+}
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", text or "").lower()
+
+
+def _asked_keywords(questions: list) -> list:
+    """질문 틀의 따옴표 안 키워드 ('…'), 띄어쓰기 없이 — '디지털 시스템 설계'와 '디지털시스템설계 수업'을 같은 경험으로 보려고."""
+    return [k for k in (_squash(m) for q in questions for m in re.findall(r"'([^']+)'", q or "")) if len(k) >= 2]
+
+
+# 지원 동기 답변은 경험보다 관심을 갖게 된 계기라, 경험 각도('결과를 어떻게 확인')로 물으면 어색했다
+# (10/6 시험: "'메모리 접근' 경험의 결과를 어떻게 확인하셨는지") → 그 관심을 위해 실제로 해 본 일을 묻는다
+_FU_MOTIVE = "방금 '{kw}' 이야기를 하셨는데, 그 뒤로 이 분야를 위해 직접 공부하거나 준비한 것이 있다면 말씀해 주세요."   # 주제('메모리 접근') · 사건('서버 느려짐') 모두 어울리게
+_MOTIVE_QUESTION = re.compile(r"지원하게 된 동기|지원 동기|지원한 이유")
+
+
+def follow_up_question(keyword: str, answer: str, avoid: set, used_angles: frozenset = frozenset(),
+                       motive: bool = False) -> Optional[str]:
     """답변에 빠진 것을 보고 각도를 고른다 — 본인 행동이 안 보이면 행동, 수치가 없으면 결과 근거, 둘 다 있으면 어려움.
-    이미 같은 질문이 있으면 다음 각도로."""
+    면접의 다른 질문이 이미 쓴 각도와 이미 같은 질문이 있으면 다음 각도로. 지원 동기 답변이면 동기 각도 하나만."""
+    if motive:
+        q = _FU_MOTIVE.format(kw=keyword)
+        return q if q not in avoid and is_valid_question(q) else None
     order = ([_FU_ACTION] if not _HAS_OWN_ACTION.search(answer) else []) + \
             ([_FU_RESULT] if not _HAS_NUMBER.search(answer) else []) + [_FU_HARD, _FU_AGAIN]
+    order = [t for i, t in enumerate(order) if t not in used_angles and t not in order[:i]]
     for t in order:
         q = t.format(kw=keyword)
         if q not in avoid and is_valid_question(q):
@@ -905,7 +948,9 @@ def follow_up_question(keyword: str, answer: str, avoid: set) -> Optional[str]:
 async def generate_follow_up(question: str, answer: str, existing_questions: list) -> Optional[str]:
     """방금 답변으로 꼬리 질문 하나. 파고들 키워드가 없거나 실패하면 None (면접은 원래 순서대로 이어진다).
 
-    키워드는 원래 질문에 이미 있던 말보다 답변에서 새로 나온 말을 먼저 쓴다 (같은 얘기를 되묻지 않게)."""
+    면접의 다른 질문(뒤에 나올 자기소개서 질문 포함)이 이미 다루는 키워드는 쓰지 않고, 이미 쓴 각도도 피한다
+    — 10/6 실제 연습면접: 꼬리 질문 "'디지털 시스템 설계' 경험에서 가장 어려웠던 순간"과 뒤 질문
+    "'타이밍 리포트' 경험에서 가장 어려웠던 점"이 같은 경험 · 같은 각도라 같은 답을 두 번 했다."""
     answer = (answer or "").strip()
     if len(answer) < FOLLOW_UP_MIN_ANSWER or llama_service.model is None:
         return None
@@ -915,11 +960,13 @@ async def generate_follow_up(question: str, answer: str, existing_questions: lis
         logger.error(f"꼬리 질문 키워드 추출 실패: {e}")
         return None
     keywords = _parse_keywords(text, answer, limit=3)
-    asked = " ".join(existing_questions)
-    keywords.sort(key=lambda k: k in asked)   # 이미 물어본 말은 뒤로 (안정 정렬이라 모델 순서는 유지)
+    asked = _asked_keywords(existing_questions)
+    fresh = [k for k in keywords if not any(_squash(k) in a or a in _squash(k) for a in asked)]
+    used_angles = frozenset(t for t, rx in _ANGLE_MARKERS.items() if any(rx.search(q or "") for q in existing_questions))
     avoid = set(existing_questions)
-    for kw in keywords:
-        q = follow_up_question(kw, answer, avoid)
+    motive = bool(_MOTIVE_QUESTION.search(question or ""))
+    for kw in fresh:
+        q = follow_up_question(kw, answer, avoid, used_angles, motive)
         if q:
             logger.info(f"꼬리 질문 키워드 {keywords} → '{kw}'")
             return q

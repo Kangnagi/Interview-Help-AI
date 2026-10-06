@@ -43,6 +43,7 @@ export default function RealInterviewPage() {
   const [followUpLoading, setFollowUpLoading] = useState(false)   // 방금 답변으로 꼬리 질문을 만드는 중 (약 2~3초, 그동안 시간은 멈춤)
 
   const videoRef = useRef(null)
+  const setupStartedRef = useRef(false)
   const streamRef = useRef(null)
   const timerRef = useRef(null)
   const totalRef = useRef(null)
@@ -68,6 +69,9 @@ export default function RealInterviewPage() {
   }, [phase, stopSTT])
 
   const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
+    // '준비 완료'를 여러 번 눌러도 면접은 한 번만 만든다 (질문 생성 5~7초 사이에 다시 눌러 면접이 두 개씩 생겼다 — 10/4 · 10/6)
+    if (setupStartedRef.current) return
+    setupStartedRef.current = true
     setDeviceIds({ cameraId, micId })
     setSessionStarted(true)
 

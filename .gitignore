@@ -47,6 +47,8 @@ backend/training/data/real_eval.jsonl
 # Claude 채점 데이터 · 사람 보정 점수 (같은 바탕화면 원문 포함)
 backend/training/data/claude_*
 backend/training/data/human_*
+# 질문 전용 학습 데이터 (꼬리 질문은 바탕화면 실제 면접 답변으로 만들어 재배포 불가)
+backend/training/data/qgen_*
 # 학습 산출물(어댑터 가중치)은 용량이 커서 제외
 backend/training/output/
 
