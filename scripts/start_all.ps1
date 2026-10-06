@@ -31,6 +31,16 @@ foreach ($s in $services) {
     $argLine = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runner`" -Name $($s.Name) " +
                "-FilePath `"$($s.FilePath)`" -Arguments `"$($s.Arguments)`" -WorkingDirectory `"$($s.WorkingDirectory)`""
     if ($s.ExtraPath) { $argLine += " -ExtraPath `"$($s.ExtraPath)`"" }
-    Start-Process powershell.exe -ArgumentList $argLine -WindowStyle Hidden
-    Write-Output "[$($s.Name)] 감시 시작"
+    # WMI(Win32_Process.Create)로 띄워 이 스크립트를 실행한 창 · 세션과 끊는다.
+    # Start-Process로 띄우면 실행한 쪽의 하위 프로세스가 되어, 그 창이나 세션이 닫힐 때 감시 루프와 서비스가 같이 꺼졌다
+    # (10/6 프런트엔드만 꺼져 사이트 502).
+    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+    $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine = "powershell.exe $argLine"; CurrentDirectory = $root; ProcessStartupInformation = $startup }
+    if ($r.ReturnValue -eq 0) {
+        Write-Output "[$($s.Name)] 감시 시작 (pid $($r.ProcessId))"
+    } else {
+        Start-Process powershell.exe -ArgumentList $argLine -WindowStyle Hidden
+        Write-Output "[$($s.Name)] 감시 시작 — WMI 실행 실패(코드 $($r.ReturnValue))로 일반 방식 사용, 이 창을 닫으면 같이 꺼질 수 있음"
+    }
 }
