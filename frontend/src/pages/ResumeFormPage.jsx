@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom'    // 라우팅
 import { useResumeStore } from '@/store/resumeStore'        // 자기소개서 상태 관리
 import toast from 'react-hot-toast'                          // 토스트 알림
 
+const SELF_INTRO_MAX = 3000   // 서버도 질문 생성에 이 길이까지만 쓴다 (llama_service.SELF_INTRO_MAX)
+
 export default function ResumeFormPage() {
   const navigate = useNavigate()
   const { id } = useParams()                                  // URL 파라미터에서 자기소개서 ID 추출
@@ -16,6 +18,7 @@ export default function ResumeFormPage() {
     jobTitle: '',              // 직무명
     jobDescription: '',        // 직무 설명
     idealCandidate: '',        // 인재상 (선택사항)
+    selfIntroduction: '',      // 자기소개서 내용 (선택사항) — 여기 쓴 경험에서 키워드를 뽑아 꼬리 질문을 만든다
   })
   const [errors, setErrors] = useState({})                    // 입력값 검증 에러
 
@@ -23,7 +26,9 @@ export default function ResumeFormPage() {
   useEffect(() => {
     if (isEdit) {
       const r = getResume(id)
-      if (r) setForm({ title: r.title, companyName: r.companyName, jobTitle: r.jobTitle, jobDescription: r.jobDescription, idealCandidate: r.idealCandidate })
+      // 예전에 저장한 자기소개서에는 없는 칸이 있을 수 있어 빈 문자열로 채운다
+      if (r) setForm({ title: r.title || '', companyName: r.companyName || '', jobTitle: r.jobTitle || '', jobDescription: r.jobDescription || '',
+                       idealCandidate: r.idealCandidate || '', selfIntroduction: r.selfIntroduction || '' })
       else { toast.error('자기소개서를 찾을 수 없습니다'); navigate('/resume') }
     }
   }, [id])
@@ -124,6 +129,20 @@ export default function ResumeFormPage() {
             onChange={set('idealCandidate')}
           />
           <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>{form.idealCandidate.length}자</div>
+        </div>
+
+        {/* 자기소개서 내용 */}
+        <div className="rf-group">
+          <div className="rf-label">자기소개서 내용</div>
+          <textarea
+            className="rf-input rf-textarea"
+            style={{ minHeight: 220 }}
+            maxLength={SELF_INTRO_MAX}
+            placeholder={'지원 동기, 직무 관련 경험(프로젝트 · 실습 · 아르바이트 · 대외활동), 성과 등을 자유롭게 작성해 주세요. (선택사항)\n여기 쓴 경험을 바탕으로 "그때 맡은 역할은?", "어떻게 해결했나요?" 같은 꼬리 질문이 만들어집니다.'}
+            value={form.selfIntroduction}
+            onChange={set('selfIntroduction')}
+          />
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>{form.selfIntroduction.length} / {SELF_INTRO_MAX}자</div>
         </div>
 
         <div className="rf-footer">

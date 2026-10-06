@@ -602,29 +602,200 @@ def _extract_questions(text: str) -> list:
             for line in text.splitlines() if line.strip()]
 
 
-async def generate_questions_from_resume(resume_text: str, category: str, num_questions: int = 5) -> list:
-    """한국어 글쓰기 모델(없으면 베이스 Llama)로 지원 정보 기반 질문 생성 — 고정 질문(자기소개·지원동기)은 빼고 AI 질문만 반환.
+async def _generate_job_questions(info_text: str, count: int) -> list:
+    """직무 정보(회사 · 직무 · 직무 설명 · 인재상)로 직무 질문 생성 — 모델이 문장을 직접 쓴다.
 
     3B 모델은 깨진 질문(외국 문자·영어 섞임, 서술문, 여러 질문이 한 줄로 붙음)을 낼 때가 있다
-    → is_valid_question으로 거르고, 모자라면 한 번 더 생성한다. 그래도 모자라면 있는 만큼만 반환하고
-    호출부(routers/interview.py)가 직무 기본 질문(question_bank)으로 채운다. 실패 시 빈 리스트.
+    → is_valid_question으로 거르고, 모자라면 한 번 더 생성한다. 그래도 모자라면 있는 만큼만 반환한다.
     """
-    ai_num = max(0, num_questions - 2)
-    if ai_num == 0 or (llama_service.model is None and llama_service.text_model is None):
-        return []
     questions, seen = [], set()
     for attempt in range(QUESTION_GEN_ATTEMPTS):
         try:
-            text = await llama_service.generate_text(_question_messages(resume_text, ai_num + 1), max_new_tokens=500)
+            text = await llama_service.generate_text(_question_messages(info_text, count + 1), max_new_tokens=500)
         except Exception as e:
             logger.error(f"Llama 질문 생성 실패: {e}")
             break
         candidates = [q.strip() for q in _extract_questions(text)]
-        valid = [q for q in candidates if is_valid_question(q) and q not in seen]
-        logger.info(f"질문 생성 {attempt + 1}회차: 후보 {len(candidates)}개 중 사용 가능 {len(valid)}개")
+        valid = [q for q in candidates if is_valid_question(q) and not _AWKWARD_QUESTION.search(q.strip()) and q not in seen]
+        logger.info(f"직무 질문 생성 {attempt + 1}회차: 후보 {len(candidates)}개 중 사용 가능 {len(valid)}개")
         for q in valid:
             seen.add(q)
             questions.append(q)
-        if len(questions) >= ai_num:
+        if len(questions) >= count:
             break
-    return questions[:ai_num]
+    return questions[:count]
+
+
+# ── 자기소개서 키워드 질문 ─────────────────────────────────────────────────────
+# 10/6 시험(가상 자기소개서 3개): 모델에게 질문을 통째로 맡기면 자기소개서 키워드가 든 질문이 12개 중 2개.
+# 키워드 추출은 잘하지만(경험 3~4개를 정확히 고름) 질문 문장을 쓰게 하면 답을 대신 쓰거나 지시문을 베꼈다.
+# → 모델은 추출만 하고, 질문은 아래 틀에 키워드를 넣어 만든다 (깨진 문장이 나올 수 없음).
+SELF_INTRO_MAX = 3000   # 화면(ResumeFormPage)의 자기소개서 최대 길이와 같게
+_SELF_INTRO_LABEL = re.compile(r"^자기소개서\s*:\s*", re.MULTILINE)
+_GENERIC_KEYWORDS = {"경험", "자기소개서", "지원", "지원 동기", "회사", "직무", "노력", "역량", "성장", "목표", "꿈", "저", "열정"}
+
+# 같은 경험을 다른 각도로 — 역할 · 어려움 · 선택 이유 · 결과 근거 · 배운 점(직무 연결). 조사가 필요 없게 '…'에 대해 / '…' 경험 형태로 씀.
+# 모두 is_valid_question을 통과해야 한다 (따옴표로 시작하면 거부되어 캐시에서 걸러짐)
+_KEYWORD_TEMPLATES = [
+    "자기소개서에서 '{kw}'에 대해 쓰셨는데, 그때 본인이 맡은 역할과 직접 한 행동을 구체적으로 말씀해 주세요.",
+    "자기소개서에 쓰신 '{kw}' 경험에서 가장 어려웠던 점은 무엇이었고, 어떻게 해결하셨는지 말씀해 주세요.",
+    "자기소개서의 '{kw}' 경험에서 그 방법을 선택한 이유는 무엇이었고, 함께 고려했던 다른 방법이 있었다면 말씀해 주세요.",
+    "자기소개서에 쓰신 '{kw}' 경험의 결과를 어떻게 확인하셨는지 수치나 근거를 들어 말씀해 주세요.",
+    "자기소개서의 '{kw}' 경험에서 배운 점을 {job} 업무에서 어떻게 활용하실 수 있을지 말씀해 주세요.",
+]
+
+
+def split_self_intro(resume_text: str) -> tuple:
+    """화면이 보낸 지원 정보에서 '자기소개서: …'(맨 끝, 여러 줄)를 떼어 (직무 정보, 자기소개서)로 나눈다."""
+    m = _SELF_INTRO_LABEL.search(resume_text or "")
+    if not m:
+        return (resume_text or "").strip(), ""
+    return resume_text[:m.start()].strip(), resume_text[m.end():].strip()[:SELF_INTRO_MAX]
+
+
+def _keyword_messages(intro: str) -> list:
+    return [
+        {"role": "system", "content": "당신은 채용 면접관입니다. 자기소개서에서 면접에서 파고들 핵심 경험을 뽑습니다."},
+        {"role": "user", "content": (
+            "아래 자기소개서에서 지원자가 직접 한 구체적인 경험을 정확히 5개 뽑으세요.\n"
+            "지원 동기 · 포부 · 성격 설명은 빼고, 실제로 한 일(프로젝트 · 실습 · 활동 · 문제 해결 · 성과)만 고르세요.\n"
+            "각 항목은 keyword(그 경험을 가리키는, 자기소개서에 실제로 쓰인 짧은 구절 그대로, 2~12자)와 summary(무슨 일을 했는지 한 문장)로 쓰고,\n"
+            "순수 JSON 배열로만 출력하세요: [{\"keyword\": \"...\", \"summary\": \"...\"}]\n\n"
+            f"자기소개서:\n{intro}"
+        )},
+    ]
+
+
+_ASPIRATION = re.compile(r"싶습니다|싶어|지원했|지원하게|지원합니다|기여하|되겠습니다|입사|공감해|공감하여")
+
+
+def _token_in(token: str, text: str) -> bool:
+    """단어가 원문에 있는지 — 두 글자 이상이면 앞 두 글자로도 인정 ('도입' ↔ '도입해', '올리기' ↔ '올리고')."""
+    return token in text or (len(token) > 2 and token[:2] in text)
+
+
+def _grounded(kw: str, intro: str) -> bool:
+    """키워드가 자기소개서에 근거가 있는지. 모델은 '짧은 구절'을 원문에서 살짝 바꿔 쓰는 일이 많아('Redis 캐시 도입')
+    글자 그대로 대신 단어 단위로 본다: 한 단어면 원문에 그대로 있어야 하고(지어낸 단어 방지),
+    여러 단어면 첫 단어가 있고 단어의 60% 이상이 원문에 있어야 한다."""
+    tokens = kw.split()
+    if len(tokens) == 1:
+        return kw in intro
+    hits = [_token_in(t, intro) for t in tokens]
+    return hits[0] and sum(hits) / len(hits) >= 0.6
+
+
+def _sentence_of(intro: str, kw: str) -> str:
+    """키워드 단어가 가장 많이 들어 있는 문장."""
+    sents = [s for s in re.split(r"(?<=[.!?])\s+|\n+", intro) if s.strip()]
+    tokens = kw.split()
+    return max(sents, key=lambda s: sum(_token_in(t, s) for t in tokens), default="")
+
+
+def _parse_keywords(text: str, intro: str, limit: int = 5) -> list:
+    """모델 출력에서 키워드만 꺼낸다 — 객체를 하나씩 읽어 배열이 잘려도 앞 항목은 살리고,
+    자기소개서에 실제로 없는 단어 · 너무 일반적인 단어 · 겹치는 단어는 버린다."""
+    out = []
+    for m in re.finditer(r"\{[^{}]*\}", text or ""):
+        try:
+            item = json.loads(m.group(), strict=False)
+        except Exception:
+            continue
+        kw = str(item.get("keyword", "")).strip().strip("'\"") if isinstance(item, dict) else ""
+        if (2 <= len(kw) <= 20 and "\n" not in kw and "'" not in kw and _grounded(kw, intro)
+                and not (" " not in kw and len(kw) <= 2 and not kw.isascii())   # '병실' · '실습' 같은 두 글자 한 단어는 너무 일반적
+                and _is_clean_korean(kw, min_hangul_ratio=0.0, strict=True)   # 외국 문자 · 소문자 영어 → 질문 검사에서 걸림
+                and kw not in _GENERIC_KEYWORDS and not any(kw in k or k in kw for k in out)
+                and not _ASPIRATION.search(_sentence_of(intro, kw))):   # 포부 · 지원 동기 문장의 단어는 경험이 아님
+            out.append(kw)
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def extract_self_intro_keywords(intro: str) -> list:
+    """자기소개서에서 면접에서 파고들 경험 키워드 최대 5개 (탐욕적 생성 — 같은 글엔 같은 결과). 실패 시 빈 리스트."""
+    if len(intro) < 50 or llama_service.model is None:
+        return []
+    try:
+        text = (await llama_service.generate_batch([_keyword_messages(intro)], 400, None, greedy=True))[0]
+    except Exception as e:
+        logger.error(f"자기소개서 키워드 추출 실패: {e}")
+        return []
+    keywords = _parse_keywords(text, intro)
+    logger.info(f"자기소개서 키워드 {len(keywords)}개: {keywords}")
+    return keywords
+
+
+def keyword_questions(keywords: list, resume_text: str, count: Optional[int] = None) -> list:
+    """키워드 질문 count개 — 질문 i는 키워드 i % n에 틀 i % 5를 붙인다. 키워드가 적으면 같은 키워드를 다른 각도로
+    한 번 더 묻는다(키워드당 최대 2번). 예: 키워드 2개 → 역할 · 어려움(첫 면접), 선택 이유 · 결과 근거(다음 면접)."""
+    if not keywords:
+        return []
+    count = min(count if count is not None else len(keywords), 2 * len(keywords))
+    m = re.search(r"^지원 직무\s*:\s*(.+)$", resume_text or "", re.MULTILINE)
+    job = re.sub(r"\s*직무$", "", m.group(1).strip()[:30]) if m else ""
+    return [_KEYWORD_TEMPLATES[i % len(_KEYWORD_TEMPLATES)].format(kw=keywords[i % len(keywords)], job=job or "지원하신")
+            for i in range(count)]
+
+
+# 직무 설명(화면의 '직무 수행 업무')에서 떼어 낸 업무 항목용 틀 — 모델이 쓴 직무 질문은 일반적이거나 문법이 어색할 때가 많았다
+_DUTY_TEMPLATES = [
+    "직무 설명에 있는 '{duty}' 업무와 관련해 해 본 경험이 있다면, 그때 본인이 한 일과 결과를 말씀해 주세요.",
+    "입사 후 '{duty}' 업무를 맡는다면 가장 중요하게 챙길 점은 무엇이고, 그 이유는 무엇인지 말씀해 주세요.",
+    "입사 후 '{duty}' 업무에서 예상하지 못한 어려움이 생긴다면 어떻게 대처하실지 순서대로 말씀해 주세요.",
+]
+
+
+def duty_questions(info_text: str, limit: int = 2) -> list:
+    """직무 설명을 쉼표 · 가운뎃점 · '및' 등으로 나눠 짧은 업무 항목(4~20자)만 질문 틀에 넣는다.
+    긴 문장으로 쓴 직무 설명은 항목이 안 나오므로 빈 리스트 → 호출부가 모델 생성으로 채운다."""
+    m = re.search(r"^직무 설명\s*:\s*(.+)$", info_text or "", re.MULTILINE)
+    if not m:
+        return []
+    duties = []
+    for part in re.split(r"[,，·/;]|\s및\s|\s그리고\s", m.group(1)):
+        d = re.sub(r"\s*등$", "", part.strip(" .")).strip()
+        if 4 <= len(d) <= 20 and "'" not in d and _is_clean_korean(d, min_hangul_ratio=0.0, strict=True) and d not in duties:   # "운영" 같은 한 단어는 제외
+            duties.append(d)
+    return [_DUTY_TEMPLATES[i % len(_DUTY_TEMPLATES)].format(duty=d) for i, d in enumerate(duties[:limit])]
+
+
+_AWKWARD_QUESTION = re.compile(r"^당신|습니다\s*\?$|는가\s*\?$")   # 모델이 쓴 질문 중 어색한 것 ('당신이 …', '…했습니다?', '…하는가?')
+
+
+def _interleave(kw_qs: list, job_qs: list, count: int) -> list:
+    """키워드 질문 2개 · 직무 질문 1개 순서로 섞는다 — 호출부가 면접마다 3개씩 차례로 꺼내 쓰므로
+    면접 한 번에 자기소개서 질문 2개 + 직무 질문 1개가 되도록. 한쪽이 모자라면 다른 쪽으로 채운다."""
+    kw, job, out = list(kw_qs), list(job_qs), []
+    while len(out) < count and (kw or job):
+        for src in (kw, kw, job):
+            if src and len(out) < count:
+                out.append(src.pop(0))
+        if not kw and job:
+            out += job[:count - len(out)]; job.clear()
+        if not job and kw:
+            out += kw[:count - len(out)]; kw.clear()
+    return out
+
+
+async def generate_questions_from_resume(resume_text: str, category: str, num_questions: int = 5) -> list:
+    """지원 정보로 면접 질문 생성 — 고정 질문(자기소개·지원동기) 2개는 빼고 AI 질문 num_questions-2개를 반환.
+
+    자기소개서 질문: 키워드 추출 → 질문 틀 (자기소개서가 있을 때)
+    직무 질문: 직무 설명의 업무 항목 → 질문 틀, 항목이 모자라면 모델이 직접 쓴 질문
+    둘을 섞어 면접마다 자기소개서 질문 2개 + 직무 질문 1개가 되게 한다.
+    모자라면 있는 만큼만 반환하고 호출부(routers/interview.py)가 직무 기본 질문(question_bank)으로 채운다.
+    """
+    ai_num = max(0, num_questions - 2)
+    if ai_num == 0 or (llama_service.model is None and llama_service.text_model is None):
+        return []
+    info_text, intro = split_self_intro(resume_text)
+    keywords = await extract_self_intro_keywords(intro) if intro else []
+    # 면접마다 자기소개서 질문 2 : 직무 질문 1 → 질문 풀 6개 중 자기소개서 질문 4개
+    kw_qs = keyword_questions(keywords, info_text, count=max(len(keywords), ai_num - ai_num // 3))
+    need_job = max(ai_num - len(kw_qs), ai_num // 3 or 1)
+    job_qs = duty_questions(info_text, limit=need_job)
+    if len(job_qs) < need_job:
+        job_qs += await _generate_job_questions(info_text, need_job - len(job_qs))
+    return _interleave(kw_qs, job_qs, ai_num)

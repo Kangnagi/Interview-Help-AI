@@ -140,6 +140,8 @@ export default function PracticeInterviewPage() {
       resume.jobTitle      && `지원 직무: ${resume.jobTitle}`,
       resume.jobDescription && `직무 설명: ${resume.jobDescription}`,
       resume.idealCandidate && `인재상: ${resume.idealCandidate}`,
+      // 자기소개서는 여러 줄이라 맨 끝에 둔다 — 서버가 '자기소개서:' 뒤 전체를 떼어 키워드 질문에 쓴다
+      resume.selfIntroduction && `자기소개서: ${resume.selfIntroduction}`,
     ].filter(Boolean).join('\n') : ''
 
     try {
