@@ -13,7 +13,7 @@ from core.config import settings
 from core.database import init_db
 from core.rate_limit import limiter
 from core.security_middleware import SecurityHeadersMiddleware, RequestSizeLimitMiddleware
-from routers import auth, interview, analysis, websocket, stt, stats, feedback
+from routers import auth, interview, analysis, websocket, stt, feedback
 from services.vision.mediapipe_service import mediapipe_service
 from services.llm.kobert_service import kobert_service
 from services.llm.llama_service import llama_service
@@ -96,7 +96,6 @@ app.include_router(auth.router,      prefix=API_PREFIX)
 app.include_router(interview.router, prefix=API_PREFIX)
 app.include_router(analysis.router,  prefix=API_PREFIX)
 app.include_router(stt.router,       prefix=API_PREFIX)
-app.include_router(stats.router,     prefix=API_PREFIX)
 app.include_router(feedback.router,  prefix=API_PREFIX)
 app.include_router(websocket.router)
 

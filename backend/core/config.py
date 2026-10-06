@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None        # .env 파일에 GEMINI_API_KEY= 로 설정
     GEMINI_MODEL: str = "gemini-2.0-flash"
 
+    # ── Rate Limit ─────────────────────────────────────────────────
+    
+    GLOBAL_RATE_LIMIT: str = "100/minute"
+    
+    
     # ── DB ─────────────────────────────────────────────────
     DATABASE_URL: str = "sqlite+aiosqlite:///./interview.db"   # 비동기 SQLite DB 경로
 
@@ -34,6 +39,18 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"               # 업로드 파일 저장 디렉토리
     MAX_UPLOAD_SIZE_MB: int = 100               # 최대 업로드 파일 크기 (MB)
 
+    # ── 파일/요청 크기 설정 ─────────────────────────────────
+    UPLOAD_DIR: str = "./uploads"
+
+    # 일반 HTTP 요청 최대 크기
+    MAX_REQUEST_SIZE_MB: int = 100
+
+    # 대용량 파일 업로드 최대 크기
+    MAX_UPLOAD_REQUEST_SIZE_MB: int = 100
+
+    # 기존 코드와의 호환성을 위해 유지
+    MAX_UPLOAD_SIZE_MB: int = 100
+    
     # ── AI 모델 설정 ────────────────────────────────────────
     KOBERT_MODEL_PATH: str = "./models/kobert"              # KoBERT 로컬 모델 경로 (미사용 시 HuggingFace 자동 다운)
     WHISPER_MODEL_SIZE: str = "base"                        # Whisper 모델 크기 (tiny/base/small/medium/large)

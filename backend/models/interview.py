@@ -91,3 +91,8 @@ class InterviewQuestion(Base):
     created_at       = Column(DateTime, default=datetime.utcnow)
 
     interview = relationship("Interview", back_populates="questions")
+    ratings = relationship(
+        "AnswerRating",
+        back_populates="question",
+        cascade="all, delete-orphan",
+    )

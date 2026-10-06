@@ -348,7 +348,7 @@ async def interview_websocket(
                 try:
 
                     result = await asyncio.to_thread(
-                        mediapipe_service.analyze_frame_sync,
+                        mediapipe_service.analyze_landmarks,
                         frame_bytes,
                     )
 

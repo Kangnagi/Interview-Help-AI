@@ -22,3 +22,6 @@ Thumbs.db
 backend/interview.db 
 
 backend/.hf_cache/
+
+# Frontend dependencies
+frontend/node_modules/
