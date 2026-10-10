@@ -105,9 +105,8 @@ async def interview_websocket(
                 # 전부 멈춘다. 별도 스레드로 넘겨 이벤트 루프가 계속 다른 요청을 처리하게 한다.
                 result = await asyncio.to_thread(mediapipe_service.analyze_frame_sync, frame_bytes)
 
-                # MediaPipe가 실제로 초기화된 경우에만 버퍼에 누적
-                # (Stub 모드는 항상 True를 반환하므로 제외)
-                if mediapipe_service._initialized:
+                # 실제로 분석한 프레임만 누적 — Stub 모드 · 깨진 프레임(face_detected None)은 항상 '양호'라 제외
+                if mediapipe_service._initialized and result.get("face_detected") is not None:
                     add_frame_result(interview_id, result)
 
                 await manager.send_json(websocket, {

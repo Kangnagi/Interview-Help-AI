@@ -5,6 +5,7 @@ import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
 import { wsUrl } from '@/services/websocket'
+import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
 import { useAuthStore } from '@/store/authStore'
 
 const PHASE = {
@@ -68,6 +69,22 @@ export default function PracticeInterviewPage() {
   const answerTimer = useRef(null)
   const detectionRef = useRef(null)
 
+
+  // 카메라 프레임을 서버(MediaPipe)로 보내 자세 · 시선을 실제로 잰다 — 결과로 카메라 칸 표시도 바꾼다
+  const visionRecentRef = useRef([])
+  const serverVisionRef = useRef(false)      // 서버 결과가 오기 시작하면 브라우저 얼굴 인식(FaceDetector) 표시는 쓰지 않음
+  const handleVisionResult = useCallback((r) => {
+    visionRecentRef.current = [...visionRecentRef.current.slice(-2), r]
+    const st = faceStatusFromResults(visionRecentRef.current)
+    if (st) { serverVisionRef.current = true; setFaceStatus(st) }
+  }, [])
+  useVisionStream({
+    interviewId: backendInterviewId,
+    videoRef,
+    active: phase === PHASE.QUESTION || phase === PHASE.ANSWERING,
+    onResult: handleVisionResult,
+  })
+
   const currentQuestion = backendQuestions[qIndex]
   const currentQ = currentQuestion?.question_text || ''
 
@@ -78,7 +95,7 @@ export default function PracticeInterviewPage() {
   const startAudioStreaming = useCallback(() => {
     if (!backendInterviewId) return
     
-    const ws = new WebSocket(wsUrl(`/ws/interview_audio/${backendInterviewId}?token=${token}`))
+    const ws = new WebSocket(wsUrl(`/ws/interview_audio/${backendInterviewId}?token=${localStorage.getItem('token') || token}`))   // 자동 연장된 최신 토큰
     wsRef.current = ws
     // 답변마다 연결을 새로 여므로, 열리자마자 '이 녹음은 어느 질문의 답변인지' 알린다.
     // (안 보내면 서버가 녹음을 첫 질문에 연결해 매 답변이 첫 질문 녹음을 덮어쓴다)
@@ -199,7 +216,7 @@ export default function PracticeInterviewPage() {
         if (typeof FaceDetector !== 'undefined') {
           const detector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 })
           detectionRef.current = setInterval(async () => {
-            if (!videoRef.current || videoRef.current.readyState < 2) return
+            if (serverVisionRef.current || !videoRef.current || videoRef.current.readyState < 2) return
             try {
               const faces = await detector.detect(videoRef.current)
               setFaceStatus(faces.length > 0 ? 'detected' : 'lost')
@@ -513,6 +530,7 @@ export default function PracticeInterviewPage() {
               {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
               {faceStatus === 'camera' && <div className="face-badge detected"><span className="face-dot" />카메라 연결됨</div>}
               {faceStatus === 'lost' && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
+              {faceStatus === 'away' && <div className="face-badge detecting"><span className="face-dot" />정면을 봐 주세요</div>}
             </div>
           </div>
 

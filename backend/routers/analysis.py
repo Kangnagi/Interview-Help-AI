@@ -282,18 +282,21 @@ async def _run_analysis_pipeline_impl(interview_id: int):
 
             # posture / eye_contact: 실시간 MediaPipe 버퍼 우선 사용, 없으면 텍스트 기반 추정
             vision_scores = get_and_clear_vision_scores(interview_id)
+            text_avg = _avg([analysis.content_score, analysis.relevance_score, analysis.clarity_score])
+            est_posture = round(min(100, (text_avg or 75) * 0.9 + 10), 1)     # 영상이 없을 때의 추정값
+            est_eye     = round(min(100, (text_avg or 80) * 0.85 + 12), 1)
             if vision_scores:
-                analysis.posture_score     = vision_scores["posture_score"]
-                analysis.eye_contact_score = vision_scores["eye_contact_score"]
+                # 얼굴이 한 장도 안 잡혔으면 카메라 문제(가림 · 어두움 · 다른 카메라)일 가능성이 커 시선도 추정값
+                analysis.eye_contact_score = vision_scores["eye_contact_score"] if vision_scores["face_ratio"] > 0 else est_eye
+                # 어깨가 화면에 한 번도 안 잡혔으면 자세만 추정값
+                analysis.posture_score = vision_scores["posture_score"] if vision_scores["posture_score"] is not None else est_posture
                 logger.info(
                     f"[Analysis] MediaPipe 실측값 사용 "
-                    f"(프레임 수={vision_scores['frame_count']}, "
-                    f"자세={analysis.posture_score}, 눈맞춤={analysis.eye_contact_score})"
+                    f"(프레임 수={vision_scores['frame_count']}, 얼굴 보임={vision_scores['face_ratio']}%, "
+                    f"자세={analysis.posture_score}{'' if vision_scores['posture_score'] is not None else '(추정)'}, 눈맞춤={analysis.eye_contact_score}{'' if vision_scores['face_ratio'] > 0 else '(추정)'})"
                 )
             else:
-                text_avg = _avg([analysis.content_score, analysis.relevance_score, analysis.clarity_score])
-                analysis.posture_score     = round(min(100, (text_avg or 75) * 0.9 + 10), 1)
-                analysis.eye_contact_score = round(min(100, (text_avg or 80) * 0.85 + 12), 1)
+                analysis.posture_score, analysis.eye_contact_score = est_posture, est_eye
                 logger.info("[Analysis] MediaPipe 데이터 없음 — 텍스트 기반 추정값 사용")
 
             # ── 5) 종합 점수 ─────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
 import { interviewWS } from '@/services/websocket'
+import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
 
 const FALLBACK_QUESTIONS = [
   '자기소개를 1분 이내로 해주세요.',
@@ -50,6 +51,16 @@ export default function RealInterviewPage() {
   const detectionRef = useRef(null)
   const micRafRef = useRef(null)
   const handleNextRef = useRef(null)
+
+  // 카메라 프레임을 서버(MediaPipe)로 보내 자세 · 시선을 실제로 잰다 — 결과로 카메라 칸 표시도 바꾼다
+  const visionRecentRef = useRef([])
+  const serverVisionRef = useRef(false)      // 서버 결과가 오기 시작하면 브라우저 얼굴 인식(FaceDetector) 표시는 쓰지 않음
+  const handleVisionResult = useCallback((r) => {
+    visionRecentRef.current = [...visionRecentRef.current.slice(-2), r]
+    const st = faceStatusFromResults(visionRecentRef.current)
+    if (st) { serverVisionRef.current = true; setFaceStatus(st) }
+  }, [])
+  useVisionStream({ interviewId: backendInterviewId, videoRef, active: phase === 'interview', onResult: handleVisionResult })
 
   const activeQuestions = backendQuestions.length > 0
     ? backendQuestions.map((q) => q.question_text)
@@ -126,7 +137,7 @@ export default function RealInterviewPage() {
         if (typeof FaceDetector !== 'undefined') {
           const detector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 })
           detectionRef.current = setInterval(async () => {
-            if (!videoRef.current || videoRef.current.readyState < 2) return
+            if (serverVisionRef.current || !videoRef.current || videoRef.current.readyState < 2) return
             try {
               const faces = await detector.detect(videoRef.current)
               setFaceStatus(faces.length > 0 ? 'detected' : 'lost')
@@ -433,6 +444,7 @@ export default function RealInterviewPage() {
               {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
               {faceStatus === 'camera' && <div className="face-badge detected"><span className="face-dot" />카메라 연결됨</div>}
               {faceStatus === 'lost' && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
+              {faceStatus === 'away' && <div className="face-badge detecting"><span className="face-dot" />정면을 봐 주세요</div>}
             </div>
           </div>
 

@@ -4,7 +4,7 @@ MediaPipe 비전 분석 서비스
 역할: 웹캠 프레임(실시간) 또는 녹화 영상(사후 분석)에서 눈맞춤·고개 기울기·자세를 측정.
 
 분석 모듈:
-  FaceLandmarker — 478개 얼굴 랜드마크 → 눈맞춤·고개 방향 계산
+  FaceLandmarker — 478개 얼굴 랜드마크 → 눈맞춤·고개 방향 계산, 표정 계수(blendshapes) → 눈 감김 · 미소
   PoseLandmarker — 33개 신체 랜드마크 → 어깨 수평 여부 판단
 
 두 가지 동작 모드:
@@ -96,6 +96,7 @@ class MediaPipeService:
                 min_face_detection_confidence=0.5,
                 min_face_presence_confidence=0.5,
                 min_tracking_confidence=0.5,
+                output_face_blendshapes=True,   # 눈 깜빡임 · 미소 정도 (52개 표정 계수, 0~1)
             )
             self._face_landmarker = mp_vision.FaceLandmarker.create_from_options(face_opts)
 
@@ -176,6 +177,42 @@ class MediaPipeService:
             "roll":  round(roll, 2),
         }
 
+    def _blendshapes(self, face_result) -> dict:
+        """얼굴 표정 계수 {이름: 0~1} — 첫 번째 얼굴만. 얼굴이 없으면 빈 dict."""
+        if not face_result or not getattr(face_result, "face_blendshapes", None):
+            return {}
+        return {c.category_name: float(c.score) for c in face_result.face_blendshapes[0]}
+
+    def _analyze_face_detail(self, face_result) -> dict:
+        """눈 깜빡임 · 표정 (2026-10 영상 담당 mediapipe 브랜치가 화면에 보내려던 항목을 실제 측정값으로).
+
+        eyes_closed: 양쪽 눈 감김 계수 평균 > 0.5 (이 프레임에서 눈을 감고 있음 — 깜빡임 순간 포함)
+        smile:       양쪽 입꼬리 올림 계수 평균 (0~1), expression: 0.4 이상이면 'smile', 아니면 'neutral'
+        """
+        bs = self._blendshapes(face_result)
+        if not bs:
+            return {"eyes_closed": None, "smile": None, "expression": "unknown"}
+        blink = (bs.get("eyeBlinkLeft", 0.0) + bs.get("eyeBlinkRight", 0.0)) / 2
+        smile = (bs.get("mouthSmileLeft", 0.0) + bs.get("mouthSmileRight", 0.0)) / 2
+        return {
+            "eyes_closed": blink > 0.5,
+            "smile":       round(smile, 2),
+            "expression":  "smile" if smile >= 0.4 else "neutral",
+        }
+
+    def _frame_result(self, face_result, pose_result) -> dict:
+        """실시간 프레임 한 장의 결과 — 화면 표시용 + 분석 집계용(core/vision_buffer)."""
+        face_detected = bool(face_result and face_result.face_landmarks)
+        return {
+            "face_detected":  face_detected,
+            "landmark_count": len(face_result.face_landmarks[0]) if face_detected else 0,
+            "eye_contact":    self._analyze_eye_contact(face_result),
+            "head_pose":      self._analyze_head_pose(face_result),
+            "pose_detected":  bool(pose_result and pose_result.pose_landmarks),
+            "posture_ok":     self._analyze_posture(pose_result),
+            **self._analyze_face_detail(face_result),
+        }
+
     def _analyze_posture(self, pose_result) -> bool:
         """
         어깨 수평 여부로 자세 양호/불량 판정.
@@ -211,12 +248,7 @@ class MediaPipeService:
             if rgb is None:
                 return self._stub_frame()
             face_result, pose_result = self._run_detection(rgb)
-            return {
-                "eye_contact": self._analyze_eye_contact(face_result),
-                "head_pose":   self._analyze_head_pose(face_result),
-                "expression":  "neutral",
-                "posture_ok":  self._analyze_posture(pose_result),
-            }
+            return self._frame_result(face_result, pose_result)
         except Exception as e:
             logger.error(f"동기 프레임 분석 오류: {e}")
             return self._stub_frame()
@@ -230,12 +262,7 @@ class MediaPipeService:
             if rgb is None:
                 return self._stub_frame()
             face_result, pose_result = self._run_detection(rgb)
-            return {
-                "eye_contact": self._analyze_eye_contact(face_result),
-                "head_pose":   self._analyze_head_pose(face_result),
-                "expression":  "neutral",
-                "posture_ok":  self._analyze_posture(pose_result),
-            }
+            return self._frame_result(face_result, pose_result)
         except Exception as e:
             logger.error(f"프레임 분석 오류: {e}")
             return self._stub_frame()
@@ -286,7 +313,12 @@ class MediaPipeService:
             return self._stub_video()
 
     def _stub_frame(self) -> dict:
+        # face_detected None = 분석 못 함 (화면은 '카메라 연결됨'으로 둔다). 버퍼에는 쌓지 않는다 (websocket.py)
         return {
+            "face_detected": None,
+            "landmark_count": 0,
+            "eyes_closed": None,
+            "smile":       None,
             "eye_contact": True,
             "head_pose":   {"pitch": 0.0, "yaw": 0.0, "roll": 0.0},
             "expression":  "neutral",
