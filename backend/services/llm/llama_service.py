@@ -48,6 +48,7 @@ def _parse_json(text: str):
 
 FEEDBACK_ADAPTER = "interview_feedback"
 SCORE_ADAPTER = "interview_score"
+QGEN_ADAPTER = "interview_qgen"   # 질문 전용 (자기소개서 질문 풀 · 꼬리 질문) — LLAMA_QGEN_ADAPTER_PATH가 있을 때만
 
 # training/generate_teacher_scores.py의 SCORING_SYSTEM_PROMPT와 글자 하나까지 같아야 한다.
 # (채점 어댑터는 이 프롬프트로만 학습됐기 때문에 조금만 달라져도 출력 형식·점수가 흔들린다.)
@@ -129,6 +130,7 @@ class LlamaService:
             self.model = None
             self.has_score_adapter = False
             self.has_feedback_adapter = False
+            self.has_qgen_adapter = False
             # generate()는 스레드로 넘어가므로, 같은 모델 인스턴스에 대한 동시
             # 호출(어댑터 전환 포함)이 서로 섞이지 않도록 직렬화한다.
             self._lock = asyncio.Lock()
@@ -144,13 +146,14 @@ class LlamaService:
         logger.info("Llama 모델 로딩 중...")
         try:
             await asyncio.to_thread(self._load_model_sync)
-            logger.info(f"Llama 로딩 완료 (device: {self.device}, 채점 어댑터: {self.has_score_adapter})")
+            logger.info(f"Llama 로딩 완료 (device: {self.device}, 채점 어댑터: {self.has_score_adapter}, 질문 어댑터: {self.has_qgen_adapter})")
         except Exception as e:
             logger.error(f"Llama 로딩 실패 (규칙 기반 채점으로 동작): {e}")
             self.model = None
             self.tokenizer = None
             self.has_score_adapter = False
             self.has_feedback_adapter = False
+            self.has_qgen_adapter = False
 
         if settings.TEXT_MODEL:
             logger.info(f"한국어 글쓰기 모델 로딩 중: {settings.TEXT_MODEL}")
@@ -228,6 +231,14 @@ class LlamaService:
         else:
             self.model = base_model
         self.has_score_adapter = score_dir is not None
+        # 질문 전용 어댑터 (선택) — 없으면 질문은 키워드 + 질문 틀 방식
+        qgen_dir = settings.LLAMA_QGEN_ADAPTER_PATH if settings.LLAMA_QGEN_ADAPTER_PATH and os.path.isdir(settings.LLAMA_QGEN_ADAPTER_PATH) else None
+        if qgen_dir:
+            if isinstance(self.model, PeftModel):
+                self.model.load_adapter(qgen_dir, adapter_name=QGEN_ADAPTER)
+            else:
+                self.model = PeftModel.from_pretrained(base_model, qgen_dir, adapter_name=QGEN_ADAPTER)
+            self.has_qgen_adapter = True
         if not score_dir:
             logger.warning(f"채점 어댑터 없음: {settings.LLAMA_SCORE_ADAPTER_PATH} — 규칙 기반 채점으로 동작")
         self.model.eval()
@@ -866,6 +877,11 @@ async def generate_questions_from_resume(resume_text: str, category: str, num_qu
     ai_num = max(0, num_questions - 2)
     if ai_num == 0 or (llama_service.model is None and llama_service.text_model is None):
         return []
+    # 질문 어댑터가 있으면 자기소개서를 읽고 직접 쓴 질문을 먼저 — 검사에서 빠진 만큼만 아래 질문 틀 방식으로 채운다
+    model_pool = await model_question_pool(resume_text) if llama_service.has_qgen_adapter else []
+    # 하나쯤 빠진 건 그대로 쓴다 — 틀 하나를 채우려고 키워드 추출을 또 돌리면 면접 준비가 10초 가까이 늘었다 (면접마다 3개씩 꺼내 써서 5개도 충분)
+    if len(model_pool) >= max(ai_num - 1, 1):
+        return model_pool[:ai_num]
     info_text, intro = split_self_intro(resume_text)
     keywords = await extract_self_intro_keywords(intro) if intro else []
     # 면접마다 자기소개서 질문 2 : 직무 질문 1 → 질문 풀 6개 중 자기소개서 질문 4개
@@ -874,22 +890,193 @@ async def generate_questions_from_resume(resume_text: str, category: str, num_qu
     job_qs = duty_questions(info_text, limit=need_job)
     if len(job_qs) < need_job:
         job_qs += await _generate_job_questions(info_text, need_job - len(job_qs))
-    return _interleave(kw_qs, job_qs, ai_num)
+    template_pool = _interleave(kw_qs, job_qs, ai_num)
+    return (model_pool + [q for q in template_pool if not any(_similar_question(q, m) for m in model_pool)])[:ai_num]
+
+
+# ── 질문 전용 어댑터 입력 형식 ───────────────────────────────────────────────────
+# 학습 데이터(training/build_qgen_dataset.py)와 서비스가 같은 형식을 쓴다 — 바꾸면 다시 학습해야 한다.
+# 작성 기준: training/question_guide.md
+QGEN_POOL_SIZE = 6   # 질문 풀 6개: 자기소개서 2 · 직무 1 · 자기소개서 2 · 직무 1 (면접마다 3개씩 꺼내 씀)
+_QGEN_SYSTEM = "당신은 채용 면접관입니다. 지원자의 지원 정보와 자기소개서를 읽고, 자기소개서에 쓴 경험을 구체적으로 파고드는 면접 질문을 만듭니다."
+_FU_SYSTEM = "당신은 채용 면접관입니다. 지원자의 답변을 듣고 바로 이어서 물을 꼬리 질문을 하나 만듭니다."
+
+
+def qgen_messages(resume_text: str) -> list:
+    """지원 정보(화면이 보내는 '지원 회사: …\\n…\\n자기소개서: …' 그대로) → 질문 6개 JSON 배열."""
+    return [
+        {"role": "system", "content": _QGEN_SYSTEM},
+        {"role": "user", "content": (
+            f"아래 지원 정보로 면접 질문 {QGEN_POOL_SIZE}개를 만드세요.\n"
+            "순서: 자기소개서 질문, 자기소개서 질문, 직무 질문, 자기소개서 질문, 자기소개서 질문, 직무 질문 "
+            "(자기소개서가 없으면 모두 직무 질문). 순수 JSON 배열로만 출력하세요.\n\n"
+            f"{(resume_text or '').strip()[:SELF_INTRO_MAX + 600]}"
+        )},
+    ]
+
+
+# 꼬리 질문 유형 (10/7 팀 블라인드 평가 때 정한 기준) — 답변을 보고 유형을 고른 뒤, 그 유형으로 묻는다
+FU_TYPES = {
+    "role": ("경험 진위 및 역할 검증형",
+             "지원자가 말한 성과나 경험에서 본인이 구체적으로 맡은 역할과 실제 기여도를 확인합니다."),
+    "why": ("판단 근거 및 원인 분석형",
+            "그 방법을 선택한 이유나 문제의 원인을 어떻게 판단했는지 물어 논리적 사고력을 확인합니다."),
+    "whatif": ("가정 및 바뀐 조건 대응형",
+               "당시 전제나 조건을 바꿔, 상황이 달랐다면 어떻게 대처할지 물어 실무 적응력과 유연성을 확인합니다."),
+    "strength": ("강점 및 약점 심화 탐색형",
+                 "답변에서 말한 강점이 실제 직무에서 어떻게 쓰이는지, 약점이 업무에 지장을 주지 않는지 파고듭니다."),
+}
+_STRENGTH_TOPIC = re.compile(r"장점|단점|강점|약점|성격|성향|보완|부족한 점|편인가요|편이신가요|스타일|본인을 .{0,6}(단어|표현)|스스로를 어떤")
+_STRENGTH_CLAIM = re.compile(r"제\s?(강점|장점|약점|단점)|저의\s?(강점|장점|약점|단점)|제 성격")
+_HYPOTHETICAL = re.compile(r"만약|한다면|된다면|라면|다고 하면|상황에서|하시겠|대처|어떻게 하실")
+_IF_ANY = re.compile(r"만약에?\s*(그런\s*)?(경험이\s*)?있\S*")   # '만약 있다면 말씀해 주세요'는 가정 질문이 아니다
+_ASKS_REASON = re.compile(r"이유|왜")   # 질문이 이미 이유를 물었으면 '판단 근거'를 또 묻지 않는다
+# 답변이 이미 이유를 말했어도 판단 근거형은 뒤로 — 10/10 팀 검토: 판단 근거형 16개 중 좋은 질문 5개, X의 대부분이 "이미 답변에 있음"
+_GAVE_REASON = re.compile(r"왜냐하면|때문에|때문입니다|이유는|이유가|그래서")
+# 가정사 · 사별처럼 민감한 이야기에는 꼬리 질문을 하지 않는다 (10/10 팀 검토 "가정사 관련 답변은 꼬리질문은 안하는게 좋음")
+_SENSITIVE_TOPIC = re.compile(r"시어머니|시아버지|시댁|고부|이혼|사별|돌아가셨|돌아가신|세상을 떠|학대|투병|장례|유산했")
+_PAST_EXPERIENCE = re.compile(r"했었|했던|당시|그때|였을 때|적이 있|경험이|했습니다|었습니다")
+_DECISION = re.compile(r"방법|해결|선택|결정|판단|원인|바꿨|바꾸|개선|고민")
+# 이미 나온 꼬리 질문이 어떤 유형이었는지 (면접 하나에 꼬리 질문이 둘이면 서로 다른 유형으로)
+# (가정 → 강점 → 역할 → 근거 순으로 본다: '만약 … 이유는'은 가정 질문)
+_FU_TYPE_MARKERS = {
+    "whatif": re.compile(r"만약|달랐다면|바뀐다면|없었다면|줄었다면|늘었다면"),
+    "strength": re.compile(r"강점|약점|장점|단점|보완"),
+    "role": re.compile(r"역할|직접|주도|기여|맡아|맡으|맡았"),
+    "why": re.compile(r"이유|근거|원인|판단하"),
+}
+
+
+def follow_up_type_of(text: str) -> Optional[str]:
+    return next((t for t, rx in _FU_TYPE_MARKERS.items() if rx.search(text or "")), None)
+
+
+def follow_up_types(question: str, answer: str, used: frozenset = frozenset()) -> list:
+    """이 답변에 어울리는 꼬리 질문 유형 순서 — 앞 꼬리 질문이 쓴 유형은 맨 뒤로.
+      강점·약점·성향 질문 → 강점 / 가정 질문(만약 · 상황) → 바뀐 조건 /
+      지난 경험에서 방법을 고르거나 문제를 푼 이야기 → 판단 근거 / 그 밖(주장 · 의견 · 경험) → 역할
+      (의견만 말한 답변엔 '실제로 해 본 경험과 본인 역할'을 물어 말의 진위를 확인)."""
+    question, answer = question or "", answer or ""
+    asks_reason = bool(_ASKS_REASON.search(question) or _GAVE_REASON.search(answer))
+    order = []
+    if _STRENGTH_TOPIC.search(question) or _STRENGTH_CLAIM.search(answer):
+        order.append("strength")
+    if _HYPOTHETICAL.search(_IF_ANY.sub("", question)):
+        order.append("whatif")
+    if _PAST_EXPERIENCE.search(answer) and _DECISION.search(answer) and not asks_reason:
+        order.append("why")
+    order += ["role", "whatif", "why"] if asks_reason else ["role", "why", "whatif"]
+    order = list(dict.fromkeys(order))
+    return [t for t in order if t not in used] + [t for t in order if t in used]
+
+
+def followup_messages(question: str, answer: str, fu_type: str = "role") -> list:
+    """방금 한 질문 · 답변 + 꼬리 질문 유형 → 꼬리 질문 한 문장."""
+    name, desc = FU_TYPES[fu_type]
+    return [
+        {"role": "system", "content": _FU_SYSTEM},
+        {"role": "user", "content": (
+            f"면접 질문: {question}\n지원자 답변: {(answer or '').strip()[:1500]}\n\n"
+            f"꼬리 질문 유형: {name} — {desc}\n"
+            "답변에 나온 내용을 짚어, 이 유형의 꼬리 질문 한 문장만 출력하세요."
+        )},
+    ]
+
+
+# 질문 틀 · 흔한 면접 표현 — 자기소개서와 겹쳐도 '근거'로 치지 않는다 (training/eval_qgen.py와 같은 기준)
+_GENERIC_PHRASES = re.sub(r"\s+", "", "자기소개서 경험 말씀해 주세요 무엇이었나요 어떻게 하셨나요 구체적으로 본인이 직접 결과를 확인 "
+                          "가장 어려웠던 이유는 무엇 그 방법을 선택한 다른 방법 배운 점 업무 입사 후 지원 회사 직무 설명 있다면 "
+                          "하셨는데 하셨다고 했는데 생각하시나요 보시나요 하시겠어요 판단하셨나요")
+
+
+def _squash_text(text: str) -> str:
+    return re.sub(r"[\s'\"‘’“”.,?!·]", "", text or "")
+
+
+def question_grounded(question: str, source: str, n: int = 4) -> bool:
+    """질문에 원문(자기소개서 · 답변)의 고유한 말이 들어 있는지 — 띄어쓰기를 빼고 n글자 이상 겹치는 부분(흔한 표현 제외)."""
+    q, t = _squash_text(question), _squash_text(source)
+    return any(q[i:i + n] in t and q[i:i + n] not in _GENERIC_PHRASES for i in range(len(q) - n + 1))
+
+
+def _similar_question(a: str, b: str, threshold: float = 0.8) -> bool:
+    sa, sb = set(_squash_text(a)), set(_squash_text(b))
+    return len(sa & sb) / max(1, len(sa | sb)) > threshold
+
+
+# 고정 질문(자기소개 · 지원동기)과 겹치는 질문 — 10/7 시험: "HBM … 메모리 설계에 대한 관심이 생겼던 계기가 됐나요?"가
+# 바로 앞의 "지원하게 된 동기가 무엇인가요?"와 같은 것을 물었다
+_FIXED_OVERLAP = re.compile(r"지원\s?동기|지원하게 된|지원한 이유|관심을\s?(갖|가지)게 된|관심이 생|자기소개를")
+
+
+def question_pool_tag() -> str:
+    """질문 캐시에 붙이는 방식 표시 — 질문 어댑터를 켜고 끄거나 바꾸면 예전 방식으로 만든 캐시를 쓰지 않는다."""
+    if llama_service.has_qgen_adapter:
+        return os.path.basename(os.path.normpath(settings.LLAMA_QGEN_ADAPTER_PATH))
+    return "template"
+
+
+async def model_question_pool(resume_text: str) -> list:
+    """질문 어댑터가 자기소개서를 읽고 직접 쓴 질문 풀 — 검사를 통과한 것만 순서대로.
+    (자기소개서 자리 0 · 1 · 3 · 4번은 자기소개서 근거가 있어야 하고, 자기소개서가 없으면 '자기소개서'를 언급한 질문은 버린다)"""
+    _, intro = split_self_intro(resume_text)
+    try:
+        text = (await llama_service.generate_batch([qgen_messages(resume_text)], 450, QGEN_ADAPTER, greedy=True))[0]
+    except Exception as e:
+        logger.error(f"질문 어댑터 생성 실패: {e}")
+        return []
+    out, dropped = [], 0
+    for i, q in enumerate(q.strip() for q in _extract_questions(text)[:QGEN_POOL_SIZE]):
+        ok = (is_valid_question(q) and not _AWKWARD_QUESTION.search(q) and not _FIXED_OVERLAP.search(q)
+              and (question_grounded(q, intro) if intro and i in (0, 1, 3, 4) else not (not intro and "자기소개서" in q))
+              and not any(_similar_question(q, o) for o in out))
+        if ok:
+            out.append(q)
+        else:
+            dropped += 1
+    logger.info(f"질문 어댑터: 풀 {len(out)}개 사용, {dropped}개 검사 탈락")
+    return out
+
+
+def same_experience(follow_up: str, answer: str, other: str, n: int = 5) -> bool:
+    """꼬리 질문이 답변에서 가져온 말(띄어쓰기 빼고 n글자, 흔한 표현 제외)이 다른 질문에도 있으면 같은 경험을 묻는 것으로 본다.
+    (10/7 시험: 자기소개 꼬리 질문 "RISC-V 파이프라인 … 어떤 기준으로 경로를 나누셨는지"가 뒤 질문 Q3과 같은 경험 · 같은 각도.
+    평가 데이터의 서로 다른 지원자 질문 10,800쌍에선 1쌍만 걸렸다)"""
+    q, a, o = _squash_text(follow_up), _squash_text(answer), _squash_text(other)
+    return any(q[i:i + n] in a and q[i:i + n] in o and q[i:i + n] not in _GENERIC_PHRASES for i in range(len(q) - n + 1))
+
+
+async def model_follow_up(question: str, answer: str, existing_questions: list, fu_type: str) -> Optional[str]:
+    """질문 어댑터가 정한 유형으로 직접 쓴 꼬리 질문. 검사에 떨어지거나, 다른 유형으로 썼거나,
+    이 면접의 다른 질문과 거의 같거나 같은 경험을 물으면 None."""
+    try:
+        text = (await llama_service.generate_batch([followup_messages(question, answer, fu_type)], 120, QGEN_ADAPTER, greedy=True))[0]
+    except Exception as e:
+        logger.error(f"질문 어댑터 꼬리 질문 실패: {e}")
+        return None
+    q = (text.strip().splitlines() or [""])[0].strip().strip('"')
+    others = [o for o in existing_questions if o and o != question]
+    reason = ("검사" if not is_valid_question(q) or len(q) > 130 or _AWKWARD_QUESTION.search(q) else
+              "유형" if follow_up_type_of(q) != fu_type else
+              "겹침" if any(_similar_question(q, o) or same_experience(q, answer, o) for o in others) else None)
+    if reason:
+        logger.info(f"질문 어댑터 꼬리 질문 탈락 ({fu_type}, {reason}): {q[:60]!r}")
+        return None
+    return q
 
 
 # ── 실시간 꼬리 질문 ──────────────────────────────────────────────────────────
-# 답변을 듣고 바로 이어 묻는 질문. 자기소개서 질문과 같은 구조: 모델은 답변에서 파고들 키워드만 뽑고(탐욕적 생성),
-# 질문 문장은 틀로 만든다. 묻는 각도는 답변에 빠진 것을 보고 고른다 (본인 행동 → 결과 근거 → 어려움 → 다시 한다면).
+# 답변을 듣고 바로 이어 묻는 질문. 유형(FU_TYPES — 역할 검증 · 판단 근거 · 바뀐 조건 · 강점과 약점)은 답변을 보고 규칙으로 고르고
+# (follow_up_types), 질문 어댑터가 있으면 그 유형으로 직접 쓴다. 없거나 검사에 떨어지면 모델이 답변에서 뽑은 키워드를 유형별 틀에 넣는다.
 FOLLOW_UP_MAX_PER_INTERVIEW = 2    # 면접 하나에 꼬리 질문 최대 개수 (기본 5개 → 최대 7개)
 FOLLOW_UP_MIN_ANSWER = 40          # 이보다 짧은 답변은 파고들 내용이 없어 묻지 않는다
 
-_FU_ACTION = "방금 말씀하신 '{kw}'에 대해 조금 더 여쭙겠습니다. 그때 본인이 직접 한 일을 순서대로 말씀해 주세요."
-_FU_RESULT = "방금 말씀하신 '{kw}' 경험의 결과를 어떻게 확인하셨는지, 수치나 주변 반응 같은 근거를 들어 말씀해 주세요."
-_FU_HARD = "방금 말씀하신 '{kw}' 경험에서 가장 어려웠던 순간은 언제였고, 그때 어떻게 대처하셨나요?"
-_FU_AGAIN = "방금 말씀하신 '{kw}' 경험을 다시 한다면 무엇을 다르게 하실지 이유와 함께 말씀해 주세요."
-_HAS_NUMBER = re.compile(r"\d|퍼센트|%|[한일이삼사오육칠팔구십백천만두세네]+\s*(명|개|건|배|시간|분|초|번|회|위|년|개월|주|만\s?원)")
-# 한국어 답변은 주어를 빼고 말하는 일이 많아 '~했습니다 · ~드렸고' 같은 서술어도 본인 행동으로 본다
-_HAS_OWN_ACTION = re.compile(r"제가|저는|직접|맡아|맡았|제안|해결|만들|진행했|개선|분석했|도입|했습니다|했고|했는데|드렸|열었|운영했")
+_FU_TEMPLATES = {
+    "role": "방금 말씀하신 '{kw}'에서 본인이 직접 맡은 역할은 무엇이었고, 어디까지 주도하셨는지 말씀해 주세요.",
+    "why": "방금 말씀하신 '{kw}'에서 그렇게 하기로 판단하신 근거는 무엇이었나요?",
+    "whatif": "방금 말씀하신 '{kw}' 부분에서 만약 조건이 달라져 그대로 할 수 없게 된다면 어떻게 대처하시겠어요?",
+    "strength": "방금 말씀하신 '{kw}' 부분이 실제 업무에서는 어떻게 드러날지, 강점이라면 어떻게 살리고 약점이라면 어떻게 보완하실지 말씀해 주세요.",
+}
 
 
 def _answer_keyword_messages(question: str, answer: str) -> list:
@@ -904,15 +1091,6 @@ def _answer_keyword_messages(question: str, answer: str) -> list:
     ]
 
 
-# 면접의 다른 질문(자기소개서 질문 틀 포함)이 이미 쓴 각도 — 꼬리 질문은 다른 각도로 묻는다
-_ANGLE_MARKERS = {
-    _FU_ACTION: re.compile(r"직접 한 (일|행동)|맡은 역할"),
-    _FU_RESULT: re.compile(r"결과를 어떻게 확인"),
-    _FU_HARD: re.compile(r"가장 어려웠"),
-    _FU_AGAIN: re.compile(r"다시 한다면"),
-}
-
-
 def _squash(text: str) -> str:
     return re.sub(r"\s+", "", text or "").lower()
 
@@ -923,37 +1101,44 @@ def _asked_keywords(questions: list) -> list:
 
 
 # 지원 동기 답변은 경험보다 관심을 갖게 된 계기라, 경험 각도('결과를 어떻게 확인')로 물으면 어색했다
-# (10/6 시험: "'메모리 접근' 경험의 결과를 어떻게 확인하셨는지") → 그 관심을 위해 실제로 해 본 일을 묻는다
+# (10/6 시험: "'메모리 접근' 경험의 결과를 어떻게 확인하셨는지") → 그 관심을 위해 실제로 해 본 일을 묻는다 (역할 검증형)
 _FU_MOTIVE = "방금 '{kw}' 이야기를 하셨는데, 그 뒤로 이 분야를 위해 직접 공부하거나 준비한 것이 있다면 말씀해 주세요."   # 주제('메모리 접근') · 사건('서버 느려짐') 모두 어울리게
 _MOTIVE_QUESTION = re.compile(r"지원하게 된 동기|지원 동기|지원한 이유")
 
 
-def follow_up_question(keyword: str, answer: str, avoid: set, used_angles: frozenset = frozenset(),
-                       motive: bool = False) -> Optional[str]:
-    """답변에 빠진 것을 보고 각도를 고른다 — 본인 행동이 안 보이면 행동, 수치가 없으면 결과 근거, 둘 다 있으면 어려움.
-    면접의 다른 질문이 이미 쓴 각도와 이미 같은 질문이 있으면 다음 각도로. 지원 동기 답변이면 동기 각도 하나만."""
-    if motive:
-        q = _FU_MOTIVE.format(kw=keyword)
-        return q if q not in avoid and is_valid_question(q) else None
-    order = ([_FU_ACTION] if not _HAS_OWN_ACTION.search(answer) else []) + \
-            ([_FU_RESULT] if not _HAS_NUMBER.search(answer) else []) + [_FU_HARD, _FU_AGAIN]
-    order = [t for i, t in enumerate(order) if t not in used_angles and t not in order[:i]]
-    for t in order:
+def follow_up_question(keyword: str, avoid: set, types: list, motive: bool = False) -> Optional[str]:
+    """유형 순서대로 틀에 키워드를 넣어 처음 쓸 수 있는 질문. 지원 동기 답변이면 동기 질문 하나만."""
+    templates = [_FU_MOTIVE] if motive else [_FU_TEMPLATES[t] for t in types]
+    for t in templates:
         q = t.format(kw=keyword)
         if q not in avoid and is_valid_question(q):
             return q
     return None
 
 
-async def generate_follow_up(question: str, answer: str, existing_questions: list) -> Optional[str]:
+async def generate_follow_up(question: str, answer: str, existing_questions: list,
+                             previous_follow_ups: list = ()) -> Optional[str]:
     """방금 답변으로 꼬리 질문 하나. 파고들 키워드가 없거나 실패하면 None (면접은 원래 순서대로 이어진다).
 
-    면접의 다른 질문(뒤에 나올 자기소개서 질문 포함)이 이미 다루는 키워드는 쓰지 않고, 이미 쓴 각도도 피한다
+    유형은 답변을 보고 고르되, 이 면접의 앞 꼬리 질문이 쓴 유형은 피한다 (꼬리 질문이 둘이면 서로 다른 유형).
+    틀 방식에선 면접의 다른 질문(뒤에 나올 자기소개서 질문 포함)이 이미 다루는 키워드도 쓰지 않는다
     — 10/6 실제 연습면접: 꼬리 질문 "'디지털 시스템 설계' 경험에서 가장 어려웠던 순간"과 뒤 질문
     "'타이밍 리포트' 경험에서 가장 어려웠던 점"이 같은 경험 · 같은 각도라 같은 답을 두 번 했다."""
     answer = (answer or "").strip()
     if len(answer) < FOLLOW_UP_MIN_ANSWER or llama_service.model is None:
         return None
+    if _SENSITIVE_TOPIC.search(answer) or _SENSITIVE_TOPIC.search(question or ""):
+        logger.info("꼬리 질문 없음 (민감한 주제)")
+        return None
+    used = frozenset(t for t in (follow_up_type_of(q) for q in previous_follow_ups) if t)
+    types = follow_up_types(question, answer, used)
+    # 질문 어댑터가 있으면 유형대로 직접 쓴 꼬리 질문을 먼저, 두 번 다 탈락하면 아래 키워드 + 질문 틀 방식
+    if llama_service.has_qgen_adapter:
+        for t in types[:2]:   # 탈락하면 다음 유형으로 한 번 더 (한 번에 약 2초)
+            q = await model_follow_up(question, answer, existing_questions, t)
+            if q:
+                logger.info(f"꼬리 질문 유형 {t} (어댑터)")
+                return q
     try:
         text = (await llama_service.generate_batch([_answer_keyword_messages(question, answer[:SELF_INTRO_MAX])], 250, None, greedy=True))[0]
     except Exception as e:
@@ -962,13 +1147,12 @@ async def generate_follow_up(question: str, answer: str, existing_questions: lis
     keywords = _parse_keywords(text, answer, limit=3)
     asked = _asked_keywords(existing_questions)
     fresh = [k for k in keywords if not any(_squash(k) in a or a in _squash(k) for a in asked)]
-    used_angles = frozenset(t for t, rx in _ANGLE_MARKERS.items() if any(rx.search(q or "") for q in existing_questions))
     avoid = set(existing_questions)
     motive = bool(_MOTIVE_QUESTION.search(question or ""))
     for kw in fresh:
-        q = follow_up_question(kw, answer, avoid, used_angles, motive)
+        q = follow_up_question(kw, avoid, types, motive)
         if q:
-            logger.info(f"꼬리 질문 키워드 {keywords} → '{kw}'")
+            logger.info(f"꼬리 질문 키워드 {keywords} → '{kw}', 유형 {follow_up_type_of(q)}")
             return q
     logger.info(f"꼬리 질문 없음 (키워드 {keywords})")
     return None

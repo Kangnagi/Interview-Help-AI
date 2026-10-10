@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useInterviewStore } from '@/store/interviewStore'
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts'
 import AnswerRating from '@/components/Common/AnswerRating'
@@ -97,6 +97,9 @@ export default function AnalysisPage() {
           {analysis.total_score?.toFixed(0) ?? '—'}
         </p>
         <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 4 }}>/ 100점</p>
+        <Link to="/score-guide" style={{ display: 'inline-block', marginTop: 10, fontSize: 13, color: 'var(--primary)', fontWeight: 600 }}>
+          점수는 어떻게 매겨지나요? 점수 기준표 보기 →
+        </Link>
         {analysis.feedback_summary && (
           <p style={{ marginTop: 16, color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.7 }}>
             {analysis.feedback_summary}

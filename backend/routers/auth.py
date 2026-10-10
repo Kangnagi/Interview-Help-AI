@@ -4,18 +4,23 @@
 엔드포인트:
   POST /auth/register                — 회원가입
   POST /auth/login                   — 로그인 → JWT 액세스 토큰 발급
+  POST /auth/refresh                 — 아직 유효한 토큰을 새 토큰으로 연장 (사용 중 자동 연장, 로그인 후 SESSION_MAX_HOURS까지)
   POST /auth/password-reset/request  — 비밀번호 재설정 이메일 요청
   POST /auth/password-reset/confirm  — 토큰 검증 후 새 비밀번호 저장
 """
 import secrets
+import time
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from core.config import settings
 from core.database import get_db
 from core.rate_limit import limiter
 from core.security import (
+    bearer_scheme,
+    decode_token,
     hash_password,
     verify_password,
     create_access_token,
@@ -88,8 +93,30 @@ async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(ge
 
     await reset_failed_login(user, db)
 
-    # JWT 페이로드에 user_id를 "sub"(subject) 클레임으로 저장 — OAuth2 관례
-    token = create_access_token({"sub": str(user.id)})
+    # JWT 페이로드에 user_id를 "sub"(subject) 클레임으로 저장 — OAuth2 관례.
+    # auth_time(로그인 시각)은 자동 연장해도 바뀌지 않아, 로그인 후 SESSION_MAX_HOURS가 지나면 연장을 멈춘다.
+    token = create_access_token({"sub": str(user.id), "auth_time": int(time.time())})
+    return TokenResponse(access_token=token, user=user)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+                  db: AsyncSession = Depends(get_db)):
+    """
+    로그인 자동 연장 — 아직 만료되지 않은 토큰을 보내면 유효 시간을 새로 채운 토큰을 돌려준다.
+
+    화면이 사용 중일 때 만료 몇 분 전에 부른다 (면접 도중 60분이 지나 답변 저장이 실패하던 문제).
+    이미 만료된 토큰 · 탈퇴/정지/잠긴 계정 · 로그인 후 SESSION_MAX_HOURS가 지난 경우는 401 → 다시 로그인.
+    """
+    payload = decode_token(credentials.credentials)   # 만료 · 위조면 여기서 401
+    user = await db.get(User, int(payload.get("sub") or 0))
+    if not user or not user.is_active or is_account_locked(user):
+        raise HTTPException(status_code=401, detail="다시 로그인해 주세요")
+    # 이 기능 전에 발급된 토큰엔 auth_time이 없다 → 발급 시각(만료 − 유효 시간)을 로그인 시각으로 본다
+    auth_time = int(payload.get("auth_time") or payload["exp"] - settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+    if time.time() - auth_time > settings.SESSION_MAX_HOURS * 3600:
+        raise HTTPException(status_code=401, detail="로그인한 지 오래되어 다시 로그인해야 합니다")
+    token = create_access_token({"sub": str(user.id), "auth_time": auth_time})
     return TokenResponse(access_token=token, user=user)
 
 

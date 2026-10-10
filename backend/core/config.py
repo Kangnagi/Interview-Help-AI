@@ -14,7 +14,7 @@ _INSECURE_SECRET_KEYS = {
 
 class Settings(BaseSettings):
     # ── 앱 기본 설정 ───────────────────────────────────────
-    APP_NAME: str = "AI 면접 도우미"             # Swagger UI 및 로그에 표시될 앱 이름
+    APP_NAME: str = "내일의 면접"             # Swagger UI 및 로그에 표시될 앱 이름
     APP_VERSION: str = "2.0.0"                   # 앱 버전 (API 응답 / 문서에 노출)
     DEBUG: bool = True                            # True면 자세한 로그 + 서버 자동 재시작
     HOST: str = "0.0.0.0"                        # 서버 바인딩 주소 (0.0.0.0 = 외부 접근 허용)
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"   # JWT 서명 비밀키 (운영 시 반드시 교체)
     ALGORITHM: str = "HS256"                     # JWT 서명 알고리즘
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60        # 액세스 토큰 유효 시간 (분)
+    SESSION_MAX_HOURS: int = 24                  # 사용 중 자동 연장(/auth/refresh)해도 로그인 후 이 시간이 지나면 다시 로그인
     # 서비스 동작 경로에서는 더 이상 Gemini를 쓰지 않는다 (채점·총평·질문 생성 = Llama, 발화 분석 = librosa).
     # 선언만 남겨 두는 이유: pydantic-settings가 .env에 있는 미선언 값을 오류로 취급해 서버가 기동을
     # 거부하기 때문 (.env에서 GEMINI_* 줄을 지워도 서버는 정상 동작한다).
@@ -77,6 +78,7 @@ class Settings(BaseSettings):
     LLAMA_BASE_MODEL: str = "Bllossom/llama-3.2-Korean-Bllossom-3B"
     LLAMA_ADAPTER_PATH: str = ""   # 예비 피드백용 LoRA — Llama 위에서 학습한 것이라 Bllossom에선 비움 (예비 피드백은 기본 모델이 씀)
     LLAMA_SCORE_ADAPTER_PATH: str = "./ai_models/bllossom-score-adapter-b3"  # 점수·피드백·팁 채점 어댑터 (b1에서 Claude 채점 553개로 이어 학습, 되돌리기: …-b2 / -b1)
+    LLAMA_QGEN_ADAPTER_PATH: str = ""   # 질문 전용 어댑터 (자기소개서 질문 · 꼬리 질문). 비우면 키워드 + 질문 틀 방식 (켜기: ./ai_models/bllossom-qgen-q2)
     LLAMA_USE_4BIT: bool = False                            # VRAM이 부족하면 True (QLoRA 4bit 로드)
     LLAMA_MAX_NEW_TOKENS: int = 512                         # 피드백 생성 최대 토큰 수
     # 질문 생성 · 종합 총평을 따로 맡길 모델 (GPU 약 6GB 추가). 빈 값이면 위 기본 모델이 어댑터 없이 맡는다.

@@ -16,6 +16,7 @@ import PracticeInterviewPage from '@/pages/PracticeInterviewPage'     // 연습 
 import RealInterviewPage from '@/pages/RealInterviewPage'             // 실전 면접 풀스크린 페이지 (타이머·제한시간)
 import InterviewResultPage from '@/pages/InterviewResultPage'         // 면접 상세 분석 리포트 페이지
 import AdminReviewPage from '@/pages/AdminReviewPage'                 // 관리자 검토 (AI 채점 바로잡기 → 재학습 데이터)
+import ScoreGuidePage from '@/pages/ScoreGuidePage'                 // 면접 점수 기준표 (N-S 차트)
 
 // 보호된 라우트 — 로그인한 사용자만 접근 가능 (토큰 확인)
 function PrivateRoute({ children }) {
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="analysis/:id"         element={<AnalysisPage />} />                              {/* 실전 면접 후 AI 분석 결과 */}
         <Route path="interview/:id/report" element={<InterviewResultPage />} />                       {/* 세부 분석 리포트 (4e522951) */}
         <Route path="history"              element={<HistoryPage />} />                               {/* 전체 면접 이력 (미사용?) */}
+        <Route path="score-guide"          element={<ScoreGuidePage />} />                            {/* 면접 점수 기준표 */}
         <Route path="admin/review"         element={<AdminReviewPage />} />                           {/* 관리자 검토 (관리자만, 서버에서도 확인) */}
       </Route>
 

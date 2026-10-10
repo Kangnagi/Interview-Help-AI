@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: '/dashboard', icon: '🏠', label: '대시보드' },
   { to: '/resume',    icon: '📄', label: '면접 시작' },
   { to: '/history',   icon: '📋', label: '면접 이력' },
+  { to: '/score-guide', icon: '📏', label: '점수 기준표' },
 ]
 
 export default function Layout() {
@@ -35,7 +36,7 @@ export default function Layout() {
       {/* 사이드바 — 로고, 네비게이션, 사용자 정보 */}
       <aside className="layout__sidebar">
         <div className="sidebar__logo">
-          <h1>AI <span>면접</span> 도우미</h1>
+          <h1>내일의 <span>면접</span></h1>
           <p style={{ color: 'rgba(255,255,255,.4)', fontSize: 12, marginTop: 4 }}>v0.1.0 · 개발 환경</p>
         </div>
 
@@ -76,7 +77,7 @@ export default function Layout() {
       {/* 메인 콘텐츠 영역 */}
       <main className="layout__main">
         <header className="layout__header">
-          <h2 style={{ fontSize: 16, fontWeight: 600 }}>AI 면접 도우미</h2>
+          <h2 style={{ fontSize: 16, fontWeight: 600 }}>내일의 면접</h2>
         </header>
         <div className="layout__content">
           <Outlet />                                              {/* 현재 라우트의 페이지 컴포넌트 렌더링 */}

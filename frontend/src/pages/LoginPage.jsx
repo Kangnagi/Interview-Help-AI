@@ -1,5 +1,5 @@
 import { useState } from 'react'                              // 로컬 상태 관리
-import { Link, useNavigate } from 'react-router-dom'          // 라우팅
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'   // 라우팅 · 만료 안내(?expired=1&next=…)
 import { useAuthStore } from '@/store/authStore'              // 로그인 상태 관리
 import toast from 'react-hot-toast'                           // 토스트 알림
 
@@ -8,21 +8,28 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')                 // 비밀번호 입력값
   const { login, loading, error } = useAuthStore()             // Zustand 스토어: login 함수, loading/error 상태
   const navigate = useNavigate()                               // 페이지 네비게이션
+  const [params] = useSearchParams()
+  const expired = params.get('expired') === '1'                // 로그인 만료로 넘어온 경우 (services/api.js 401 처리)
+  const nextRaw = params.get('next') || ''
+  const next = nextRaw.startsWith('/') && !nextRaw.startsWith('//') ? nextRaw : '/dashboard'   // 사이트 안 경로로만 돌아감
 
   const handleSubmit = async (e) => {
     e.preventDefault()                                         // 폼 기본 제출 동작 방지
     const ok = await login(email, password)                   // 로그인 시도
     if (ok) {
       toast.success('로그인 성공!')                             // 성공 토스트
-      navigate('/dashboard')                                   // 대시보드로 이동
+      navigate(next, { replace: true })                        // 만료로 왔으면 보던 화면, 아니면 대시보드
     }
   }
 
   return (
     <div style={styles.page}>
       <div style={styles.box}>
-        <h1 style={styles.title}>AI <span style={{ color: 'var(--primary)' }}>면접</span> 도우미</h1>
+        <h1 style={styles.title}>내일의 <span style={{ color: 'var(--primary)' }}>면접</span></h1>
         <p style={styles.sub}>계정에 로그인하세요</p>
+        {expired && (
+          <p role="status" style={styles.notice}>로그인이 만료되었습니다. 다시 로그인하면 보던 화면으로 돌아갑니다.</p>
+        )}
 
         <form onSubmit={handleSubmit} style={styles.form}>
           <label style={styles.label}>이메일</label>
@@ -73,6 +80,7 @@ const styles = {
   label: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' },
   input: { width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1.5px solid var(--border)', fontSize: 14 },
   error: { color: 'var(--danger)', fontSize: 13, textAlign: 'center' },
+  notice: { background: 'var(--primary-light)', color: 'var(--primary-dark)', fontSize: 13, lineHeight: 1.6, padding: '10px 14px', borderRadius: 8, margin: '-12px 0 20px', textAlign: 'center' },
   foot:  { textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--text-secondary)' },
 }
 

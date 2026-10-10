@@ -6,14 +6,60 @@ const api = axios.create({
   timeout: 10000,                                                     // 요청 타임아웃 (10초)
 })
 
-// 요청 인터셉터 — 모든 요청 전에 JWT 토큰 자동 첨부
-api.interceptors.request.use((config) => {
+// ── 로그인 자동 연장 ─────────────────────────────────────────────────
+// 토큰은 ACCESS_TOKEN_EXPIRE_MINUTES(60분) 뒤 만료된다. 사용 중이면 만료 REFRESH_BEFORE_MS 전에 /auth/refresh로
+// 새 토큰을 받아 이어 쓴다 (면접 도중 60분이 지나 답변 저장이 401로 실패하던 문제).
+// '사용 중' = API 요청이 있었거나, 최근 ACTIVE_WINDOW_MS 안에 클릭 · 키 입력 · 스크롤이 있었음.
+// 서버는 로그인 후 SESSION_MAX_HOURS(24시간)가 지나면 연장을 거절한다 → 그때는 다시 로그인.
+const REFRESH_BEFORE_MS = 15 * 60 * 1000
+const ACTIVE_WINDOW_MS = 20 * 60 * 1000
+let lastActivity = Date.now()
+let refreshing = null                                                 // 진행 중인 연장 요청 (동시에 여러 번 부르지 않게)
+
+function tokenExpiresAt(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return payload.exp * 1000
+  } catch {
+    return null
+  }
+}
+
+function refreshIfNeeded() {
+  const token = localStorage.getItem('token')
+  const exp = token && tokenExpiresAt(token)
+  if (!exp || refreshing) return refreshing
+  const left = exp - Date.now()
+  if (left <= 0 || left > REFRESH_BEFORE_MS) return null              // 이미 만료(→ 401로 처리) 또는 아직 넉넉함
+  refreshing = axios.post('/api/v1/auth/refresh', null, { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 })
+    .then(({ data }) => {
+      if (localStorage.getItem('token') === token) {                  // 그 사이 로그아웃 · 재로그인했으면 덮어쓰지 않음
+        localStorage.setItem('token', data.access_token)
+        localStorage.setItem('user', JSON.stringify(data.user))
+      }
+    })
+    .catch(() => {})                                                  // 실패해도 지금 토큰은 아직 유효 — 만료되면 401 안내
+    .finally(() => { refreshing = null })
+  return refreshing
+}
+
+if (typeof window !== 'undefined') {
+  const markActive = () => { lastActivity = Date.now() }
+  ;['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach((e) => window.addEventListener(e, markActive, { passive: true }))
+  // 녹음하며 말만 하는 동안처럼 API 요청이 뜸할 때도 연장되게 1분마다 확인
+  setInterval(() => { if (Date.now() - lastActivity < ACTIVE_WINDOW_MS) refreshIfNeeded() }, 60 * 1000)
+}
+
+// 요청 인터셉터 — 모든 요청 전에 JWT 토큰 자동 첨부 (만료가 가까우면 먼저 연장)
+api.interceptors.request.use(async (config) => {
+  lastActivity = Date.now()
+  await refreshIfNeeded()
   const token = localStorage.getItem('token')                         // 로컬스토리지에 저장된 JWT 토큰
   if (token) config.headers.Authorization = `Bearer ${token}`         // Authorization 헤더 추가
   return config
 })
 
-// 응답 인터셉터 — 401(권한 없음) 처리 및 로그인 페이지 리다이렉트
+// 응답 인터셉터 — 401(로그인 만료) 처리: 안내와 함께 로그인 페이지로, 다시 로그인하면 보던 화면으로 돌아옴
 api.interceptors.response.use(
   (res) => res,                                                       // 성공 응답 통과
   (err) => {
@@ -22,7 +68,10 @@ api.interceptors.response.use(
     if (err.response?.status === 401 && !isAuthRoute) {               // 401 에러이고 인증 엔드포인트가 아닐 때 (토큰 만료)
       localStorage.removeItem('token')                                // 로컬스토리지 토큰 삭제
       localStorage.removeItem('user')                                 // 사용자 정보도 삭제
-      window.location.href = '/login'                                 // 로그인 페이지로 이동
+      const next = window.location.pathname + window.location.search
+      window.location.href = `/login?expired=1${next.startsWith('/login') ? '' : `&next=${encodeURIComponent(next)}`}`
+      // 이동하는 동안 페이지가 "이력을 불러오지 못했습니다" 같은 오류를 띄우지 않게 응답을 끝내지 않는다
+      return new Promise(() => {})
     }
     return Promise.reject(err)                                         // 에러를 그대로 반환 (호출부에서 처리)
   }

@@ -14,7 +14,7 @@ from core.database import get_db
 from core.security import get_current_user_id
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from schemas.schemas import InterviewCreate, InterviewResponse
-from services.llm.llama_service import (generate_questions_from_resume, analyze_answer_with_llama, is_valid_question,
+from services.llm.llama_service import (generate_questions_from_resume, question_pool_tag, analyze_answer_with_llama, is_valid_question,
                                         generate_follow_up, FOLLOW_UP_MAX_PER_INTERVIEW)
 from services.llm.question_bank import fallback_questions
 
@@ -30,6 +30,11 @@ AI_QUESTIONS_PER_INTERVIEW = 3   # 고정 질문 뒤에 붙는 AI(또는 직무 
 # 질문 만드는 방식이 바뀌면 올린다 — 버전이 다른 캐시는 버리고 새로 만든다
 # (2: 10/6 직무 설명 여러 줄 · [제목] 처리 — 예전 캐시엔 "'[지원 직무 이해]' 업무" 질문이 남아 있었다)
 QUESTION_POOL_VERSION = 2
+
+
+def _pool_version() -> str:
+    """캐시 버전 = 질문 만드는 방식 번호 + 방식 표시(질문 틀 · 질문 어댑터 이름) — 어댑터를 켜고 끄면 캐시를 새로 만든다."""
+    return f"{QUESTION_POOL_VERSION}:{question_pool_tag()}"
 
 def load_question_cache():
     if os.path.exists(QUESTION_CACHE_FILE):
@@ -65,13 +70,13 @@ async def create_interview(
         # 구버전 캐시(리스트 형태) 호환성 처리
         if isinstance(cache_entry, list):
             cache_entry = {"ai_questions": cache_entry[2:] if len(cache_entry) > 2 else cache_entry, "index": 0}
-        if cache_entry and cache_entry.get("version") != QUESTION_POOL_VERSION:
+        if cache_entry and cache_entry.get("version") != _pool_version():
             cache_entry = None
         if cache_entry:
             # 예전에 캐시된 깨진 질문(일본어·영어 섞임 등)은 버리고, 쓸 만한 질문이 모자라면 새로 생성
             pool = [q for q in cache_entry.get("ai_questions", []) if is_valid_question(q)]
             cache_entry = {"ai_questions": pool, "index": cache_entry.get("index", 0) % max(1, len(pool)),
-                           "version": QUESTION_POOL_VERSION} \
+                           "version": _pool_version()} \
                 if len(pool) >= AI_QUESTIONS_PER_INTERVIEW else None
 
         if cache_entry:
@@ -85,7 +90,7 @@ async def create_interview(
                 num_questions=8,  # 고정 2개 + AI 질문 6개 (다음 면접들에서 3개씩 돌려 씀)
             )
             if len(pool) >= AI_QUESTIONS_PER_INTERVIEW:
-                cache_entry = {"ai_questions": pool, "index": 0, "version": QUESTION_POOL_VERSION}
+                cache_entry = {"ai_questions": pool, "index": 0, "version": _pool_version()}
             else:
                 # 모자란 결과는 캐시하지 않는다 (다음 면접에서 다시 생성 시도)
                 selected_ai = pool
@@ -254,7 +259,8 @@ async def create_follow_up(
         return {"question": None, "reason": "꼬리 질문 최대 개수에 도달했습니다"}
 
     answer = body.answer_text if body.answer_text is not None else (question.answer_text or "")
-    text = await generate_follow_up(question.question_text, answer, [q.question_text for q in questions])
+    text = await generate_follow_up(question.question_text, answer, [q.question_text for q in questions],
+                                    [q.question_text for q in questions if q.follow_up_of is not None])
     if not text:
         return {"question": None, "reason": "더 물어볼 내용을 찾지 못했습니다"}
 

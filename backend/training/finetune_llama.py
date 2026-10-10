@@ -22,7 +22,10 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
 )
-from trl import SFTConfig, SFTTrainer
+from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
+
+# Llama 3 대화 형식에서 모델 답변이 시작되는 표시 — --completion_only일 때 이 뒤(답변)만 손실을 계산한다
+ASSISTANT_HEADER = "<|start_header_id|>assistant<|end_header_id|>\n\n"
 
 DEFAULT_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 
@@ -53,6 +56,9 @@ def parse_args():
         help="이미 학습된 LoRA 어댑터에서 출발해 이어서 학습 (예: 바탕화면 llama-finetune의 best). "
              "지정하면 --lora_r/--lora_alpha 대신 그 어댑터의 설정을 그대로 쓴다.",
     )
+    parser.add_argument("--completion_only", action="store_true",
+                        help="답변(assistant) 부분만 학습 — 입력이 길고 답이 짧은 과제(질문 생성)용. "
+                             "끄면 예전처럼 입력까지 전체 문장을 학습한다 (채점 어댑터 a1~b3는 이 방식)")
     parser.add_argument("--save_steps", type=int, default=0,
                         help="0이면 에포크마다 저장, 양수면 N 스텝마다 저장 (긴 학습이 중간에 끊겨도 --resume으로 이어가기 위함)")
     return parser.parse_args()
@@ -61,7 +67,13 @@ def parse_args():
 def load_model_and_tokenizer(args):
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+        # --completion_only의 데이터 정리기는 패딩 토큰의 정답을 지운다 — 패딩을 문장 끝(<|eot_id|>)과 같게 두면
+        # 답변 끝 토큰까지 지워져 모델이 답을 끝내는 법을 못 배운다 → Llama 3의 예약 패딩 토큰을 쓴다
+        reserved_pad = "<|finetune_right_pad_id|>"
+        if args.completion_only and tokenizer.convert_tokens_to_ids(reserved_pad) != tokenizer.unk_token_id:
+            tokenizer.pad_token = reserved_pad
+        else:
+            tokenizer.pad_token = tokenizer.eos_token
 
     compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
@@ -158,6 +170,9 @@ def main():
         args=sft_config,
         train_dataset=dataset,
         formatting_func=build_formatting_func(tokenizer),
+        data_collator=DataCollatorForCompletionOnlyLM(
+            tokenizer(ASSISTANT_HEADER, add_special_tokens=False).input_ids, tokenizer=tokenizer
+        ) if args.completion_only else None,
     )
 
     trainer.train(resume_from_checkpoint=args.resume or None)

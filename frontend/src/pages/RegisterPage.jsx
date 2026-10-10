@@ -27,7 +27,7 @@ export default function RegisterPage() {
     <div style={styles.page}>
       <div style={styles.box}>
         <h1 style={styles.title}>회원가입</h1>
-        <p style={styles.sub}>AI 면접 도우미에 오신 것을 환영합니다</p>
+        <p style={styles.sub}>내일의 면접에 오신 것을 환영합니다</p>
 
         <form onSubmit={handleSubmit} style={styles.form}>
           {/* 입력 필드 배열을 맵으로 순회 — DRY(Don't Repeat Yourself) 원칙 */}
