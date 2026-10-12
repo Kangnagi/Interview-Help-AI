@@ -32,6 +32,7 @@ export default function PracticeInterviewPage() {
   const navigate = useNavigate()
   const { resumeId } = useParams()
   const resume = useResumeStore((s) => s.getResume(resumeId))
+  const resumesReady = useResumeStore((s) => Boolean(s.loadedFor) || s.loadError)   // 서버에서 자기소개서를 다 불러왔는지
   const { addInterviewRecord } = useResumeStore()
 
   const [phase, setPhase] = useState(PHASE.SETUP)
@@ -333,9 +334,13 @@ export default function PracticeInterviewPage() {
     navigate('/resume')
   }
 
-  if (phase === PHASE.SETUP) {
+  if (phase === PHASE.SETUP && resumesReady) {
     return <InterviewSetup resumeInfo={resume} onReady={handleSetupReady} />
   }
+
+  if (!resume && !resumesReady) return (
+    <div style={{ padding: 40, textAlign: 'center', color: '#fff', background: '#0f1117', minHeight: '100vh' }}>자기소개서를 불러오는 중...</div>
+  )
 
   if (!resume) return (
     <div style={{ padding: 40, textAlign: 'center', color: '#fff', background: '#0f1117', minHeight: '100vh' }}>

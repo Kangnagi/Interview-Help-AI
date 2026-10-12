@@ -51,7 +51,7 @@ class Interview(Base):
     duration_seconds = Column(Integer, nullable=True)      # 면접 총 소요 시간 (종료 후 계산)
     video_path       = Column(String, nullable=True)       # 녹화 파일 경로 (없으면 음성만 분석)
     interview_type   = Column(String, default="practice", nullable=True)  # 'practice' | 'real'
-    resume_ref_id    = Column(String, nullable=True)       # 프론트 localStorage 자기소개서 ID
+    resume_ref_id    = Column(String, nullable=True)       # 자기소개서 ID (resumes.ref_id)
     created_at       = Column(DateTime, default=datetime.utcnow)
     ended_at         = Column(DateTime, nullable=True)     # PATCH /finish 호출 시 기록
 

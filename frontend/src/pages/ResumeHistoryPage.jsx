@@ -7,6 +7,7 @@ export default function ResumeHistoryPage() {
   const navigate = useNavigate()
   const { id } = useParams()
   const resume = useResumeStore((s) => s.getResume(id))
+  const resumesReady = useResumeStore((s) => Boolean(s.loadedFor) || s.loadError)   // 서버에서 목록을 다 불러왔는지
 
   const [backendRecords, setBackendRecords] = useState([])
   const [scoreMap, setScoreMap] = useState({})
@@ -34,6 +35,10 @@ export default function ResumeHistoryPage() {
       })
       .catch(() => {})
   }, [id])
+
+  if (!resume && !resumesReady) return (
+    <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--text-muted)' }}>자기소개서를 불러오는 중...</div>
+  )
 
   if (!resume) return (
     <div style={{ textAlign: 'center', padding: '80px 0' }}>

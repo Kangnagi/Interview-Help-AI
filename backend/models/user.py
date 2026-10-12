@@ -25,3 +25,5 @@ class User(Base):
 
     # 이 사용자의 면접 목록 — cascade: 사용자 삭제 시 면접 기록도 함께 삭제
     interviews = relationship("Interview", back_populates="user", cascade="all, delete-orphan")
+    # 이 사용자의 자기소개서 — 사용자 삭제 시 함께 삭제
+    resumes = relationship("Resume", back_populates="user", cascade="all, delete-orphan")

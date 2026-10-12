@@ -8,7 +8,7 @@ const SELF_INTRO_MAX = 3000   // 서버도 질문 생성에 이 길이까지만 
 export default function ResumeFormPage() {
   const navigate = useNavigate()
   const { id } = useParams()                                  // URL 파라미터에서 자기소개서 ID 추출
-  const { addResume, updateResume, getResume } = useResumeStore()
+  const { addResume, updateResume, getResume, loadedFor, loadError } = useResumeStore()
   const isEdit = Boolean(id)                                 // 수정 모드 여부
 
   // 폼 데이터
@@ -21,17 +21,18 @@ export default function ResumeFormPage() {
     selfIntroduction: '',      // 자기소개서 내용 (선택사항) — 여기 쓴 경험에서 키워드를 뽑아 꼬리 질문을 만든다
   })
   const [errors, setErrors] = useState({})                    // 입력값 검증 에러
+  const [saving, setSaving] = useState(false)                 // 서버에 저장 중 (두 번 눌러 두 개 생기지 않게)
 
-  // 수정 모드일 때 기존 데이터 로드
+  // 수정 모드일 때 기존 데이터 로드 (서버에서 목록을 다 불러온 뒤)
   useEffect(() => {
-    if (isEdit) {
+    if (isEdit && (loadedFor || loadError)) {
       const r = getResume(id)
       // 예전에 저장한 자기소개서에는 없는 칸이 있을 수 있어 빈 문자열로 채운다
       if (r) setForm({ title: r.title || '', companyName: r.companyName || '', jobTitle: r.jobTitle || '', jobDescription: r.jobDescription || '',
                        idealCandidate: r.idealCandidate || '', selfIntroduction: r.selfIntroduction || '' })
       else { toast.error('자기소개서를 찾을 수 없습니다'); navigate('/resume') }
     }
-  }, [id])
+  }, [id, loadedFor, loadError])
 
   // 입력값 업데이트 헬퍼 함수
   const set = (field) => (e) => setForm((p) => ({ ...p, [field]: e.target.value }))
@@ -46,11 +47,19 @@ export default function ResumeFormPage() {
     return Object.keys(e).length === 0
   }
 
-  const handleSubmit = () => {
-    if (!validate()) return
-    if (isEdit) { updateResume(id, form); toast.success('수정되었습니다') }
-    else { addResume(form); toast.success('자기소개서가 등록되었습니다') }
-    navigate('/resume')
+  const handleSubmit = async () => {
+    if (!validate() || saving) return
+    setSaving(true)
+    try {
+      // 계정(서버)에 저장 — 다른 PC에서 같은 이메일로 로그인해도 보인다
+      if (isEdit) { await updateResume(id, form); toast.success('수정되었습니다') }
+      else { await addResume(form); toast.success('자기소개서가 등록되었습니다') }
+      navigate('/resume')
+    } catch (err) {
+      const detail = err.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : '저장하지 못했습니다. 잠시 후 다시 시도해주세요')
+      setSaving(false)
+    }
   }
 
   return (
@@ -87,7 +96,7 @@ export default function ResumeFormPage() {
         {/* 제목 */}
         <div className="rf-group">
           <div className="rf-label">제목 <span className="rf-label-req">*</span></div>
-          <input className={`rf-input${errors.title ? ' err' : ''}`} placeholder="예) 카카오 서버 개발자 지원" value={form.title} onChange={set('title')} />
+          <input className={`rf-input${errors.title ? ' err' : ''}`} placeholder="예) 카카오 서버 개발자 지원" value={form.title} onChange={set('title')} maxLength={200} />
           {errors.title && <div className="rf-error">{errors.title}</div>}
         </div>
 
@@ -96,11 +105,11 @@ export default function ResumeFormPage() {
           <div className="rf-label">채용 정보 <span className="rf-label-req">*</span></div>
           <div className="rf-row">
             <div>
-              <input className={`rf-input${errors.companyName ? ' err' : ''}`} placeholder="기업명 (예: 카카오)" value={form.companyName} onChange={set('companyName')} />
+              <input className={`rf-input${errors.companyName ? ' err' : ''}`} placeholder="기업명 (예: 카카오)" value={form.companyName} onChange={set('companyName')} maxLength={200} />
               {errors.companyName && <div className="rf-error">{errors.companyName}</div>}
             </div>
             <div>
-              <input className={`rf-input${errors.jobTitle ? ' err' : ''}`} placeholder="지원 업무명 (예: 서버 개발자)" value={form.jobTitle} onChange={set('jobTitle')} />
+              <input className={`rf-input${errors.jobTitle ? ' err' : ''}`} placeholder="지원 업무명 (예: 서버 개발자)" value={form.jobTitle} onChange={set('jobTitle')} maxLength={200} />
               {errors.jobTitle && <div className="rf-error">{errors.jobTitle}</div>}
             </div>
           </div>
@@ -114,6 +123,7 @@ export default function ResumeFormPage() {
             placeholder="담당하게 될 주요 업무나, 지금까지 수행한 직무 경험을 상세히 작성해 주세요."
             value={form.jobDescription}
             onChange={set('jobDescription')}
+            maxLength={5000}
           />
           {errors.jobDescription && <div className="rf-error">{errors.jobDescription}</div>}
           <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>{form.jobDescription.length}자</div>
@@ -126,6 +136,7 @@ export default function ResumeFormPage() {
             className="rf-input rf-textarea"
             placeholder="지원하는 회사의 인재상 또는 본인이 지향하는 인재상을 작성해 주세요. (선택사항)"
             value={form.idealCandidate}
+            maxLength={3000}
             onChange={set('idealCandidate')}
           />
           <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>{form.idealCandidate.length}자</div>
@@ -147,8 +158,8 @@ export default function ResumeFormPage() {
 
         <div className="rf-footer">
           <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => navigate('/resume')}>취소</button>
-          <button className="btn btn-primary" style={{ flex: 2 }} onClick={handleSubmit}>
-            {isEdit ? '✅ 수정 완료' : '📋 등록하기'}
+          <button className="btn btn-primary" style={{ flex: 2 }} onClick={handleSubmit} disabled={saving}>
+            {saving ? '저장 중...' : isEdit ? '✅ 수정 완료' : '📋 등록하기'}
           </button>
         </div>
       </div>

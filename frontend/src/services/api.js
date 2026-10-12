@@ -110,5 +110,14 @@ export const statsAPI = {
   dashboard: () => api.get('/stats/dashboard'),
 }
 
+// ── Resume API (자기소개서 — 계정에 저장, 다른 PC에서도 같은 목록) ──────────
+export const resumeAPI = {
+  list:   ()         => api.get('/resumes'),
+  create: (data)     => api.post('/resumes', data),
+  update: (id, data) => api.put(`/resumes/${id}`, data),
+  remove: (id)       => api.delete(`/resumes/${id}`),
+  import: (resumes)  => api.post('/resumes/import', { resumes }),    // 이 브라우저에만 있던 자기소개서 옮기기
+}
+
 export default api
 

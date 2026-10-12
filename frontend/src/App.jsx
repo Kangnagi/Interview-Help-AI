@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'              // React Router 핵심 컴포넌트
 import { useAuthStore } from '@/store/authStore'                     // 로그인 상태 관리 스토어
+import { useResumeStore } from '@/store/resumeStore'                 // 자기소개서 (계정에 저장)
 import Layout from '@/components/Common/Layout'                      // 메인 레이아웃 (사이드바, 헤더)
 import LoginPage from '@/pages/LoginPage'                             // 로그인 페이지
 import RegisterPage from '@/pages/RegisterPage'                       // 회원가입 페이지
@@ -21,6 +23,9 @@ import ScoreGuidePage from '@/pages/ScoreGuidePage'                 // 면접 �
 // 보호된 라우트 — 로그인한 사용자만 접근 가능 (토큰 확인)
 function PrivateRoute({ children }) {
   const token = useAuthStore((s) => s.token)                          // Zustand 스토어에서 토큰 읽기
+  const user = useAuthStore((s) => s.user)
+  const loadResumes = useResumeStore((s) => s.load)
+  useEffect(() => { if (token) loadResumes() }, [token, user?.id, loadResumes])   // 내 자기소개서를 서버에서 불러옴 (계정이 바뀌면 다시)
   return token ? children : <Navigate to="/login" replace />          // 토큰 없으면 로그인 페이지로 리다이렉트
 }
 

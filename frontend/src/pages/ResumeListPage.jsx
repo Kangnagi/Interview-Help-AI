@@ -1,14 +1,47 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
+import { interviewAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 
 export default function ResumeListPage() {
   const navigate = useNavigate()
-  const { resumes, deleteResume } = useResumeStore()
+  const { resumes, deleteResume, loading, loadedFor, loadError, load, legacyResumes, importLegacy, discardLegacy } = useResumeStore()
 
   const [actionModal, setActionModal] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
+  const [legacyCount, setLegacyCount] = useState(() => legacyResumes().length)   // 이 브라우저에만 있는 예전 자기소개서
+  const [importing, setImporting] = useState(false)
+  const [interviewCounts, setInterviewCounts] = useState({})                      // 자기소개서별 면접 기록 수 (서버 기준 — 다른 PC에서 한 면접도 셈)
+
+  useEffect(() => {
+    interviewAPI.list()
+      .then(({ data }) => {
+        const counts = {}
+        data.forEach((iv) => { if (iv.resume_ref_id) counts[iv.resume_ref_id] = (counts[iv.resume_ref_id] || 0) + 1 })
+        setInterviewCounts(counts)
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleImport = async () => {
+    setImporting(true)
+    try {
+      const { imported, skipped } = await importLegacy()
+      toast.success(`자기소개서 ${imported}개를 내 계정으로 옮겼습니다${skipped ? ` (이미 있는 ${skipped}개는 건너뜀)` : ''}`)
+      setLegacyCount(0)
+    } catch (err) {
+      toast.error(err.response?.data?.detail?.toString?.() || '옮기지 못했습니다. 잠시 후 다시 시도해주세요')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const handleDiscard = () => {
+    discardLegacy()
+    setLegacyCount(0)
+    toast.success('이 브라우저에 남아 있던 자기소개서를 지웠습니다')
+  }
 
   const handleCardClick = (resume) => {
     setActionModal({ resumeId: resume.id, title: resume.title })
@@ -33,10 +66,15 @@ export default function ResumeListPage() {
     setDeleteConfirm(id)
   }
 
-  const confirmDelete = () => {
-    deleteResume(deleteConfirm)
+  const confirmDelete = async () => {
+    const id = deleteConfirm
     setDeleteConfirm(null)
-    toast.success('자기소개서가 삭제되었습니다')
+    try {
+      await deleteResume(id)
+      toast.success('자기소개서가 삭제되었습니다')
+    } catch {
+      toast.error('삭제하지 못했습니다. 잠시 후 다시 시도해주세요')
+    }
   }
 
   const fmt = (iso) => new Date(iso).toLocaleDateString('ko-KR')
@@ -70,6 +108,7 @@ export default function ResumeListPage() {
         }
         .rl-guide__arrow { color:#818cf8; font-size:12px; }
 
+        .rl-legacy { display:flex; align-items:center; gap:14px; flex-wrap:wrap; background:#fffbeb; border:1.5px solid #fcd34d; border-radius:12px; padding:14px 18px; margin-bottom:20px; font-size:13px; color:#92400e; }
         .rl-empty { text-align:center; padding:60px 0; color:var(--text-muted); }
         .rl-empty p { font-size:16px; margin-bottom:20px; }
         .rl-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
@@ -150,8 +189,29 @@ export default function ResumeListPage() {
         </div>
       </div>
 
-      {/* 자기소개서 없을 때 */}
-      {resumes.length === 0 ? (
+      {/* 예전 방식(이 브라우저에만 저장)으로 남아 있는 자기소개서 → 계정으로 옮기기 */}
+      {legacyCount > 0 && (
+        <div className="rl-legacy">
+          <div style={{ flex: 1 }}>
+            <b>이 브라우저에만 저장된 자기소개서 {legacyCount}개가 있습니다.</b>
+            <div style={{ marginTop: 4 }}>내 계정으로 옮기면 다른 PC에서 로그인해도 볼 수 있습니다. 다른 사람이 쓰던 것이라면 옮기지 말고 지워 주세요.</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button className="btn btn-primary btn-sm" disabled={importing} onClick={handleImport}>{importing ? '옮기는 중...' : '내 계정으로 옮기기'}</button>
+            <button className="btn btn-outline btn-sm" disabled={importing} onClick={handleDiscard}>지우기</button>
+          </div>
+        </div>
+      )}
+
+      {/* 불러오는 중 · 불러오기 실패 */}
+      {resumes.length === 0 && (loading || !loadedFor) && !loadError ? (
+        <div className="rl-empty"><p>자기소개서를 불러오는 중...</p></div>
+      ) : resumes.length === 0 && loadError ? (
+        <div className="rl-empty">
+          <p>자기소개서를 불러오지 못했습니다.</p>
+          <button className="btn btn-outline" onClick={() => load(true)}>다시 불러오기</button>
+        </div>
+      ) : resumes.length === 0 ? (
         <div className="rl-empty">
           <div style={{ fontSize: 56, marginBottom: 16 }}>📋</div>
           <p>작성된 자기소개서가 없습니다.<br />자기소개서를 먼저 작성해주세요.</p>
@@ -173,7 +233,7 @@ export default function ResumeListPage() {
                 <div className="rl-card__hint">👆 클릭해서 면접 시작</div>
                 <div className="rl-card__meta">
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    🗂 면접 기록 {r.interviewRecords?.length || 0}건
+                    🗂 면접 기록 {interviewCounts[r.id] ?? r.interviewRecords?.length ?? 0}건
                   </span>
                   <div className="rl-card__btns">
                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{fmt(r.createdAt)}</span>

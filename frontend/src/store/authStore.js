@@ -1,5 +1,6 @@
 import { create } from 'zustand'                   // 가벼운 상태 관리 라이브러리
 import { authAPI } from '@/services/api'           // 인증 API 함수들
+import { useResumeStore } from '@/store/resumeStore'  // 로그아웃 시 앞 계정 자기소개서 비우기
 
 // Zustand로 전역 상태 관리 (Redux 없이 간단하게)
 export const useAuthStore = create((set) => ({
@@ -42,6 +43,7 @@ export const useAuthStore = create((set) => ({
   logout: () => {
     localStorage.removeItem('token')                                  // 로컬스토리지 정리
     localStorage.removeItem('user')
+    useResumeStore.getState().reset()                                 // 다음 계정에 앞 계정 자기소개서가 보이지 않게
     set({ user: null, token: null, error: null })                     // 상태 초기화
   },
 }))
