@@ -117,6 +117,15 @@ export const resumeAPI = {
   update: (id, data) => api.put(`/resumes/${id}`, data),
   remove: (id)       => api.delete(`/resumes/${id}`),
   import: (resumes)  => api.post('/resumes/import', { resumes }),    // 이 브라우저에만 있던 자기소개서 옮기기
+  // 이력서 · 자기소개서 파일 → 작성 칸에 채울 내용 (파일은 서버에 저장하지 않음, 모델이 회사 · 직무를 찾으면 몇 초 걸림)
+  // kind: 'posting'(채용공고 → 제목 · 채용 정보 · 직무 수행 업무 · 인재상) | 'intro'(이력서 · 자기소개서 → 자기소개서 내용)
+  parseFile: (file, kind) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('kind', kind)
+    return api.post('/resumes/parse-file', fd, { timeout: 60000 })
+  },
+  parseText: (text, kind = 'posting') => api.post('/resumes/parse-text', { text, kind }, { timeout: 60000 }),   // 붙여넣은 채용공고
 }
 
 export default api

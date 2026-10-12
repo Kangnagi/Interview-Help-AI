@@ -42,10 +42,7 @@ export default function LoginPage() {
             style={styles.input}
           />
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <label style={styles.label}>비밀번호</label>
-            <Link to="/forgot-password" style={{ fontSize: 12, color: 'var(--primary)' }}>비밀번호를 잊으셨나요?</Link>
-          </div>
+          <label style={styles.label}>비밀번호</label>
           <input
             type="password"
             value={password}
@@ -54,6 +51,8 @@ export default function LoginPage() {
             required
             style={styles.input}
           />
+          {/* 비밀번호 칸 바로 아래 오른쪽 (gap 12를 줄여 칸에 붙여 보이게) */}
+          <Link to="/forgot-password" style={{ alignSelf: 'flex-end', marginTop: -6, fontSize: 12, color: 'var(--primary)' }}>비밀번호를 잊으셨나요?</Link>
 
           {error && <p style={styles.error}>{error}</p>}      {/* 에러 메시지 표시 */}
 

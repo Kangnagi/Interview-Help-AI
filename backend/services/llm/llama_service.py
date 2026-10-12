@@ -412,7 +412,6 @@ def _feedback_messages(question: str, answer: str) -> list:
         {"role": "user", "content": f"질문: {question}\n답변: {answer}\n\n위 지원자의 답변을 요약하고 평가해주세요."},
     ]
 
-
 FEEDBACK_MAX_NEW_TOKENS = 200  # 학습 데이터의 assistant 응답 길이(평균 87, p99 134 토큰) 기준 여유치.
 # 이보다 크게 잡으면 학습 분포를 벗어나 모델이 종료 시점을 못 찾고 같은 말을 반복하며 늘어진다.
 
@@ -808,6 +807,43 @@ async def extract_self_intro_keywords(intro: str) -> list:
     keywords = _parse_keywords(text, intro)
     logger.info(f"자기소개서 키워드 {len(keywords)}개: {keywords}")
     return keywords
+
+
+def _company_job_messages(doc: str) -> list:
+    return [
+        {"role": "system", "content": "당신은 채용 서류를 정리하는 도우미입니다. 문서에 적힌 내용만 옮기고 지어내지 않습니다."},
+        {"role": "user", "content": (
+            "아래 이력서 · 자기소개서에서 지원하는 회사 이름과 지원 직무를 찾으세요.\n"
+            "문서에 글자 그대로 적혀 있는 것만 쓰고, 없으면 빈 문자열로 두세요.\n"
+            "순수 JSON으로만 출력하세요: {\"company\": \"...\", \"job\": \"...\"}\n\n"
+            f"문서:\n{doc}"
+        )},
+    ]
+
+
+async def extract_company_job(doc: str) -> dict:
+    """업로드한 문서에서 회사 · 직무 찾기 (항목 이름이 안 붙은 경우용). 문서에 그대로 있는 값만 돌려준다. 실패 시 빈 dict."""
+    doc = (doc or "")[:2500]
+    if len(doc) < 30 or llama_service.model is None:
+        return {}
+    try:
+        text = (await llama_service.generate_batch([_company_job_messages(doc)], 60, None, greedy=True))[0]
+    except Exception as e:
+        logger.error(f"회사 · 직무 찾기 실패: {e}")
+        return {}
+    m = re.search(r"\{[^{}]*\}", text or "")
+    try:
+        item = json.loads(m.group(), strict=False) if m else {}
+    except Exception:
+        item = {}
+    out = {}
+    squashed = re.sub(r"\s+", "", doc)
+    for src, dst in (("company", "company_name"), ("job", "job_title")):
+        v = str(item.get(src, "") or "").strip().strip("'\"")
+        # 원문에 (띄어쓰기 무시하고) 그대로 있는 짧은 값만 — 모델이 지어낸 회사 · 직무 방지
+        if 2 <= len(v) <= 40 and "\n" not in v and re.sub(r"\s+", "", v) in squashed:
+            out[dst] = v
+    return out
 
 
 def keyword_questions(keywords: list, resume_text: str, count: Optional[int] = None) -> list:

@@ -1,9 +1,19 @@
-import { useState, useEffect } from 'react'                  // 로컬 상태 관리 및 마운트 시 작업
+import { useState, useEffect, useRef } from 'react'                  // 로컬 상태 관리 및 마운트 시 작업
 import { useNavigate, useParams } from 'react-router-dom'    // 라우팅
 import { useResumeStore } from '@/store/resumeStore'        // 자기소개서 상태 관리
+import { resumeAPI } from '@/services/api'                  // 파일로 채우기
 import toast from 'react-hot-toast'                          // 토스트 알림
 
 const SELF_INTRO_MAX = 3000   // 서버도 질문 생성에 이 길이까지만 쓴다 (llama_service.SELF_INTRO_MAX)
+const FILE_ACCEPT = '.pdf,.hwp,.hwpx,.docx,.txt'
+const FILE_MAX_MB = 5
+const PASTE_MAX = 20000
+const FIELD_NAMES = { title: '제목', companyName: '기업명', jobTitle: '지원 업무명', jobDescription: '직무 수행 업무', idealCandidate: '인재상', selfIntroduction: '자기소개서' }
+// 채용공고는 회사 쪽 칸, 이력서 · 자기소개서는 자기소개서 칸만 채운다
+const KIND_FIELDS = {
+  posting: ['title', 'companyName', 'jobTitle', 'jobDescription', 'idealCandidate'],
+  intro: ['selfIntroduction'],
+}
 
 export default function ResumeFormPage() {
   const navigate = useNavigate()
@@ -22,6 +32,12 @@ export default function ResumeFormPage() {
   })
   const [errors, setErrors] = useState({})                    // 입력값 검증 에러
   const [saving, setSaving] = useState(false)                 // 서버에 저장 중 (두 번 눌러 두 개 생기지 않게)
+  const [parsing, setParsing] = useState(null)                // 읽는 중인 종류: 'posting' | 'intro' | null
+  const [dragOver, setDragOver] = useState(null)              // 파일을 끌어다 대고 있는 칸: 'posting' | 'intro' | null
+  const [pasteOpen, setPasteOpen] = useState(false)           // 채용공고 붙여넣기 창
+  const [pasteText, setPasteText] = useState('')
+  const postingFileRef = useRef(null)
+  const introFileRef = useRef(null)
 
   // 수정 모드일 때 기존 데이터 로드 (서버에서 목록을 다 불러온 뒤)
   useEffect(() => {
@@ -36,6 +52,83 @@ export default function ResumeFormPage() {
 
   // 입력값 업데이트 헬퍼 함수
   const set = (field) => (e) => setForm((p) => ({ ...p, [field]: e.target.value }))
+
+  // 서버가 읽어 준 내용으로 칸 채우기 — 채용공고면 회사 쪽 칸, 이력서 · 자기소개서면 자기소개서 칸만
+  const applyParsed = (data, kind) => {
+    const all = {
+      title: data.title, companyName: data.company_name, jobTitle: data.job_title,
+      jobDescription: data.job_description, idealCandidate: data.ideal_candidate, selfIntroduction: data.self_introduction,
+    }
+    const found = KIND_FIELDS[kind].filter((k) => all[k])
+    if (found.length === 0) {
+      toast.error(kind === 'posting' ? '채용공고에서 채울 내용을 찾지 못했어요. 직접 입력해 주세요.' : '자기소개서 내용을 찾지 못했어요.')
+      return
+    }
+    // 이미 입력한 칸을 다른 내용으로 바꾸게 되면 먼저 묻는다
+    const overwrite = found.filter((k) => form[k].trim() && form[k].trim() !== all[k].trim())
+    const replace = overwrite.length === 0 ||
+      window.confirm(`이미 입력한 칸(${overwrite.map((k) => FIELD_NAMES[k]).join(', ')})을 새 내용으로 바꿀까요?\n취소를 누르면 빈 칸만 채웁니다.`)
+    setForm((p) => {
+      const next = { ...p }
+      found.forEach((k) => { if (replace || !p[k].trim()) next[k] = all[k] })
+      return next
+    })
+    setErrors({})
+    toast.success(`${found.map((k) => FIELD_NAMES[k]).join(' · ')} 칸을 채웠습니다. 내용을 확인해 주세요.`, { duration: 5000 })
+    const notes = []
+    if (data.truncated) notes.push(`자기소개서가 길어 앞 ${SELF_INTRO_MAX.toLocaleString()}자만 넣었습니다`)
+    if (data.removed_personal) notes.push('전화번호 · 이메일 같은 개인정보는 빼고 넣었습니다')
+    if (notes.length) toast(notes.join('\n'), { icon: 'ℹ️', duration: 6000 })
+    if (kind === 'posting') {
+      const missing = ['companyName', 'jobTitle', 'jobDescription'].filter((k) => !all[k] && !form[k].trim())
+      if (missing.length) toast(`${missing.map((k) => FIELD_NAMES[k]).join(' · ')}은(는) 채용공고에서 찾지 못했어요. 직접 입력해 주세요.`, { icon: '✏️', duration: 6000 })
+    }
+  }
+
+  const showError = (err) => {
+    const detail = err.response?.data?.detail
+    toast.error(typeof detail === 'string' ? detail : '내용을 읽지 못했습니다. 잠시 후 다시 시도해주세요')
+  }
+
+  // 파일로 채우기 — 파일은 서버에 저장하지 않고 글자만 읽는다 (전화번호 · 이메일 · 주민번호는 지움)
+  const handleFile = async (file, kind) => {
+    if (!file || parsing) return
+    if (file.size > FILE_MAX_MB * 1024 * 1024) return toast.error(`파일이 너무 큽니다 (최대 ${FILE_MAX_MB}MB)`)
+    setParsing(kind)
+    try {
+      const { data } = await resumeAPI.parseFile(file, kind)
+      applyParsed(data, kind)
+    } catch (err) {
+      showError(err)
+    } finally {
+      setParsing(null)
+      const ref = kind === 'posting' ? postingFileRef : introFileRef
+      if (ref.current) ref.current.value = ''
+    }
+  }
+
+  // 채용공고 붙여넣기 — 사람인 · 잡코리아 같은 사이트의 공고 내용을 복사해 붙여넣으면 칸을 나눠 채운다
+  const handlePaste = async () => {
+    if (!pasteText.trim() || parsing) return
+    setParsing('posting')
+    try {
+      const { data } = await resumeAPI.parseText(pasteText, 'posting')
+      applyParsed(data, 'posting')
+      setPasteOpen(false)
+      setPasteText('')
+    } catch (err) {
+      showError(err)
+    } finally {
+      setParsing(null)
+    }
+  }
+
+  // 칸에 파일을 끌어다 놓기
+  const dropProps = (kind) => ({
+    onDragOver: (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragOver(kind) } },
+    onDragLeave: () => setDragOver(null),
+    onDrop: (e) => { if (e.dataTransfer.files?.length) { e.preventDefault(); setDragOver(null); handleFile(e.dataTransfer.files[0], kind) } },
+  })
 
   const validate = () => {
     const e = {}
@@ -78,6 +171,19 @@ export default function ResumeFormPage() {
         .rf-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
         .rf-info { background:#f0f4ff; border-radius:10px; padding:12px 16px; font-size:13px; color:#4f6ef7; margin-bottom:20px; }
         .rf-footer { display:flex; gap:12px; margin-top:28px; }
+        .rf-label-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
+        .rf-label-row .rf-label { margin-bottom:0; }
+        .rf-file-btn { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:13px; font-weight:600; color:var(--primary); background:#eef2ff; border:1px solid #c7d2fe; cursor:pointer; transition:background .15s; }
+        .rf-file-btn:hover:not(:disabled) { background:#e0e7ff; }
+        .rf-file-btn:disabled { cursor:wait; opacity:.7; }
+        .rf-textarea.over { border-color:var(--primary); background:#eef2ff; }
+        .rf-posting { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; border:1.5px dashed #c7d2fe; border-radius:12px; padding:12px 16px; margin-bottom:22px; background:#fafbff; transition:background .15s, border-color .15s; }
+        .rf-posting.over { background:#eef2ff; border-color:var(--primary); }
+        .rf-posting-title { font-size:14px; font-weight:600; color:var(--text-primary); }
+        .rf-posting-btns { display:flex; gap:8px; flex-shrink:0; }
+        .rf-paste-bg { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:1000; padding:16px; }
+        .rf-paste-box { background:#fff; border-radius:16px; padding:24px; width:100%; max-width:640px; box-shadow:0 8px 40px rgba(0,0,0,.18); }
+        .rf-file-note { font-size:12px; color:var(--text-muted); margin-top:4px; }
         @media(max-width:600px){ .rf-row { grid-template-columns:1fr; } }
       `}</style>
 
@@ -91,6 +197,22 @@ export default function ResumeFormPage() {
       <div className="rf-card">
         <div className="rf-info">
           💡 작성한 자기소개서를 바탕으로 AI가 맞춤형 면접 질문을 생성합니다. 최대한 상세히 작성해 주세요.
+        </div>
+
+        {/* 채용공고로 채우기 — 제목 · 채용 정보 · 직무 수행 업무 · 인재상 */}
+        <div className={`rf-posting${dragOver === 'posting' ? ' over' : ''}`} {...dropProps('posting')}>
+          <div>
+            <div className="rf-posting-title">📄 채용공고로 채우기</div>
+            <div className="rf-file-note" style={{ marginTop: 2 }}>공고 파일을 올리거나 내용을 붙여넣으면 제목 · 채용 정보 · 직무 수행 업무 · 인재상을 채웁니다.</div>
+          </div>
+          <div className="rf-posting-btns">
+            <button type="button" className="rf-file-btn" disabled={!!parsing} onClick={() => postingFileRef.current?.click()}
+                    title={`PDF · HWP · HWPX · DOCX · TXT (${FILE_MAX_MB}MB까지)`}>
+              {parsing === 'posting' ? '⏳ 읽는 중...' : '📎 파일'}
+            </button>
+            <button type="button" className="rf-file-btn" disabled={!!parsing} onClick={() => setPasteOpen(true)}>📋 붙여넣기</button>
+          </div>
+          <input ref={postingFileRef} type="file" accept={FILE_ACCEPT} style={{ display: 'none' }} onChange={(e) => handleFile(e.target.files?.[0], 'posting')} />
         </div>
 
         {/* 제목 */}
@@ -120,7 +242,7 @@ export default function ResumeFormPage() {
           <div className="rf-label">직무 수행 업무 <span className="rf-label-req">*</span></div>
           <textarea
             className={`rf-input rf-textarea${errors.jobDescription ? ' err' : ''}`}
-            placeholder="담당하게 될 주요 업무나, 지금까지 수행한 직무 경험을 상세히 작성해 주세요."
+            placeholder="채용공고의 담당 업무 · 자격 요건을 적어 주세요. 위 '채용공고로 채우기'로 공고 파일이나 내용을 넣으면 자동으로 채워집니다."
             value={form.jobDescription}
             onChange={set('jobDescription')}
             maxLength={5000}
@@ -144,16 +266,28 @@ export default function ResumeFormPage() {
 
         {/* 자기소개서 내용 */}
         <div className="rf-group">
-          <div className="rf-label">자기소개서 내용</div>
+          <div className="rf-label-row">
+            <div className="rf-label">자기소개서 내용</div>
+            {/* 이력서 · 자기소개서 파일로 채우기 — 자기소개서 칸만 채운다 */}
+            <button type="button" className="rf-file-btn" disabled={!!parsing} onClick={() => introFileRef.current?.click()}
+                    title={`PDF · HWP · HWPX · DOCX · TXT (${FILE_MAX_MB}MB까지) — 파일은 저장하지 않고 내용만 칸에 채웁니다`}>
+              {parsing === 'intro' ? '⏳ 파일 읽는 중...' : '📎 이력서 · 자기소개서 파일로 채우기'}
+            </button>
+            <input ref={introFileRef} type="file" accept={FILE_ACCEPT} style={{ display: 'none' }} onChange={(e) => handleFile(e.target.files?.[0], 'intro')} />
+          </div>
           <textarea
-            className="rf-input rf-textarea"
+            className={`rf-input rf-textarea${dragOver === 'intro' ? ' over' : ''}`}
             style={{ minHeight: 220 }}
+            {...dropProps('intro')}
             maxLength={SELF_INTRO_MAX}
             placeholder={'지원 동기, 직무 관련 경험(프로젝트 · 실습 · 아르바이트 · 대외활동), 성과 등을 자유롭게 작성해 주세요. (선택사항)\n여기 쓴 경험을 바탕으로 "그때 맡은 역할은?", "어떻게 해결했나요?" 같은 꼬리 질문이 만들어집니다.'}
             value={form.selfIntroduction}
             onChange={set('selfIntroduction')}
           />
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>{form.selfIntroduction.length} / {SELF_INTRO_MAX}자</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <div className="rf-file-note">📎 이력서 · 자기소개서 파일(PDF · HWP · HWPX · DOCX · TXT, {FILE_MAX_MB}MB까지)을 올리거나 이 칸에 끌어다 놓으면 자기소개서 내용을 채웁니다. 전화번호 · 주소 같은 개인정보는 빼고, 파일은 저장하지 않습니다.</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, flexShrink: 0 }}>{form.selfIntroduction.length} / {SELF_INTRO_MAX}자</div>
+          </div>
         </div>
 
         <div className="rf-footer">
@@ -163,6 +297,34 @@ export default function ResumeFormPage() {
           </button>
         </div>
       </div>
+
+      {/* 채용공고 붙여넣기 창 */}
+      {pasteOpen && (
+        <div className="rf-paste-bg" onClick={() => !parsing && setPasteOpen(false)}>
+          <div className="rf-paste-box" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 6 }}>📋 채용공고 붙여넣기</div>
+            <div className="rf-file-note" style={{ marginBottom: 12 }}>
+              채용 사이트의 공고 내용을 전체 선택(Ctrl+A) · 복사(Ctrl+C)해서 아래에 붙여넣으세요. 모집부문 · 담당업무 · 자격요건 · 우대사항 · 인재상을 찾아 칸을 채웁니다.
+            </div>
+            <textarea
+              className="rf-input rf-textarea"
+              style={{ minHeight: 260 }}
+              autoFocus
+              maxLength={PASTE_MAX}
+              placeholder={'예)\n[그린페이] 백엔드 개발자 채용\n모집부문: 백엔드 개발자\n담당업무\n- 결제 API 개발\n자격요건\n- 서버 개발 경험'}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+            />
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'right', marginTop: 4 }}>{pasteText.length.toLocaleString()} / {PASTE_MAX.toLocaleString()}자</div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button className="btn btn-outline" style={{ flex: 1 }} disabled={!!parsing} onClick={() => setPasteOpen(false)}>취소</button>
+              <button className="btn btn-primary" style={{ flex: 2 }} disabled={!!parsing || !pasteText.trim()} onClick={handlePaste}>
+                {parsing === 'posting' ? '읽는 중...' : '칸 채우기'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
