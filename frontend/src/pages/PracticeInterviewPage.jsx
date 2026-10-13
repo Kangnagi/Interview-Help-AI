@@ -4,7 +4,7 @@ import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
-import { wsUrl } from '@/services/websocket'
+import { wsUrl, recordingAudioConstraints } from '@/services/websocket'
 import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
 import { useAuthStore } from '@/store/authStore'
 
@@ -105,7 +105,8 @@ export default function PracticeInterviewPage() {
       if (questionId) ws.send(JSON.stringify({ type: 'question', question_id: questionId }))
     }
 
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+    // 설정 화면에서 고른 마이크로 녹음한다 (예전엔 기본 마이크로 녹음해 고른 마이크와 다를 수 있었다)
+    navigator.mediaDevices.getUserMedia({ audio: recordingAudioConstraints(deviceIds.micId) }).then((stream) => {
       // 마이크 허용을 기다리는 사이 답변이 끝났으면(연결이 이미 바뀜/닫힘) 녹음을 시작하지 않고 마이크를 놓는다
       if (wsRef.current !== ws || ws.readyState > WebSocket.OPEN) {
         stream.getTracks().forEach((t) => t.stop())
@@ -122,7 +123,7 @@ export default function PracticeInterviewPage() {
       // 500ms 단위로 오디오 조각을 서버에 전송
       recorder.start(500)
     })
-  }, [backendInterviewId, token, currentQuestion?.id])
+  }, [backendInterviewId, token, currentQuestion?.id, deviceIds.micId])
 
   // 오디오 스트리밍 종료
   const stopAudioStreaming = useCallback(() => {

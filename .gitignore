@@ -61,7 +61,6 @@ frontend/.vite/
 **/.vite/
 
 backend/kobert/
-backend/ai_models/
 .venv/
 venv/
 kobert/

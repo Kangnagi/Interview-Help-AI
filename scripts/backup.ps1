@@ -40,6 +40,7 @@ if ($Full) {
         Add-Backup "어댑터 $a" "$root\backend\ai_models\$a" "ai_models\$a"
     }
 }
+Add-Backup "음성 모델"                     "$root\backend\services\voice\ai_model"      "voice_model"    -Optional
 
 # ── 용량 확인 ─────────────────────────────────────────────
 function Get-Size($p) {
@@ -112,6 +113,7 @@ Interview-Help-AI 백업 $stamp ($(if ($Full) { "전체" } else { "기본" }))
 4. db\interview.db              → backend\interview.db   (서비스를 끈 상태에서 덮어쓰기)
 5. uploads\*                    → backend\uploads\
 6. ai_models\*                  → backend\ai_models\
+   voice_model\*                → backend\services\voice\ai_model\
 7. training_data\*              → backend\training\data\
 8. 서버 PC라면 scripts\register_autostart.ps1 → scripts\start_all.ps1
 

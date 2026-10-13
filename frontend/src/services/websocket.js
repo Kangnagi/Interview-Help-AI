@@ -13,6 +13,19 @@
 export const wsUrl = (path) =>
   `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${path}`
 
+/**
+ * 발화 분석용 녹음의 마이크 설정 — 브라우저의 소음 제거 · 자동 음량 조절 · 에코 제거를 끈다.
+ * (켜져 있으면 말 사이가 완전한 무음이 되고 음량 변화가 눌려, 음성 모델 · 침묵/음량 지표가 학습 때와 다른 소리를 받는다)
+ * 음성 인식(Web Speech API)은 브라우저가 따로 소리를 받으므로 영향 없음.
+ * @param {string} [micId]  설정 화면에서 고른 마이크 (없으면 기본 마이크)
+ */
+export const recordingAudioConstraints = (micId) => ({
+  ...(micId ? { deviceId: { exact: micId } } : {}),
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
+})
+
 class InterviewWebSocket {
   constructor() {
     this.ws = null                // WebSocket 연결 객체
