@@ -20,7 +20,8 @@ MIGRATIONS = [
     ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN audio_start_sec FLOAT"),
     ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN audio_end_sec FLOAT"),
     ("interview_questions", "ALTER TABLE interview_questions ADD COLUMN follow_up_of INTEGER"),
-    # 새 테이블(answer_ratings, answer_reviews)은 서버 시작 시 init_db의 create_all이 자동으로 만든다.
+    ("interviews", "ALTER TABLE interviews ADD COLUMN scene_mode VARCHAR"),
+    # 새 테이블(answer_ratings, answer_reviews, resumes, interview_scenes)은 서버 시작 시 init_db의 create_all이 자동으로 만든다.
 ]
 
 def run():

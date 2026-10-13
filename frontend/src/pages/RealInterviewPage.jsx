@@ -42,6 +42,7 @@ export default function RealInterviewPage() {
 
   const [backendInterviewId, setBackendInterviewId] = useState(null)
   const [backendQuestions, setBackendQuestions] = useState([])
+  const [keepScenes, setKeepScenes] = useState(true)          // 감점 장면 사진 저장 (환경 설정 화면에서 고름)
   const [isCreating, setIsCreating] = useState(false)
   const [followUpLoading, setFollowUpLoading] = useState(false)   // 방금 답변으로 꼬리 질문을 만드는 중 (약 2~3초, 그동안 시간은 멈춤)
 
@@ -64,7 +65,8 @@ export default function RealInterviewPage() {
     if (st) { serverVisionRef.current = true; setFaceStatus(st) }
     setVisionRecent((prev) => [...prev.slice(-5), r])
   }, [])
-  useVisionStream({ interviewId: backendInterviewId, videoRef, active: phase === 'interview', onResult: handleVisionResult })
+  useVisionStream({ interviewId: backendInterviewId, videoRef, active: phase === 'interview', onResult: handleVisionResult,
+                    keepScenes, questionOrder: backendQuestions[qIndex]?.order })
 
   const activeQuestions = backendQuestions.length > 0
     ? backendQuestions.map((q) => q.question_text)
@@ -83,11 +85,12 @@ export default function RealInterviewPage() {
     if (phase !== 'interview') stopSTT()
   }, [phase, stopSTT])
 
-  const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
+  const handleSetupReady = useCallback(async ({ cameraId, micId, keepScenes: keep = true }) => {
     // '준비 완료'를 여러 번 눌러도 면접은 한 번만 만든다 (질문 생성 5~7초 사이에 다시 눌러 면접이 두 개씩 생겼다 — 10/4 · 10/6)
     if (setupStartedRef.current) return
     setupStartedRef.current = true
     setDeviceIds({ cameraId, micId })
+    setKeepScenes(keep)
     setSessionStarted(true)
 
     const resumeText = resume ? [

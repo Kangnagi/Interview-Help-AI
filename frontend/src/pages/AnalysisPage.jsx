@@ -4,6 +4,7 @@ import { useInterviewStore } from '@/store/interviewStore'
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts'
 import AnswerRating from '@/components/Common/AnswerRating'
 import ConsentBanner from '@/components/Common/ConsentBanner'
+import SceneReplay from '@/components/Analysis/SceneReplay'
 
 export default function AnalysisPage() {
   const { id } = useParams()
@@ -155,6 +156,9 @@ export default function AnalysisPage() {
           {!analysis.improvements?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>총평 생성 완료 후 표시됩니다</p>}
         </div>
       </div>
+
+      {/* 감점 장면 (면접 중 사진을 움직이는 이미지로) */}
+      <SceneReplay interviewId={id} />
 
       {/* 질문별 상세 분석 */}
       {answeredQuestions.length > 0 && (

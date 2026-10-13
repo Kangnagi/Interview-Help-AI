@@ -103,6 +103,7 @@ export const analysisAPI = {
   start:       (id)   => api.post(`/analysis/${id}/start`),
   get:         (id)   => api.get(`/analysis/${id}`),
   getFeedback: (data) => api.post('/analysis/feedback', data),        // POST — 질문별 즉시 AI 피드백
+  scenes:      (id)   => api.get(`/analysis/${id}/scenes`, { timeout: 30000 }),   // GET — 감점 장면 사진 (본인만, 30일 보관)
 }
 
 // ── Stats API (통계 대시보드) ────────────────────────────────

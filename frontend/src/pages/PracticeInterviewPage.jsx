@@ -50,6 +50,7 @@ export default function PracticeInterviewPage() {
   const [deviceError, setDeviceError] = useState(null)
   const [backendInterviewId, setBackendInterviewId] = useState(null)
   const [backendQuestions, setBackendQuestions] = useState([])
+  const [keepScenes, setKeepScenes] = useState(true)          // 감점 장면 사진 저장 (환경 설정 화면에서 고름)
   const [currentFeedback, setCurrentFeedback] = useState({ loading: false, score: null, feedback: null, tip: null, error: false })
   const [followUpLoading, setFollowUpLoading] = useState(false)   // 방금 답변으로 꼬리 질문을 만드는 중 (약 2~3초)
 
@@ -87,6 +88,8 @@ export default function PracticeInterviewPage() {
     videoRef,
     active: phase === PHASE.QUESTION || phase === PHASE.ANSWERING,
     onResult: handleVisionResult,
+    keepScenes,
+    questionOrder: backendQuestions[qIndex]?.order,
   })
 
   const currentQuestion = backendQuestions[qIndex]
@@ -162,11 +165,12 @@ export default function PracticeInterviewPage() {
     return () => stopAudioStreaming()
   }, [phase, stopSTT, startSTT, sttSupported, startAudioStreaming, stopAudioStreaming])
 
-  const handleSetupReady = useCallback(async ({ cameraId, micId }) => {
+  const handleSetupReady = useCallback(async ({ cameraId, micId, keepScenes: keep = true }) => {
     // '준비 완료'를 여러 번 눌러도 면접은 한 번만 만든다 (질문 생성 5~7초 사이에 다시 눌러 면접이 두 개씩 생겼다 — 10/4 · 10/6)
     if (setupStartedRef.current) return
     setupStartedRef.current = true
     setDeviceIds({ cameraId, micId })
+    setKeepScenes(keep)
     setSessionStarted(true)
     // 질문을 만드는 동안(5~7초) 면접 화면의 'AI 면접 준비 중...'을 보여 준다 (예전엔 환경 설정 화면에 표시 없이 멈춰 있었다)
     setPhase(PHASE.WAITING)

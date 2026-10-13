@@ -18,6 +18,14 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
   const [camError, setCamError] = useState(null)   // null | 'denied' | 'notfound' | 'busy' | 'other'
   const [micError, setMicError] = useState(null)   // null | 'denied' | 'notfound' | 'other'
   const [retryCount, setRetryCount] = useState(0)
+  // 감점 장면 사진 저장 (결과 화면에서 움직이는 이미지로 확인, 30일 뒤 자동 삭제) — 기본 켜짐, 고른 값은 이 브라우저에 기억
+  const [keepScenes, setKeepScenes] = useState(() => {
+    try { return localStorage.getItem('keep_scenes') !== '0' } catch { return true }
+  })
+  const toggleKeepScenes = (v) => {
+    setKeepScenes(v)
+    try { localStorage.setItem('keep_scenes', v ? '1' : '0') } catch { /* 이번 면접에만 적용 */ }
+  }
 
   // 1) 권한 요청 & 장치 목록 조회
   useEffect(() => {
@@ -163,7 +171,7 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
     cancelAnimationFrame(rafRef.current)
     micCleanupRef.current?.()
     camStreamRef.current?.getTracks().forEach((t) => t.stop())
-    onReady({ cameraId: selCam, micId: selMic })
+    onReady({ cameraId: selCam, micId: selMic, keepScenes })
   }
 
   const CAM_ERR_MSG = {
@@ -449,6 +457,11 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
         <StatusDot ok={camOk} error={!!camError} label="카메라" />
         <StatusDot ok={micOk} error={!!micError} label="마이크" />
         <div style={{ flex: 1 }} />
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, maxWidth: 380, cursor: 'pointer', fontSize: 12, color: 'rgba(255,255,255,.6)', lineHeight: 1.5 }}
+               title="면접 중 분석에 쓰는 작은 사진 중 감점된 장면 몇 개만 저장합니다. 본인 계정에서만 볼 수 있고 AI 학습에는 쓰지 않습니다.">
+          <input type="checkbox" checked={keepScenes} onChange={(e) => toggleKeepScenes(e.target.checked)} style={{ marginTop: 3 }} />
+          <span>감점 장면 사진 저장 — 분석 결과에서 어떤 자세 · 표정이었는지 확인 (본인만 보기 · 30일 뒤 자동 삭제)</span>
+        </label>
         <button
           onClick={handleReady}
           style={{

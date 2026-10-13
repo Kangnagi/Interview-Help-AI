@@ -15,6 +15,7 @@ from core.rate_limit import limiter
 from core.security_middleware import SecurityHeadersMiddleware, RequestSizeLimitMiddleware
 from routers import auth, interview, analysis, websocket, stt, stats, feedback, admin_review, resume
 from services.vision.mediapipe_service import mediapipe_service
+from services.vision import scenes as scene_store   # 감점 장면 사진 30일 자동 삭제
 from services.llm.kobert_service import kobert_service
 from services.llm.llama_service import llama_service
 
@@ -42,10 +43,13 @@ async def lifespan(app: FastAPI):
 
     # 분석 도중 서버가 꺼져 멈춘 면접을 다시 분석 (백그라운드 — 서버 시작을 늦추지 않는다)
     resume_task = asyncio.create_task(analysis.resume_stuck_analyses())
+    # 감점 장면 사진 30일 자동 삭제 (시작 시 한 번, 이후 6시간마다)
+    purge_task = asyncio.create_task(scene_store.purge_loop())
 
     yield
 
     resume_task.cancel()
+    purge_task.cancel()
 
     logger.info("앱 종료")
 

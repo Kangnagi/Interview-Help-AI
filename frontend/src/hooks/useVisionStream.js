@@ -13,12 +13,18 @@ import { wsUrl } from '@/services/websocket'
  * @param {boolean}  opts.active       true일 때만 프레임을 보냄 (질문 · 답변 중)
  * @param {function} opts.onResult     (result) => void — 프레임 분석 결과
  * @param {number}   [opts.fps=2]      초당 프레임 수 (서버 분석 1장 약 10~20ms)
+ * @param {boolean}  [opts.keepScenes=true]  감점 장면 사진 저장 (결과 화면의 움직이는 이미지, 30일 뒤 자동 삭제) — 환경 설정 화면에서 고름
+ * @param {number}   [opts.questionOrder]    지금 답하는 질문 번호 — 감점 장면에 '질문 N 답변 중'을 붙이려고 서버에 알림
  */
-export function useVisionStream({ interviewId, videoRef, active, onResult, fps = 2 }) {
+export function useVisionStream({ interviewId, videoRef, active, onResult, fps = 2, keepScenes = true, questionOrder }) {
   const activeRef = useRef(active)
   const onResultRef = useRef(onResult)
+  const keepRef = useRef(keepScenes)
+  const questionRef = useRef(questionOrder)
+  const wsRef = useRef(null)
   activeRef.current = active
   onResultRef.current = onResult
+  keepRef.current = keepScenes
 
   useEffect(() => {
     if (!interviewId) return
@@ -36,6 +42,12 @@ export function useVisionStream({ interviewId, videoRef, active, onResult, fps =
       const token = localStorage.getItem('token')    // 자동 연장된 최신 토큰
       if (disposed || !token) return
       ws = new WebSocket(wsUrl(`/ws/interview/${interviewId}?token=${encodeURIComponent(token)}`))
+      wsRef.current = ws
+      ws.onopen = () => {
+        // 다시 연결될 때도 저장 여부 · 지금 질문을 다시 알린다
+        ws.send(JSON.stringify({ type: 'start', keep_scenes: !!keepRef.current }))
+        if (Number.isInteger(questionRef.current)) ws.send(JSON.stringify({ type: 'question', order: questionRef.current }))
+      }
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data)
@@ -71,8 +83,18 @@ export function useVisionStream({ interviewId, videoRef, active, onResult, fps =
       clearInterval(timer)
       clearTimeout(retryTimer)
       ws?.close()
+      wsRef.current = null
     }
   }, [interviewId, videoRef, fps])
+
+  // 질문이 바뀌면 서버에 알림
+  useEffect(() => {
+    questionRef.current = questionOrder
+    const ws = wsRef.current
+    if (ws && ws.readyState === WebSocket.OPEN && Number.isInteger(questionOrder)) {
+      ws.send(JSON.stringify({ type: 'question', order: questionOrder }))
+    }
+  }, [questionOrder])
 }
 
 /**

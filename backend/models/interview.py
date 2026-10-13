@@ -52,6 +52,7 @@ class Interview(Base):
     video_path       = Column(String, nullable=True)       # 녹화 파일 경로 (없으면 음성만 분석)
     interview_type   = Column(String, default="practice", nullable=True)  # 'practice' | 'real'
     resume_ref_id    = Column(String, nullable=True)       # 자기소개서 ID (resumes.ref_id)
+    scene_mode       = Column(String, nullable=True)       # 감점 장면 사진: 'kept' 저장 / 'off' 면접자가 끔 / None 예전 면접 · 카메라 없음
     created_at       = Column(DateTime, default=datetime.utcnow)
     ended_at         = Column(DateTime, nullable=True)     # PATCH /finish 호출 시 기록
 

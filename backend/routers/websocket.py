@@ -11,7 +11,7 @@ from jose import JWTError, jwt
 from core import audio_sessions
 from core.config import settings
 from core.database import AsyncSessionLocal
-from core.vision_buffer import init_buffer, add_frame_result
+from core.vision_buffer import init_buffer, add_frame_result, add_scene_frame, set_scene_keep, set_scene_question
 from services.vision.mediapipe_service import mediapipe_service
 from models.analysis import Analysis
 from models.interview import Interview, InterviewQuestion, InterviewStatus
@@ -96,6 +96,19 @@ async def interview_websocket(
                     data = json.loads(message["text"])
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(data, dict):
+                    continue
+                if data.get("type") == "start" and isinstance(data.get("keep_scenes"), bool):
+                    # 감점 장면 사진 저장 여부 (면접 시작 전 환경 설정 화면에서 고름, 기본 켜짐)
+                    keep = data["keep_scenes"]
+                    set_scene_keep(interview_id, keep)
+                    async with AsyncSessionLocal() as db:
+                        iv = await db.get(Interview, interview_id)
+                        if iv is not None:
+                            iv.scene_mode = "kept" if keep else "off"
+                            await db.commit()
+                elif data.get("type") == "question" and isinstance(data.get("order"), int):
+                    set_scene_question(interview_id, data["order"])    # 감점 장면에 '몇 번 질문 답변 중'을 붙이려고
                 await manager.send_json(websocket, {"type": "status", "received": data.get("type")})
 
             elif message.get("bytes") is not None:
@@ -108,6 +121,7 @@ async def interview_websocket(
                 # 실제로 분석한 프레임만 누적 — Stub 모드 · 깨진 프레임(face_detected None)은 항상 '양호'라 제외
                 if mediapipe_service._initialized and result.get("face_detected") is not None:
                     add_frame_result(interview_id, result)
+                    add_scene_frame(interview_id, result, frame_bytes)   # 감점 장면 후보 (저장을 끈 면접이면 무시)
 
                 await manager.send_json(websocket, {
                     "type": "frame_analysis",

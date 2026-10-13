@@ -355,5 +355,9 @@ async def delete_interview(
     if analysis:
         await db.delete(analysis)
 
+    # 감점 장면 사진도 같이 (파일 + 기록)
+    from services.vision.scenes import delete_for_interview
+    await delete_for_interview(db, interview_id)
+
     await db.delete(interview)
     await db.commit()

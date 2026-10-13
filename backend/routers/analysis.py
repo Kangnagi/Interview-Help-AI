@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -9,7 +10,7 @@ from core import audio_sessions
 from core.database import get_db, AsyncSessionLocal
 from core.config import settings
 from core.security import get_current_user_id
-from core.vision_buffer import get_and_clear_vision_scores
+from core.vision_buffer import get_and_clear_vision_scores, pop_scenes
 from models.interview import Interview, InterviewQuestion, InterviewStatus
 from models.analysis import Analysis
 from schemas.schemas import AnalysisResponse
@@ -17,6 +18,7 @@ from services.llm.kobert_service import kobert_service
 from services.llm.llama_service import analyze_answers_batch_with_llama, generate_overall_summary_with_llama
 from services.voice.librosa_service import analyze_speech, get_audio_duration
 from services.vision.mediapipe_service import mediapipe_service
+from services.vision import scenes as scene_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/analysis", tags=["분석"])
@@ -299,6 +301,16 @@ async def _run_analysis_pipeline_impl(interview_id: int):
                 analysis.posture_score, analysis.eye_contact_score = est_posture, est_eye
                 logger.info("[Analysis] MediaPipe 데이터 없음 — 텍스트 기반 추정값 사용")
 
+            # 감점 장면 사진 (결과 화면의 움직이는 이미지) — 실패해도 분석은 계속
+            picked = pop_scenes(interview_id)
+            if picked is not None and interview.scene_mode != "off":
+                try:
+                    async with db.begin_nested():     # 실패하면 장면 쪽만 되돌려 점수 저장에 영향 없게
+                        n = await scene_store.save_scenes(db, interview_id, picked)
+                    logger.info(f"[Analysis] 감점 장면 {n}개 저장")
+                except Exception as e:
+                    logger.error(f"[Analysis] 감점 장면 저장 실패: {e}")
+
             # ── 5) 종합 점수 ─────────────────────────────────────────────────
             analysis.total_score = _avg([
                 analysis.content_score,
@@ -438,3 +450,23 @@ async def get_analysis(
         key=lambda q: q.order,
     )
     return analysis
+
+
+@router.get("/{interview_id}/scenes")
+async def get_scenes(
+    interview_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """감점 장면 (결과 화면의 움직이는 이미지) — 본인 면접만. 사진은 data URL로 보내고 저장 · 공유 캐시는 막는다.
+
+    mode: 'kept' 저장함 / 'off' 면접자가 저장을 끔 / None 예전 면접 · 카메라 영상 없음
+    """
+    iv = (await db.execute(
+        select(Interview).where(Interview.id == interview_id, Interview.user_id == user_id)
+    )).scalar_one_or_none()
+    if not iv:
+        raise HTTPException(status_code=404, detail="면접을 찾을 수 없습니다")
+    data = await scene_store.load_scenes(db, interview_id, iv.created_at)
+    body = {"mode": iv.scene_mode, "retention_days": scene_store.RETENTION_DAYS, **data}
+    return JSONResponse(body, headers={"Cache-Control": "private, no-store"})
