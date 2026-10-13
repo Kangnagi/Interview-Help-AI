@@ -191,7 +191,7 @@ export default function ScoreGuidePage() {
             <div className="sg-if">
               <Cond q="카메라 영상 분석 결과가 있는가?" sub="자세 · 시선" />
               <div className="sg-cell"><Result score="추정값" color={C['31~50']} end={false} text="자세 = 답변 평균 × 0.9 + 10 / 시선 = 답변 평균 × 0.85 + 12 (최대 100)" /></div>
-              <div className="sg-cell"><Result score="실측값" color={C['66~80']} end={false} text="질문 · 답변 중 1초에 2장씩 잰 결과의 비율 — 시선은 정면을 본 비율, 자세는 어깨가 수평인 비율 (어깨가 안 잡히면 자세만, 얼굴이 한 번도 안 잡히면 시선만 추정값)" /></div>
+              <div className="sg-cell"><Result score="실측값" color={C['66~80']} end={false} text="질문 · 답변 중 1초에 2장씩 잰 결과 — 시선은 눈동자가 가운데(카메라 쪽)에 있는 정도의 평균(면접 화면 '실시간 분석'의 눈맞춤과 같은 값, 얼굴이 안 보인 순간은 0점), 자세는 어깨가 수평인 비율 (어깨가 안 잡히면 자세만, 얼굴이 한 번도 안 잡히면 시선만 추정값)" /></div>
             </div>
             <div className="sg-proc"><span className="sg-tag">끝</span><b>종합 점수 = 내용 · 관련성 · 명확성 · 음성 · 자세 · 시선의 평균</b></div>
           </div>

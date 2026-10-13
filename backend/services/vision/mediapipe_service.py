@@ -200,17 +200,48 @@ class MediaPipeService:
             "expression":  "smile" if smile >= 0.4 else "neutral",
         }
 
+    def _live_scores(self, face_result, facing: bool) -> dict:
+        """화면 왼쪽 아래 '실시간 분석' 점수 (0~100) — 영상 담당 upload-my-code 브랜치(2bf38eb8)의 analyze_landmarks 계산식.
+
+        eye_contact_score: 양쪽 눈 안에서 눈동자(홍채 468 · 473)가 가운데에 가까울수록 높음.
+                           고개를 돌린 채 눈동자만 가운데인 경우(facing=False)는 정면이 아니라 40점까지만 준다.
+        blink_score:       눈을 뜬 정도 = (1 - 눈 감김 계수 평균) × 100
+        expression_score:  기본 50 + 미소 계수 평균 × 50
+        """
+        if not face_result or not face_result.face_landmarks:
+            return {"eye_contact_score": 0.0, "blink_score": None, "expression_score": None}
+        lm = face_result.face_landmarks[0]
+        eye = None
+        if len(lm) > 473:      # 홍채 랜드마크가 있는 모델(478개)
+            def centered(iris, a, b):
+                width = max(abs(lm[b].x - lm[a].x), 0.001)
+                ratio = (lm[iris].x - lm[a].x) / width          # 0 = 한쪽 끝, 0.5 = 가운데, 1 = 반대쪽 끝
+                return max(0.0, min(1.0, 1.0 - abs(ratio - 0.5) * 2.0))
+            eye = (centered(468, 33, 133) + centered(473, 362, 263)) / 2 * 100
+            if not facing:
+                eye = min(eye, 40.0)
+        bs = self._blendshapes(face_result)
+        blink = (bs.get("eyeBlinkLeft", 0.0) + bs.get("eyeBlinkRight", 0.0)) / 2 if bs else None
+        smile = (bs.get("mouthSmileLeft", 0.0) + bs.get("mouthSmileRight", 0.0)) / 2 if bs else None
+        return {
+            "eye_contact_score": round(eye if eye is not None else (100.0 if facing else 0.0), 1),
+            "blink_score":       round(max(0.0, min(100.0, (1.0 - blink) * 100)), 1) if blink is not None else None,
+            "expression_score":  round(max(0.0, min(100.0, 50.0 + smile * 50.0)), 1) if smile is not None else None,
+        }
+
     def _frame_result(self, face_result, pose_result) -> dict:
         """실시간 프레임 한 장의 결과 — 화면 표시용 + 분석 집계용(core/vision_buffer)."""
         face_detected = bool(face_result and face_result.face_landmarks)
+        facing = self._analyze_eye_contact(face_result)
         return {
             "face_detected":  face_detected,
             "landmark_count": len(face_result.face_landmarks[0]) if face_detected else 0,
-            "eye_contact":    self._analyze_eye_contact(face_result),
+            "eye_contact":    facing,
             "head_pose":      self._analyze_head_pose(face_result),
             "pose_detected":  bool(pose_result and pose_result.pose_landmarks),
             "posture_ok":     self._analyze_posture(pose_result),
             **self._analyze_face_detail(face_result),
+            **self._live_scores(face_result, facing),
         }
 
     def _analyze_posture(self, pose_result) -> bool:
@@ -320,6 +351,9 @@ class MediaPipeService:
             "eyes_closed": None,
             "smile":       None,
             "eye_contact": True,
+            "eye_contact_score": None,
+            "blink_score":       None,
+            "expression_score":  None,
             "head_pose":   {"pitch": 0.0, "yaw": 0.0, "roll": 0.0},
             "expression":  "neutral",
             "posture_ok":  True,

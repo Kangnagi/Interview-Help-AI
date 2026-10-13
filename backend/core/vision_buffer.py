@@ -32,9 +32,11 @@ def get_and_clear_vision_scores(interview_id: int) -> Optional[dict]:
     if not frames:
         return None
 
-    # 시선: 얼굴이 안 보인 프레임도 '정면을 안 봄'으로 센다 / 자세: 몸(어깨)이 잡힌 프레임만
-    # (예전엔 어깨가 화면 밖이면 '자세 양호'로 쳐서, 자리를 비워도 자세 100점이 나왔다)
-    eye_scores     = [1.0 if f.get("eye_contact") else 0.0 for f in frames]
+    # 시선: 프레임별 눈맞춤 점수(눈동자 위치, 0~100 — 화면 '실시간 분석'과 같은 값)의 평균. 얼굴이 안 보인 프레임은 0점.
+    #       (점수가 없는 예전 결과는 정면 여부로 1 · 0)
+    # 자세: 몸(어깨)이 잡힌 프레임만 (예전엔 어깨가 화면 밖이면 '자세 양호'로 쳐서, 자리를 비워도 자세 100점이 나왔다)
+    eye_scores = [f["eye_contact_score"] / 100.0 if f.get("eye_contact_score") is not None
+                  else (1.0 if f.get("eye_contact") else 0.0) for f in frames]
     posed          = [f for f in frames if f.get("pose_detected", True)]
     posture_scores = [1.0 if f.get("posture_ok") else 0.0 for f in posed]
 

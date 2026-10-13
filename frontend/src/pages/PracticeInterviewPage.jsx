@@ -6,6 +6,7 @@ import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
 import { wsUrl } from '@/services/websocket'
 import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
+import LiveVisionPanel from '@/components/Interview/LiveVisionPanel'
 import { useAuthStore } from '@/store/authStore'
 
 const PHASE = {
@@ -74,10 +75,12 @@ export default function PracticeInterviewPage() {
   // 카메라 프레임을 서버(MediaPipe)로 보내 자세 · 시선을 실제로 잰다 — 결과로 카메라 칸 표시도 바꾼다
   const visionRecentRef = useRef([])
   const serverVisionRef = useRef(false)      // 서버 결과가 오기 시작하면 브라우저 얼굴 인식(FaceDetector) 표시는 쓰지 않음
+  const [visionRecent, setVisionRecent] = useState([])    // 왼쪽 아래 '실시간 분석' — 최근 6장(약 3초)
   const handleVisionResult = useCallback((r) => {
     visionRecentRef.current = [...visionRecentRef.current.slice(-2), r]
     const st = faceStatusFromResults(visionRecentRef.current)
     if (st) { serverVisionRef.current = true; setFaceStatus(st) }
+    setVisionRecent((prev) => [...prev.slice(-5), r])
   }, [])
   useVisionStream({
     interviewId: backendInterviewId,
@@ -525,6 +528,9 @@ export default function PracticeInterviewPage() {
               )}
             </div>
           </div>
+
+          {/* 실시간 분석 (MediaPipe 실측값) */}
+          <LiveVisionPanel recent={visionRecent} />
 
           {/* Camera */}
           <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
