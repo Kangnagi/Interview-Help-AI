@@ -4,7 +4,7 @@ import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
-import { interviewWS } from '@/services/websocket'
+import { wsUrl, recordingAudioConstraints } from '@/services/websocket'
 import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
 import LiveVisionPanel from '@/components/Interview/LiveVisionPanel'
 
@@ -39,6 +39,7 @@ export default function RealInterviewPage() {
   const [faceStatus, setFaceStatus] = useState('waiting')
   const [micActive, setMicActive] = useState(false)
   const [deviceError, setDeviceError] = useState(null)
+  const [micReady, setMicReady] = useState(false)   // 마이크 스트림을 받았는지 (녹음 시작 조건)
 
   const [backendInterviewId, setBackendInterviewId] = useState(null)
   const [backendQuestions, setBackendQuestions] = useState([])
@@ -54,6 +55,10 @@ export default function RealInterviewPage() {
   const detectionRef = useRef(null)
   const micRafRef = useRef(null)
   const handleNextRef = useRef(null)
+  const micStreamRef = useRef(null)
+  const audioWsRef = useRef(null)
+  const recorderRef = useRef(null)
+  const currentQIdRef = useRef(null)
 
   // 카메라 프레임을 서버(MediaPipe)로 보내 자세 · 시선을 실제로 잰다 — 결과로 카메라 칸 표시도 바꾼다
   const visionRecentRef = useRef([])
@@ -84,6 +89,60 @@ export default function RealInterviewPage() {
   useEffect(() => {
     if (phase !== 'interview') stopSTT()
   }, [phase, stopSTT])
+
+  // 면접 전체를 녹음 1개로 서버에 보낸다 (/ws/interview_audio) — 질문이 바뀔 때마다 질문 표시를 보내면
+  // 서버가 질문별 시작·끝 시각을 기록해 발화 분석(librosa)에서 그 구간만 잘라 쓴다
+  // (예전엔 실전 면접은 녹음을 보내지 않아 발화 점수가 기본값으로만 채워졌다)
+  const startAudioRecording = useCallback(() => {
+    const stream = micStreamRef.current
+    if (!backendInterviewId || !stream || audioWsRef.current) return
+    const ws = new WebSocket(wsUrl(`/ws/interview_audio/${backendInterviewId}?token=${localStorage.getItem('token') || ''}`))
+    audioWsRef.current = ws
+    ws.onopen = () => {
+      if (audioWsRef.current !== ws) { ws.close(); return }   // 여는 사이 면접이 끝났으면 녹음하지 않는다
+      // 첫 조각보다 먼저 '지금은 이 질문의 답변'을 알린다 — 녹음도 연결이 열린 뒤에 시작해 앞부분 조각을 잃지 않는다
+      if (currentQIdRef.current) ws.send(JSON.stringify({ type: 'question', question_id: currentQIdRef.current }))
+      let recorder
+      try {
+        recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      } catch (err) {
+        console.error('녹음 시작 실패 (발화 분석 없이 진행):', err)
+        ws.close()
+        return
+      }
+      recorderRef.current = recorder
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data)
+      }
+      recorder.onstop = () => ws.close()   // stop() 뒤 마지막 조각까지 보낸 다음 연결을 닫는다
+      recorder.start(250)                  // 서버 CHUNK_SECONDS(0.25)와 같은 간격 — 질문 구간 시각 보정에 쓰임
+    }
+  }, [backendInterviewId])
+
+  const stopAudioRecording = useCallback(() => {
+    const recorder = recorderRef.current
+    const ws = audioWsRef.current
+    recorderRef.current = null
+    audioWsRef.current = null
+    if (recorder && recorder.state !== 'inactive') recorder.stop()
+    else ws?.close()
+  }, [])
+
+  useEffect(() => {
+    if (phase !== 'interview' || !micReady) return
+    startAudioRecording()
+    return () => stopAudioRecording()
+  }, [phase, micReady, startAudioRecording, stopAudioRecording])
+
+  // 질문이 바뀌면(꼬리 질문 포함) 녹음 소켓에 질문 표시를 보낸다
+  const currentQId = backendQuestions[qIndex]?.id ?? null
+  useEffect(() => {
+    currentQIdRef.current = currentQId
+    const ws = audioWsRef.current
+    if (currentQId && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'question', question_id: currentQId }))
+    }
+  }, [currentQId])
 
   const handleSetupReady = useCallback(async ({ cameraId, micId, keepScenes: keep = true }) => {
     // '준비 완료'를 여러 번 눌러도 면접은 한 번만 만든다 (질문 생성 5~7초 사이에 다시 눌러 면접이 두 개씩 생겼다 — 10/4 · 10/6)
@@ -133,7 +192,7 @@ export default function RealInterviewPage() {
       audio: false,
     }
     const micConstraints = {
-      audio: deviceIds.micId ? { deviceId: { exact: deviceIds.micId } } : true,
+      audio: recordingAudioConstraints(deviceIds.micId),   // 이 스트림을 녹음에도 쓴다 — 브라우저 음성 처리 끔
       video: false,
     }
 
@@ -162,6 +221,8 @@ export default function RealInterviewPage() {
 
     navigator.mediaDevices.getUserMedia(micConstraints)
       .then((audioStream) => {
+        micStreamRef.current = audioStream   // 마이크 표시와 녹음이 같은 스트림을 쓴다 (설정 화면에서 고른 마이크)
+        setMicReady(true)
         const ctx = new (window.AudioContext || window.webkitAudioContext)()
         if (ctx.state === 'suspended') ctx.resume()
         const analyser = ctx.createAnalyser()
@@ -183,6 +244,7 @@ export default function RealInterviewPage() {
 
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
+      micStreamRef.current?.getTracks().forEach((t) => t.stop())   // 예전엔 마이크를 놓지 않아 면접 뒤에도 마이크가 켜져 있었다
       clearInterval(detectionRef.current)
       cancelAnimationFrame(micRafRef.current)
     }
@@ -238,6 +300,8 @@ export default function RealInterviewPage() {
 
     if (isLast) {
       clearInterval(totalRef.current)
+      // 녹음을 먼저 끝내 서버가 파일 저장을 시작하게 한다 (분석은 저장이 끝날 때까지 최대 20초 기다림)
+      stopAudioRecording()
       if (backendInterviewId && currentBackendQ) {
         try {
           await interviewAPI.submitAnswer(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer })
@@ -272,7 +336,7 @@ export default function RealInterviewPage() {
     }
     setQIndex((p) => p + 1)
     startQTimer()
-  }, [qIndex, answers, currentQ, answer, interim, activeQuestions.length, backendInterviewId, backendQuestions, resumeId, addInterviewRecord, navigate, stopSTT, totalSec, startQTimer])
+  }, [qIndex, answers, currentQ, answer, interim, activeQuestions.length, backendInterviewId, backendQuestions, resumeId, addInterviewRecord, navigate, stopSTT, totalSec, startQTimer, stopAudioRecording])
 
   handleNextRef.current = handleNext
 

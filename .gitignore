@@ -62,6 +62,8 @@ frontend/.vite/
 
 backend/kobert/
 backend/ai_models/
+# 음성 점수 모델(best_model.pt) — 어댑터처럼 git 제외, 음성 담당에게 따로 받아 넣음
+backend/services/voice/ai_model/
 .venv/
 venv/
 kobert/

@@ -79,7 +79,9 @@ class Settings(BaseSettings):
     LLAMA_ADAPTER_PATH: str = ""   # 예비 피드백용 LoRA — Llama 위에서 학습한 것이라 Bllossom에선 비움 (예비 피드백은 기본 모델이 씀)
     LLAMA_SCORE_ADAPTER_PATH: str = "./ai_models/bllossom-score-adapter-b3"  # 점수·피드백·팁 채점 어댑터 (b1에서 Claude 채점 553개로 이어 학습, 되돌리기: …-b2 / -b1)
     LLAMA_QGEN_ADAPTER_PATH: str = ""   # 질문 전용 어댑터 (자기소개서 질문 · 꼬리 질문). 비우면 키워드 + 질문 틀 방식 (켜기: ./ai_models/bllossom-qgen-q2)
-    LLAMA_USE_4BIT: bool = False                            # VRAM이 부족하면 True (QLoRA 4bit 로드)
+    VOICE_MODEL_PATH: str = "./services/voice/ai_model/best_model.pt"   # 음성 합격/불합격 모델 (VoiceScoreNet, git 제외 — 따로 전달받아 넣음). 비우거나 파일이 없으면 규칙 점수만
+    VOICE_SCORE_PER_LOGIT: float = 10.0   # 음성 모델 logit 1당 점수 차 (판정 기준 = 60점). 실제 녹음 logit 분포를 보고 30~100에 고루 퍼지게 조정
+    LLAMA_USE_4BIT: bool = False                           # VRAM이 부족하면 True (QLoRA 4bit 로드)
     LLAMA_MAX_NEW_TOKENS: int = 512                         # 피드백 생성 최대 토큰 수
     # 질문 생성 · 종합 총평을 따로 맡길 모델 (GPU 약 6GB 추가). 빈 값이면 위 기본 모델이 어댑터 없이 맡는다.
     TEXT_MODEL: str = ""

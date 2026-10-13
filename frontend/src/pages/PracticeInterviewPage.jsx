@@ -4,7 +4,7 @@ import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
-import { wsUrl } from '@/services/websocket'
+import { wsUrl, recordingAudioConstraints } from '@/services/websocket'
 import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
 import LiveVisionPanel from '@/components/Interview/LiveVisionPanel'
 import { useAuthStore } from '@/store/authStore'
@@ -111,24 +111,36 @@ export default function PracticeInterviewPage() {
       if (questionId) ws.send(JSON.stringify({ type: 'question', question_id: questionId }))
     }
 
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+    // 설정 화면에서 고른 마이크로 녹음한다 (예전엔 기본 마이크로 녹음해 고른 마이크와 다를 수 있었다)
+    navigator.mediaDevices.getUserMedia({ audio: recordingAudioConstraints(deviceIds.micId) }).then((stream) => {
       // 마이크 허용을 기다리는 사이 답변이 끝났으면(연결이 이미 바뀜/닫힘) 녹음을 시작하지 않고 마이크를 놓는다
       if (wsRef.current !== ws || ws.readyState > WebSocket.OPEN) {
         stream.getTracks().forEach((t) => t.stop())
         return
       }
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
-      mediaRecorderRef.current = recorder
-      
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(e.data)
+      // 녹음은 연결이 열린 뒤에 시작한다 — 예전엔 연결 전에 시작해, 열리기 전에 나온 첫 조각(webm 머리말)이
+      // 버려지면 서버가 녹음 전체를 읽지 못해 음성 점수가 기본값으로 나왔다 (실전 면접 녹음과 같은 방식)
+      const startRecording = () => {
+        if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) {
+          stream.getTracks().forEach((t) => t.stop())
+          return
         }
+        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+        mediaRecorderRef.current = recorder
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data)
+        }
+        // 500ms 단위로 오디오 조각을 서버에 전송
+        recorder.start(500)
       }
-      // 500ms 단위로 오디오 조각을 서버에 전송
-      recorder.start(500)
+      if (ws.readyState === WebSocket.OPEN) startRecording()
+      else {
+        ws.addEventListener('open', startRecording, { once: true })     // onopen(질문 표시 전송) 다음에 실행됨
+        // 열리기 전에 답변이 끝나 연결이 닫히면 마이크를 놓는다 (녹음 중 끊긴 경우도 녹음할 곳이 없으니 같이 멈춤)
+        ws.addEventListener('close', () => stream.getTracks().forEach((t) => t.stop()), { once: true })
+      }
     })
-  }, [backendInterviewId, token, currentQuestion?.id])
+  }, [backendInterviewId, token, currentQuestion?.id, deviceIds.micId])
 
   // 오디오 스트리밍 종료
   const stopAudioStreaming = useCallback(() => {

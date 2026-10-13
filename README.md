@@ -40,7 +40,7 @@ Interview-Help-AI/
 │   │   ├── voice/librosa_service.py
 │   │   └── vision/mediapipe_service.py
 │   ├── training/               # 채점 모델 학습 · 평가 스크립트, 채점 기준표(claude_rubric_v3.md)
-│   └── ai_models/              # 채점 어댑터 (git 제외 — 따로 전달받아 넣음)
+│   └── ai_models/              # 채점 어댑터 (git 제외 — 따로 전달받아 넣음, 음성 모델은 services/voice/ai_model/)
 ├── frontend/
 │   ├── src/                    # pages, components, services(API·WebSocket), store, hooks
 │   └── vite.config.js          # /api, /ws 요청을 백엔드(:8000)로 전달
@@ -110,6 +110,9 @@ backend/ai_models/bllossom-score-adapter-b3/adapter_model.safetensors
 
 `ai_models/bllossom-score-adapter-b3/bllossom-score-adapter-b3/...`처럼 폴더가 두 번 겹치지 않게 주의하세요.
 어댑터가 없어도 서버는 켜지지만 점수가 답변 길이 기반 기본값(45 · 55 · 65점)으로만 나옵니다.
+
+음성 모델(`best_model.pt`, 약 4MB)도 음성 담당에게 받아 `backend/services/voice/ai_model/best_model.pt`에 둡니다.
+없으면 발화 점수는 규칙 점수(말 속도 · 침묵 · 억양 등)만으로 나옵니다.
 
 ### 5. 백엔드 실행
 

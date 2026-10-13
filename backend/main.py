@@ -18,6 +18,7 @@ from services.vision.mediapipe_service import mediapipe_service
 from services.vision import scenes as scene_store   # 감점 장면 사진 30일 자동 삭제
 from services.llm.kobert_service import kobert_service
 from services.llm.llama_service import llama_service
+from services.voice.voice_model_service import voice_model_service
 
 logging.basicConfig(
     level=logging.INFO if settings.DEBUG else logging.WARNING,
@@ -37,6 +38,8 @@ async def lifespan(app: FastAPI):
     # await kobert_service.load_model()
 
     await llama_service.load_model()  # 파인튜닝된 Llama-3.2-3B(LoRA) 로딩
+
+    await asyncio.to_thread(voice_model_service.load)   # 음성 모델 (CPU, 수 초 이내)
 
     await mediapipe_service.initialize()
     logger.info("AI 모델 준비 완료")

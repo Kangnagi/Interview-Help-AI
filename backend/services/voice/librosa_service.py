@@ -15,6 +15,8 @@ from matplotlib.figure import Figure
 import librosa
 import librosa.display
 
+from services.voice.voice_model_service import voice_model_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +190,16 @@ def extract_speech_features(audio_path: str, transcript: str = "",
     if not audio_path or not os.path.isfile(audio_path):
         return None
     try:
-        sr = 16000
-        y = _load_segment(audio_path, sr, start_sec, end_sec, max_seconds=MAX_SPEECH_ANALYSIS_SECONDS)
+        y = _load_segment(audio_path, 16000, start_sec, end_sec, max_seconds=MAX_SPEECH_ANALYSIS_SECONDS)
+    except Exception:
+        logger.exception("녹음 디코딩 중 오류: %s", audio_path)
+        return None
+    return _features_from_waveform(y, transcript)
+
+
+def _features_from_waveform(y: np.ndarray, transcript: str = "", sr: int = 16000) -> dict | None:
+    """16kHz 모노 파형 + 인식된 텍스트 → 발화 지표. 소리가 거의 없거나 실패하면 None."""
+    try:
         duration = len(y) / sr
         if duration < 1.0 or float(np.max(np.abs(y))) < 1e-4:
             return None
@@ -227,7 +237,7 @@ def extract_speech_features(audio_path: str, transcript: str = "",
             "filler_per_100_syllables": round(100 * fillers / syllables, 1) if syllables else None,
         }
     except Exception:
-        logger.exception("발화 지표 계산 중 오류: %s", audio_path)
+        logger.exception("발화 지표 계산 중 오류")
         return None
 
 
@@ -279,10 +289,38 @@ async def analyze_speech(audio_path: str, transcript: str = "",
     분석 파이프라인(routers/analysis.py)은 고치지 않아도 된다.
     start_sec/end_sec: 면접 전체 녹음 안에서 이 답변의 구간 (None이면 파일 처음/끝).
     """
-    features = await asyncio.to_thread(extract_speech_features, audio_path, transcript, start_sec, end_sec)
+    return await asyncio.to_thread(_analyze_speech_sync, audio_path, transcript, start_sec, end_sec)
+
+
+# 음성 모델(VoiceScoreNet) 점수 비중 — 나머지는 규칙 점수(score_speech). 모델만 쓰려면 1.0
+# 점수 환산(VOICE_SCORE_PER_LOGIT)을 실제 녹음으로 맞추기 전까지는 반반 (10/13 — 모델만 쓰면 30 · 100점 양 끝으로 몰릴 수 있음)
+VOICE_MODEL_WEIGHT = 0.5
+
+
+def _analyze_speech_sync(audio_path: str, transcript: str,
+                         start_sec: float | None, end_sec: float | None) -> dict | None:
+    """질문 구간을 한 번만 디코딩해 규칙 지표와 음성 모델에 같이 넘긴다."""
+    if not audio_path or not os.path.isfile(audio_path):
+        return None
+    try:
+        y = _load_segment(audio_path, 16000, start_sec, end_sec, max_seconds=MAX_SPEECH_ANALYSIS_SECONDS)
+    except Exception:
+        logger.exception("녹음 디코딩 중 오류: %s", audio_path)
+        return None
+
+    features = _features_from_waveform(y, transcript)
     if not features:
         return None
-    return {**score_speech(features), "metrics": features}
+    result = {**score_speech(features), "metrics": features}
+
+    # 음성 모델이 있으면 모델 점수(logit 기반 30~100, 판정 기준 = 60점)를 섞는다
+    # 코칭 문장은 모델이 이유를 알려 주지 않아 규칙 지표에서 뽑은 것을 그대로 쓴다
+    model_out = voice_model_service.predict_sync(y)
+    if model_out:
+        model_score = model_out.pop("score")
+        features.update(model_score=model_score, **model_out)
+        result["speech_score"] = round(VOICE_MODEL_WEIGHT * model_score + (1 - VOICE_MODEL_WEIGHT) * result["speech_score"])
+    return result
 
 
 def get_audio_duration(audio_path: str, start_sec: float | None = None, end_sec: float | None = None) -> float:
