@@ -10,6 +10,12 @@
   qgen_eval_prompts.jsonl : 평가용 입력 (qgen_eval_intro 30개 + 학습에 안 쓴 실제 답변 30개 × 유형 2개)
 
 실행: cd backend && .venv\\Scripts\\python training\\build_qgen_dataset.py
+
+q3 (--q3, 10/14): 질문 생성만 학습 — 꼬리 질문 데이터는 넣지 않는다 (실제 면접은 자기소개서 질문이 꼬리 질문보다 많다.
+  꼬리 질문은 서비스에서 LLAMA_FU_ADAPTER_PATH로 q2를 계속 쓴다).
+  입력: qgen_intro_b*.jsonl(신입 150) + qgen_exp_intro_b*.jsonl(경력자 — 직무 질문은 AI Hub 실제 면접 질문을 응용, Claude 작성 · 팀 검토)
+  둘 다 INTRO_REPEAT_Q3번 (데이터가 늘어 3번까지 반복하지 않아도 되고, 3 epoch × 반복이 크면 외워 버린다)
+  평가: qgen_eval_intro 30 + qgen_exp_intro_eval.jsonl(학습에 안 쓴 경력자, 있으면)
 """
 import glob
 import json
@@ -23,6 +29,8 @@ from services.llm.llama_service import (qgen_messages, followup_messages, follow
 
 DATA = os.path.join(HERE, "data")
 INTRO_REPEAT = 3
+INTRO_REPEAT_Q3 = 2
+Q3 = "--q3" in sys.argv
 FU_EVAL = range(400, 430)   # 꼬리 질문 평가용 — 학습 데이터(0~399)와 겹치지 않는 실제 답변
 
 
@@ -48,16 +56,17 @@ def load(pattern: str) -> list:
 
 
 def main():
-    intros = load("qgen_intro_b*.jsonl")
-    fus = load("qgen_fu2_b*.jsonl")
+    intros = load("qgen_intro_b*.jsonl") + (load("qgen_exp_intro_b*.jsonl") if Q3 else [])
+    fus = [] if Q3 else load("qgen_fu2_b*.jsonl")
     pool = {r["idx"]: r for r in load("qgen_fu_pool.jsonl")}
+    repeat = INTRO_REPEAT_Q3 if Q3 else INTRO_REPEAT
 
     train = []
     for r in intros:
         qs = r["questions"]
         assert len(qs) == QGEN_POOL_SIZE and all(is_valid_question(q) for q in qs), r["id"]
         msgs = qgen_messages(resume_text(r)) + [{"role": "assistant", "content": json.dumps(qs, ensure_ascii=False)}]
-        train += [{"messages": msgs, "task": "qgen", "id": r["id"]}] * INTRO_REPEAT
+        train += [{"messages": msgs, "task": "qgen", "id": r["id"]}] * repeat
     for r in fus:
         p = pool[r["idx"]]
         assert r["idx"] not in FU_EVAL and is_valid_question(r["follow_up"]), r["idx"]
@@ -70,9 +79,11 @@ def main():
             f.write(json.dumps({"messages": row["messages"]}, ensure_ascii=False) + "\n")
 
     evals = [{"task": "qgen", "id": r["id"], "resume_text": resume_text(r)} for r in load("qgen_eval_intro.jsonl")]
-    # 꼬리 질문은 답변마다 1순위 · 2순위 유형 두 번 (두 번째 꼬리 질문은 다른 유형이라, 2순위도 따르는지 본다)
-    evals += [{"task": "followup", "id": f"fu{i}-{t}", "question": pool[i]["question"], "answer": pool[i]["answer"], "fu_type": t}
-              for i in FU_EVAL for t in follow_up_types(pool[i]["question"], pool[i]["answer"])[:2]]
+    if Q3:   # 꼬리 질문은 q2를 그대로 쓰므로 평가하지 않는다 — 대신 학습에 안 쓴 경력자 자기소개서
+        evals += [{"task": "qgen", "id": r["id"], "resume_text": resume_text(r)} for r in load("qgen_exp_intro_eval.jsonl")]
+    else:    # 꼬리 질문은 답변마다 1순위 · 2순위 유형 두 번 (두 번째 꼬리 질문은 다른 유형이라, 2순위도 따르는지 본다)
+        evals += [{"task": "followup", "id": f"fu{i}-{t}", "question": pool[i]["question"], "answer": pool[i]["answer"], "fu_type": t}
+                  for i in FU_EVAL for t in follow_up_types(pool[i]["question"], pool[i]["answer"])[:2]]
     with open(os.path.join(DATA, "qgen_eval_prompts.jsonl"), "w", encoding="utf-8") as f:
         for row in evals:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -85,7 +96,9 @@ def main():
         print(f"토큰 길이: 중앙 {lens[len(lens) // 2]}, 최대 {lens[-1]}")
     except Exception as e:
         print(f"토큰 길이 확인 건너뜀: {e}")
-    print(f"학습 {len(train)}줄 (자기소개서 질문 {len(intros)}×{INTRO_REPEAT}, 꼬리 질문 {len(fus)}) | 평가 입력 {len(evals)}개")
+    no_intro = sum(1 for r in intros if not r.get("intro"))
+    print(f"학습 {len(train)}줄 (질문 생성 {len(intros)}×{repeat}, 그중 자기소개서 없는 공고 {no_intro}, 꼬리 질문 {len(fus)})"
+          f" | 평가 입력 {len(evals)}개")
 
 
 if __name__ == "__main__":

@@ -49,6 +49,9 @@ def _parse_json(text: str):
 FEEDBACK_ADAPTER = "interview_feedback"
 SCORE_ADAPTER = "interview_score"
 QGEN_ADAPTER = "interview_qgen"   # 질문 전용 (자기소개서 질문 풀 · 꼬리 질문) — LLAMA_QGEN_ADAPTER_PATH가 있을 때만
+# 꼬리 질문만 다른 어댑터로 (선택) — q3는 질문 생성만 학습해서(10/14), 꼬리 질문은 검증된 q2를 계속 쓴다.
+# LLAMA_FU_ADAPTER_PATH가 비어 있으면 꼬리 질문도 QGEN_ADAPTER로
+FU_ADAPTER = "interview_fu"
 
 # training/generate_teacher_scores.py의 SCORING_SYSTEM_PROMPT와 글자 하나까지 같아야 한다.
 # (채점 어댑터는 이 프롬프트로만 학습됐기 때문에 조금만 달라져도 출력 형식·점수가 흔들린다.)
@@ -131,6 +134,7 @@ class LlamaService:
             self.has_score_adapter = False
             self.has_feedback_adapter = False
             self.has_qgen_adapter = False
+            self.fu_adapter = QGEN_ADAPTER   # 꼬리 질문에 쓸 어댑터 (LLAMA_FU_ADAPTER_PATH가 있으면 FU_ADAPTER)
             # generate()는 스레드로 넘어가므로, 같은 모델 인스턴스에 대한 동시
             # 호출(어댑터 전환 포함)이 서로 섞이지 않도록 직렬화한다.
             self._lock = asyncio.Lock()
@@ -154,6 +158,7 @@ class LlamaService:
             self.has_score_adapter = False
             self.has_feedback_adapter = False
             self.has_qgen_adapter = False
+            self.fu_adapter = QGEN_ADAPTER
 
         if settings.TEXT_MODEL:
             logger.info(f"한국어 글쓰기 모델 로딩 중: {settings.TEXT_MODEL}")
@@ -239,6 +244,10 @@ class LlamaService:
             else:
                 self.model = PeftModel.from_pretrained(base_model, qgen_dir, adapter_name=QGEN_ADAPTER)
             self.has_qgen_adapter = True
+            fu_dir = settings.LLAMA_FU_ADAPTER_PATH
+            if fu_dir and os.path.isdir(fu_dir) and os.path.normpath(fu_dir) != os.path.normpath(qgen_dir):
+                self.model.load_adapter(fu_dir, adapter_name=FU_ADAPTER)
+                self.fu_adapter = FU_ADAPTER
         if not score_dir:
             logger.warning(f"채점 어댑터 없음: {settings.LLAMA_SCORE_ADAPTER_PATH} — 규칙 기반 채점으로 동작")
         self.model.eval()
@@ -970,7 +979,8 @@ _ASKS_REASON = re.compile(r"이유|왜")   # 질문이 이미 이유를 물었�
 # 답변이 이미 이유를 말했어도 판단 근거형은 뒤로 — 10/10 팀 검토: 판단 근거형 16개 중 좋은 질문 5개, X의 대부분이 "이미 답변에 있음"
 _GAVE_REASON = re.compile(r"왜냐하면|때문에|때문입니다|이유는|이유가|그래서")
 # 가정사 · 사별처럼 민감한 이야기에는 꼬리 질문을 하지 않는다 (10/10 팀 검토 "가정사 관련 답변은 꼬리질문은 안하는게 좋음")
-_SENSITIVE_TOPIC = re.compile(r"시어머니|시아버지|시댁|고부|이혼|사별|돌아가셨|돌아가신|세상을 떠|학대|투병|장례|유산했")
+# '고부'는 '고부 갈등' · '고부간'만 — 그냥 '고부'면 '사고부터' · '재고부족' 같은 말에도 걸려 꼬리 질문을 건너뛰었다 (10/13)
+_SENSITIVE_TOPIC = re.compile(r"시어머니|시아버지|시댁|고부\s*(?:갈등|간|관계)|이혼|사별|돌아가셨|돌아가신|세상을 떠|학대|투병|장례|유산했")
 _PAST_EXPERIENCE = re.compile(r"했었|했던|당시|그때|였을 때|적이 있|경험이|했습니다|었습니다")
 _DECISION = re.compile(r"방법|해결|선택|결정|판단|원인|바꿨|바꾸|개선|고민")
 # 이미 나온 꼬리 질문이 어떤 유형이었는지 (면접 하나에 꼬리 질문이 둘이면 서로 다른 유형으로)
@@ -1086,7 +1096,7 @@ async def model_follow_up(question: str, answer: str, existing_questions: list, 
     """질문 어댑터가 정한 유형으로 직접 쓴 꼬리 질문. 검사에 떨어지거나, 다른 유형으로 썼거나,
     이 면접의 다른 질문과 거의 같거나 같은 경험을 물으면 None."""
     try:
-        text = (await llama_service.generate_batch([followup_messages(question, answer, fu_type)], 120, QGEN_ADAPTER, greedy=True))[0]
+        text = (await llama_service.generate_batch([followup_messages(question, answer, fu_type)], 120, llama_service.fu_adapter, greedy=True))[0]
     except Exception as e:
         logger.error(f"질문 어댑터 꼬리 질문 실패: {e}")
         return None
