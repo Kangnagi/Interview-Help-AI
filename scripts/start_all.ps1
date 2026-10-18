@@ -1,5 +1,6 @@
 ﻿# 백엔드(FastAPI) · 프런트엔드(Vite) · Cloudflare 터널을 각각 감시 루프(run_forever.ps1)로 창 없이 띄운다.
-# 이미 감시 중인 서비스는 건너뛰므로 여러 번 실행해도 안전하다. 로그온 시 작업 스케줄러가 자동 실행한다.
+# 이미 감시 중인 서비스는 건너뛰므로 여러 번 실행해도 안전하다. 작업 스케줄러가 로그온 시와 그 뒤 5분마다 실행해
+# 감시 루프가 사라진 서비스를 다시 띄운다 (register_autostart.ps1).
 # 프런트엔드는 기본이 운영 방식(npm run serve: 빌드 후 vite preview — 첫 화면이 빠름)이다.
 # -Dev를 주면 개발 서버(npm run dev: 화면 코드 수정이 바로 반영되지만 첫 로딩이 느림)로 띄운다.
 # 이미 떠 있는 프런트엔드의 방식을 바꾸거나 다시 빌드하려면 restart_frontend.ps1을 쓴다.
@@ -38,9 +39,15 @@ foreach ($s in $services) {
     $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
         CommandLine = "powershell.exe $argLine"; CurrentDirectory = $root; ProcessStartupInformation = $startup }
     if ($r.ReturnValue -eq 0) {
-        Write-Output "[$($s.Name)] 감시 시작 (pid $($r.ProcessId))"
+        $msg = "[$($s.Name)] 감시 시작 (pid $($r.ProcessId))"
     } else {
         Start-Process powershell.exe -ArgumentList $argLine -WindowStyle Hidden
-        Write-Output "[$($s.Name)] 감시 시작 — WMI 실행 실패(코드 $($r.ReturnValue))로 일반 방식 사용, 이 창을 닫으면 같이 꺼질 수 있음"
+        $msg = "[$($s.Name)] 감시 시작 — WMI 실행 실패(코드 $($r.ReturnValue))로 일반 방식 사용, 이 창을 닫으면 같이 꺼질 수 있음"
     }
+    Write-Output $msg
+    # 작업 스케줄러가 5분마다 이 스크립트를 돌리므로, 실제로 다시 띄운 경우만 기록해 둔다 (꺼졌던 서비스 추적용)
+    try {
+        New-Item -ItemType Directory -Force "$root\logs" | Out-Null
+        "$(Get-Date -Format s) $msg" | Add-Content "$root\logs\start_all.log" -Encoding UTF8
+    } catch { }
 }
