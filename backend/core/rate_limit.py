@@ -11,6 +11,9 @@ from slowapi import Limiter
 from core.config import settings
 
 
+_LOCAL_PEERS = {"127.0.0.1", "::1", "localhost"}
+
+
 def get_client_ip(request: Request) -> str:
     """
     실제 클라이언트 IP를 추출한다.
@@ -20,6 +23,12 @@ def get_client_ip(request: Request) -> str:
     담아 전달하는 CF-Connecting-IP 헤더를 우선 사용하고, 없으면 X-Forwarded-For,
     그것도 없으면 소켓 주소로 순서대로 대체한다.
     """
+    peer = request.client.host if request.client else "unknown"
+    # 이 헤더들은 PC 안(터널 → 화면 서버 프록시)을 거쳐 온 요청일 때만 믿는다 — 밖에서 바로 들어온 요청이 값을 속여
+    # 로그인 · 가입 횟수 제한을 피하지 못하게 (10/26). Cloudflare는 CF-Connecting-IP를 실제 접속 IP로 덮어써서 보낸다.
+    if peer not in _LOCAL_PEERS:
+        return peer
+
     cf_ip = request.headers.get("CF-Connecting-IP")
     if cf_ip:
         return cf_ip
@@ -29,7 +38,7 @@ def get_client_ip(request: Request) -> str:
         # "client, proxy1, proxy2" 형식 — 맨 앞이 최초 클라이언트 IP
         return forwarded_for.split(",")[0].strip()
 
-    return request.client.host if request.client else "unknown"
+    return peer
 
 
 # 전역 Limiter — default_limits는 SlowAPIMiddleware가 등록된 모든 엔드포인트에 자동 적용된다.

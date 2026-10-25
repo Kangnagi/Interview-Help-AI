@@ -63,16 +63,18 @@ function sitePolicy() {
 const serverOptions = {
   port: 5173,
   strictPort: true,
-  host: true,
+  // 이 PC 안에서 오는 요청만 (10/26) — 사이트는 Cloudflare 터널이 PC 안에서 127.0.0.1:5173으로 접속하므로 그대로 된다.
+  // 예전(true)엔 같은 와이파이에서 PC 주소:5173으로 Cloudflare를 거치지 않고 들어올 수 있었다
+  host: '127.0.0.1',
   allowedHosts: true,
   proxy: {
     '/api': {
-      target: 'http://localhost:8000',
+      target: 'http://127.0.0.1:8000',   // localhost는 IPv6(::1)로 먼저 찾아질 수 있는데 백엔드는 127.0.0.1만 받음
       changeOrigin: true,
       // rewrite: (path) => path.replace(/^\/api/, ''),
     },
     '/ws': {
-      target: 'ws://localhost:8000',
+      target: 'ws://127.0.0.1:8000',
       ws: true,
     },
   },
