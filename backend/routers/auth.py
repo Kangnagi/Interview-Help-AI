@@ -121,7 +121,8 @@ async def refresh(credentials: HTTPAuthorizationCredentials = Depends(bearer_sch
 
 
 @router.post("/password-reset/request", status_code=200)
-async def request_password_reset(body: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit(settings.PASSWORD_RESET_RATE_LIMIT)   # 남의 메일함에 재설정 메일을 마구 보내는 것 방지 (예전엔 전체 제한 100/분만)
+async def request_password_reset(request: Request, body: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
     """
     비밀번호 재설정 이메일 요청.
 
@@ -142,7 +143,8 @@ async def request_password_reset(body: PasswordResetRequest, db: AsyncSession = 
 
 
 @router.post("/password-reset/confirm", status_code=200)
-async def confirm_password_reset(body: PasswordResetConfirm, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def confirm_password_reset(request: Request, body: PasswordResetConfirm, db: AsyncSession = Depends(get_db)):
     """
     토큰 검증 후 새 비밀번호 저장.
     """

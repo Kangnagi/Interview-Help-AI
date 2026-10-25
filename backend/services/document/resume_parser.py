@@ -22,6 +22,8 @@ import zipfile
 import zlib
 from pathlib import Path
 
+from core.text_safety import clean_user_text
+
 logger = logging.getLogger(__name__)
 
 MAX_FILE_BYTES = 5 * 1024 * 1024        # 업로드 파일 최대 5MB
@@ -59,14 +61,28 @@ def _read_zip_member(zf: zipfile.ZipFile, name: str, budget: list) -> bytes:
     return bytes(out)
 
 
+def _tag_bodies(xml: str, tag: str) -> list:
+    """<tag …>…</tag> 안쪽들을 차례로 — 끝 태그로 잘라 각 조각의 마지막 시작 태그부터 쓴다 (한 번만 훑는 선형 시간).
+    예전 정규식(<w:p .*?</w:p>)은 끝 태그 없는 시작 태그가 많은 조작된 파일에서 시작 태그마다 문서 끝까지 다시 훑어
+    (제곱 시간) 서버 CPU를 오래 붙잡을 수 있었다 (10/26 보안 점검)."""
+    start_tag = re.compile(rf"<{re.escape(tag)}(?:\s[^<>]*)?>")
+    out = []
+    for chunk in xml.split(f"</{tag}>")[:-1]:
+        last = None
+        for last in start_tag.finditer(chunk):
+            pass
+        if last is not None:
+            out.append(chunk[last.end():])
+    return out
+
+
 def _xml_text(xml: str, para_tag: str, text_tag: str) -> str:
     """<{para_tag}> 문단마다 줄을 나누고 <{text_tag}> 안의 글자만 모은다 (표 칸도 문단이라 한 줄씩 나온다)."""
     lines = []
-    for para in re.finditer(rf"<{para_tag}[\s>].*?</{para_tag}>", xml, re.S):
-        body = para.group()
+    for body in _tag_bodies(xml, para_tag):
         # 줄바꿈 · 탭 태그는 공백으로
         body = re.sub(r"<(w:br|w:tab|hp:lineBreak|hp:tab)\b[^>]*/>", " ", body)
-        parts = re.findall(rf"<{text_tag}(?:\s[^>]*)?>(.*?)</{text_tag}>", body, re.S)
+        parts = _tag_bodies(body, text_tag)
         line = html.unescape(re.sub(r"<[^>]+>", "", "".join(parts)))
         lines.append(line)
     return "\n".join(lines)
@@ -254,14 +270,17 @@ def extract_text(filename: str, data: bytes) -> str:
         text = _plain_text(data)
     else:
         raise DocumentError("지원하지 않는 형식입니다. PDF · HWP · HWPX · DOCX · TXT 파일을 올려 주세요.")
-    return _cap(text)
+    # 파일 속 보이지 않는 제어 문자 · 글자 방향 문자 · 모델 구분 기호 제거 (core/text_safety.py) — 글자로만 쓰고 실행하지 않는다
+    return _cap(clean_user_text(text))
 
 
 # ── 정리 · 개인정보 제거 ──────────────────────────────────────────────────────
 
 _PERSONAL = [
     re.compile(r"\b\d{6}\s*-\s*[1-8]\d{6}\b"),                                   # 주민등록번호
-    re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+"),                                    # 이메일
+    # 이메일 — 길이를 정해 둔다 (예전 [\w.+-]+@… 는 @ 없는 긴 글자 · 숫자 줄에서 시작 위치마다 끝까지 다시 훑어
+    # 6만 자 파일에 10초 넘게 걸릴 수 있었다, 10/26). 주소 앞부분 64자 · 도메인 마디 63자는 이메일 규격 상한
+    re.compile(r"(?<![\w.+-])[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}"),
     re.compile(r"(\+82[\s-]?|0)1[016789][\s.-]?\d{3,4}[\s.-]?\d{4}\b"),           # 휴대전화
     re.compile(r"\b0(2|[3-6][1-5])[\s.)-]?\d{3,4}[\s.-]?\d{4}\b"),                 # 지역 전화번호
 ]

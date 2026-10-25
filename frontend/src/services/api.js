@@ -73,9 +73,26 @@ api.interceptors.response.use(
       // 이동하는 동안 페이지가 "이력을 불러오지 못했습니다" 같은 오류를 띄우지 않게 응답을 끝내지 않는다
       return new Promise(() => {})
     }
+    // 입력 검사 오류(422)는 detail이 [{loc, msg}] 목록이라, 화면들이 그대로 toast · 문구에 넣으면 React가 멈췄다
+    // (예: 너무 긴 답변 · 8자 미만 비밀번호) → 여기서 한 문장으로 바꿔 모든 화면이 글자로 받게 한다 (10/26)
+    const detail = err.response?.data?.detail
+    if (Array.isArray(detail)) {
+      const fields = [...new Set(detail.map((d) => FIELD_NAMES[d?.loc?.[d.loc.length - 1]]).filter(Boolean))]
+      err.response.data.detail = fields.length
+        ? `${fields.join(' · ')}을(를) 확인해주세요. 길이나 형식이 맞지 않습니다.`
+        : '입력한 내용을 확인해주세요. 길이나 형식이 맞지 않습니다.'
+    }
     return Promise.reject(err)                                         // 에러를 그대로 반환 (호출부에서 처리)
   }
 )
+
+// 입력 검사 오류 안내에 쓰는 항목 이름 (서버 요청 형식의 필드 이름 → 화면 이름)
+const FIELD_NAMES = {
+  email: '이메일', username: '이름', password: '비밀번호 (8자 이상)', new_password: '비밀번호 (8자 이상)',
+  answer_text: '답변 (5,000자 이하)', title: '제목', resume_text: '자기소개서', text: '내용', comment: '의견',
+  company_name: '기업명', job_title: '지원 업무명', job_description: '직무 수행 업무', ideal_candidate: '인재상',
+  self_introduction: '자기소개서',
+}
 
 // ── Auth API (인증 관련 엔드포인트) ─────────────────────────────────
 export const authAPI = {

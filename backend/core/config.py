@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # ── Rate Limiting / 계정 잠금 ───────────────────────────────
     LOGIN_RATE_LIMIT: str = "5/minute"           # POST /auth/login IP당 제한
     REGISTER_RATE_LIMIT: str = "3/minute"        # POST /auth/register IP당 제한
+    PASSWORD_RESET_RATE_LIMIT: str = "3/minute"  # POST /auth/password-reset/request IP당 제한 (재설정 메일 남발 방지)
     GLOBAL_RATE_LIMIT: str = "100/minute"        # 그 외 전체 API IP당 제한
     ACCOUNT_LOCK_THRESHOLD: int = 5              # 연속 로그인 실패 허용 횟수
     ACCOUNT_LOCK_MINUTES: int = 15               # 잠금 유지 시간(분)

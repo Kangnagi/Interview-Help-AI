@@ -29,6 +29,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from core.config import settings
+from core.text_safety import strip_model_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,13 @@ def _parse_json(text: str):
         if si != -1 and ei > si:
             return json.loads(text[si:ei + 1], strict=False)
     return json.loads(text, strict=False)
+
+def _safe_messages(messages: list) -> list:
+    """모델 입력의 사용자 글(질문 · 답변 · 자기소개서)에서 대화 구분 기호(<|eot_id|> 등)를 지운다.
+    토크나이저는 글 속의 '<|eot_id|><|start_header_id|>assistant…'도 진짜 구분 기호로 읽어서, 답변에 넣으면
+    채점 결과를 꾸며 넣는 식으로 점수를 조작할 수 있었다 (10/26 보안 점검). 우리가 쓴 시스템 지시문은 그대로 둔다."""
+    return [m if m.get("role") == "system" else {**m, "content": strip_model_tokens(m.get("content", ""))} for m in messages]
+
 
 FEEDBACK_ADAPTER = "interview_feedback"
 SCORE_ADAPTER = "interview_score"
@@ -179,7 +187,7 @@ class LlamaService:
 
     def _generate_text_sync(self, messages: list, max_new_tokens: int, sampling: dict) -> str:
         tok = self.text_tokenizer
-        prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompt = tok.apply_chat_template(_safe_messages(messages), tokenize=False, add_generation_prompt=True)
         enc = tok(prompt, return_tensors="pt").to(self.text_model.device)
         # 대화 한 턴의 끝(<|eot_id|>)에서 멈추게 한다 — Bllossom은 generation_config에 이게 빠져 있어서
         # 지정하지 않으면 'assistant…'를 붙이며 같은 답을 최대 길이까지 반복했다
@@ -275,7 +283,7 @@ class LlamaService:
 
         with ctx:
             prompts = [
-                self.tokenizer.apply_chat_template(m, tokenize=False, add_generation_prompt=True)
+                self.tokenizer.apply_chat_template(_safe_messages(m), tokenize=False, add_generation_prompt=True)
                 for m in conversations
             ]
             encoding = self.tokenizer(prompts, return_tensors="pt", padding=True).to(self.model.device)

@@ -11,12 +11,13 @@ from datetime import datetime
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from core.security import get_current_user_id
+from core.text_safety import clean_user_text
 from models.feedback import AnswerRating
 from models.interview import Interview, InterviewQuestion
 from models.user import User
@@ -38,6 +39,11 @@ class RatingUpdate(BaseModel):
     score_rating: Optional[Literal["too_high", "ok", "too_low"]] = None
     feedback_helpful: Optional[bool] = None
     comment: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, v):   # 보이지 않는 제어 문자 · 글자 방향 문자 · 모델 구분 기호 제거 (core/text_safety.py)
+        return clean_user_text(v) if isinstance(v, str) else v
 
 
 class RatingResponse(BaseModel):

@@ -8,7 +8,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from core.text_safety import clean_user_text
 
 from core.database import get_db
 from core.security import get_current_user_id
@@ -174,12 +175,23 @@ async def list_interviews(
 # 프론트엔드 연동을 위한 추가 API 라우터
 # ----------------------------------------------------
 
+# 답변 길이 상한 — 2분 말한 답변이 1천 자 안팎이라 넉넉하게. 채점 모델에는 앞 2천 자만 들어간다 (llama_service.MAX_ANSWER_CHARS)
 class AnswerCreate(BaseModel):
-    answer_text: str
+    answer_text: str = Field(max_length=5000)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, v):   # 보이지 않는 제어 문자 · 글자 방향 문자 · 모델 구분 기호 제거 (core/text_safety.py)
+        return clean_user_text(v) if isinstance(v, str) else v
 
 
 class FollowUpCreate(BaseModel):
-    answer_text: Optional[str] = None   # 없으면 저장된 답변을 쓴다
+    answer_text: Optional[str] = Field(default=None, max_length=5000)   # 없으면 저장된 답변을 쓴다
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, v):   # 보이지 않는 제어 문자 · 글자 방향 문자 · 모델 구분 기호 제거 (core/text_safety.py)
+        return clean_user_text(v) if isinstance(v, str) else v
 
 
 async def _own_interview(db: AsyncSession, interview_id: int, user_id: int) -> Interview:
@@ -358,6 +370,8 @@ async def delete_interview(
     # 감점 장면 사진도 같이 (파일 + 기록)
     from services.vision.scenes import delete_for_interview
     await delete_for_interview(db, interview_id)
+    from services.voice import recordings   # 녹음 파일도 같이 지운다 (예전엔 기록을 지워도 녹음이 서버에 남았다)
+    await recordings.delete_for_interview(db, interview_id)
 
     await db.delete(interview)
     await db.commit()

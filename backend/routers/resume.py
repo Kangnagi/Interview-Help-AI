@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from core.rate_limit import limiter
+from core.text_safety import clean_user_text
 from core.security import get_current_user_id
 from models.resume import Resume
 from services.document import resume_parser
@@ -48,6 +49,11 @@ class ResumeFields(BaseModel):
     job_description: Optional[str] = Field(default=None, max_length=5000)
     ideal_candidate: Optional[str] = Field(default=None, max_length=3000)
     self_introduction: Optional[str] = Field(default=None, max_length=SELF_INTRO_MAX)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, v):   # 보이지 않는 제어 문자 · 글자 방향 문자 · 모델 구분 기호 제거 (core/text_safety.py)
+        return clean_user_text(v) if isinstance(v, str) else v
 
     @field_validator("title")
     @classmethod
@@ -191,6 +197,11 @@ class ParsedResume(BaseModel):
 class ParseTextRequest(BaseModel):
     kind: ParseKind = "posting"
     text: str = Field(min_length=1, max_length=PASTE_MAX_CHARS)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, v):   # 보이지 않는 제어 문자 · 글자 방향 문자 · 모델 구분 기호 제거 (core/text_safety.py)
+        return clean_user_text(v) if isinstance(v, str) else v
 
 
 async def _fields_from_text(text: str, kind: str, user_id: int) -> ParsedResume:

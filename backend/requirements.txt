@@ -1,7 +1,8 @@
 # Core
-fastapi==0.111.0
+fastapi==0.162.0           # 10/26 보안 업데이트 (starlette 0.37의 알려진 취약점)
+starlette==0.52.1
 uvicorn[standard]==0.29.0
-python-multipart==0.0.9
+python-multipart==0.0.32
 python-dotenv==1.0.1
 pydantic>=2.9.0
 pydantic-settings>=2.5.0
@@ -12,7 +13,7 @@ alembic==1.13.1
 aiosqlite==0.20.0
 
 # Auth
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 
 # Security

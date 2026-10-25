@@ -16,6 +16,9 @@ export default function RegisterPage() {
     e.preventDefault()
     // 비밀번호 일치 여부 확인
     if (form.password !== form.confirm) return toast.error('비밀번호가 일치하지 않습니다')
+    // 서버와 같은 기준 (schemas.UserCreate: 8~128자) — 예전엔 가입 때만 1글자 비밀번호도 됐다
+    if (form.password.length < 8) return toast.error('비밀번호는 8자 이상이어야 합니다')
+    if (!form.username.trim()) return toast.error('이름을 입력해주세요')
     const ok = await register(form.email, form.username, form.password)  // 회원가입 시도
     if (ok) {
       toast.success('회원가입 완료! 로그인 해주세요')
@@ -32,11 +35,11 @@ export default function RegisterPage() {
         <form onSubmit={handleSubmit} style={styles.form}>
           {/* 입력 필드 배열을 맵으로 순회 — DRY(Don't Repeat Yourself) 원칙 */}
           {[
-            { key: 'email',    label: '이메일',    type: 'email',    placeholder: 'example@email.com' },
-            { key: 'username', label: '이름',      type: 'text',     placeholder: '홍길동' },
-            { key: 'password', label: '비밀번호',  type: 'password', placeholder: '8자 이상' },
-            { key: 'confirm',  label: '비밀번호 확인', type: 'password', placeholder: '••••••••' },
-          ].map(({ key, label, type, placeholder }) => (
+            { key: 'email',    label: '이메일',    type: 'email',    placeholder: 'example@email.com', max: 254 },
+            { key: 'username', label: '이름',      type: 'text',     placeholder: '홍길동', max: 30 },
+            { key: 'password', label: '비밀번호',  type: 'password', placeholder: '8자 이상', max: 128, min: 8 },
+            { key: 'confirm',  label: '비밀번호 확인', type: 'password', placeholder: '••••••••', max: 128 },
+          ].map(({ key, label, type, placeholder, max, min }) => (
             <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label style={styles.label}>{label}</label>
               <input
@@ -44,6 +47,8 @@ export default function RegisterPage() {
                 value={form[key]}
                 onChange={set(key)}                           // 입력값 상태 업데이트
                 placeholder={placeholder}
+                maxLength={max}
+                minLength={min}
                 required
                 style={styles.input}
               />

@@ -6,7 +6,8 @@ Pydantic 스키마 — API 요청/응답 데이터 형식 정의
   - DB 모델(SQLAlchemy)을 JSON 응답으로 직렬화 (출력 변환)
   - from_attributes = True → ORM 객체를 스키마로 자동 변환 가능 (Pydantic v2)
 """
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from core.text_safety import clean_user_text
 from typing import Optional, List
 from datetime import datetime
 from models.interview import InterviewStatus, InterviewCategory
@@ -17,8 +18,18 @@ from models.interview import InterviewStatus, InterviewCategory
 class UserCreate(BaseModel):
     """POST /auth/register 요청 바디 — 회원가입 입력값"""
     email: EmailStr   # 이메일 형식 자동 검증 (예: user@example.com)
-    username: str
-    password: str     # 평문 수신 후 security.py에서 argon2 해싱 처리
+    username: str = Field(min_length=1, max_length=30)
+    # 평문 수신 후 security.py에서 argon2 해싱 처리. 8자 이상 (비밀번호 재설정과 같은 기준 — 예전엔 가입만 1글자도 됐다),
+    # 128자 이하 (아주 긴 값으로 해싱에 시간을 끄는 것 방지)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def _clean_name(cls, v):
+        v = clean_user_text(v, keep_newlines=False).strip() if isinstance(v, str) else v
+        if isinstance(v, str) and not v:
+            raise ValueError("이름을 입력해주세요")
+        return v
 
 
 class UserLogin(BaseModel):
@@ -53,19 +64,24 @@ class PasswordResetRequest(BaseModel):
 
 class PasswordResetConfirm(BaseModel):
     """POST /auth/password-reset/confirm — 새 비밀번호 설정"""
-    token: str
-    new_password: str
+    token: str = Field(max_length=200)
+    new_password: str = Field(max_length=128)
 
 
 # ─── Interview (면접) ─────────────────────────────────────────────────────────
 
 class InterviewCreate(BaseModel):
     """POST /interviews 요청 바디 — 면접 생성 입력값"""
-    title: str
+    title: str = Field(max_length=200)
     category: InterviewCategory = InterviewCategory.GENERAL
-    interview_type: str = "practice"          # 'practice' | 'real'
-    resume_ref_id: Optional[str] = None
-    resume_text: Optional[str] = None
+    interview_type: str = Field(default="practice", max_length=20)          # 'practice' | 'real'
+    resume_ref_id: Optional[str] = Field(default=None, max_length=40)
+    resume_text: Optional[str] = Field(default=None, max_length=15000)     # 자기소개서 칸들을 합친 글 (각 칸 상한의 합보다 조금 크게)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, v):   # 보이지 않는 제어 문자 · 글자 방향 문자 · 모델 구분 기호 제거 (core/text_safety.py)
+        return clean_user_text(v) if isinstance(v, str) else v
 
 class InterviewResponse(BaseModel):
     """면접 단건 조회·목록 응답"""
@@ -100,7 +116,12 @@ class QuestionResponse(BaseModel):
 
 class AnswerSubmit(BaseModel):
     """POST /interviews/{id}/questions/{qid}/answer 요청 바디 — 답변 저장"""
-    answer_text: str   # Whisper STT 변환 텍스트 또는 프론트에서 직접 입력한 텍스트
+    answer_text: str = Field(max_length=5000)   # Whisper STT 변환 텍스트 또는 프론트에서 직접 입력한 텍스트
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, v):   # 보이지 않는 제어 문자 · 글자 방향 문자 · 모델 구분 기호 제거 (core/text_safety.py)
+        return clean_user_text(v) if isinstance(v, str) else v
 
 
 class QuestionFeedbackResponse(BaseModel):

@@ -94,6 +94,9 @@ export default function ResumeFormPage() {
   const handleFile = async (file, kind) => {
     if (!file || parsing) return
     if (file.size > FILE_MAX_MB * 1024 * 1024) return toast.error(`파일이 너무 큽니다 (최대 ${FILE_MAX_MB}MB)`)
+    // 끌어다 놓기는 파일 선택 창의 accept 제한을 거치지 않으므로 여기서도 확장자를 본다 (서버는 확장자가 아니라 파일 내용으로 다시 확인)
+    const ext = (file.name.match(/\.[^.]+$/)?.[0] || '').toLowerCase()
+    if (!FILE_ACCEPT.split(',').includes(ext)) return toast.error('PDF · HWP · HWPX · DOCX · TXT 파일만 올릴 수 있습니다')
     setParsing(kind)
     try {
       const { data } = await resumeAPI.parseFile(file, kind)

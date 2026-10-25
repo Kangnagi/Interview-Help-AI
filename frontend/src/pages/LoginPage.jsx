@@ -11,7 +11,9 @@ export default function LoginPage() {
   const [params] = useSearchParams()
   const expired = params.get('expired') === '1'                // 로그인 만료로 넘어온 경우 (services/api.js 401 처리)
   const nextRaw = params.get('next') || ''
-  const next = nextRaw.startsWith('/') && !nextRaw.startsWith('//') ? nextRaw : '/dashboard'   // 사이트 안 경로로만 돌아감
+  // 사이트 안 경로로만 돌아감 — '//다른사이트'뿐 아니라 '/\다른사이트'(브라우저가 \를 /로 읽음)와 제어 문자도 막는다 (10/26)
+  const isSitePath = nextRaw.startsWith('/') && !nextRaw.startsWith('//') && !nextRaw.includes('\\') && !/[\u0000-\u001f]/.test(nextRaw)
+  const next = isSitePath ? nextRaw : '/dashboard'
 
   const handleSubmit = async (e) => {
     e.preventDefault()                                         // 폼 기본 제출 동작 방지

@@ -3,6 +3,12 @@ import { authAPI } from '@/services/api'           // 인증 API 함수들
 import { useResumeStore } from '@/store/resumeStore'  // 로그아웃 시 앞 계정 자기소개서 비우기
 
 // Zustand로 전역 상태 관리 (Redux 없이 간단하게)
+// 서버 오류 → 화면에 띄울 문장 (입력 검사 오류 목록은 services/api.js가 이미 한 문장으로 바꿔 둔다)
+function errorText(err, fallback) {
+  const detail = err.response?.data?.detail
+  return typeof detail === 'string' ? detail : (err.message || fallback)
+}
+
 export const useAuthStore = create((set) => ({
   user: JSON.parse(localStorage.getItem('user') || 'null'),           // 현재 로그인 사용자 (로컬스토리지에서 복원)
   token: localStorage.getItem('token') || null,                        // JWT 액세스 토큰
@@ -19,7 +25,7 @@ export const useAuthStore = create((set) => ({
       set({ token: data.access_token, user: data.user, loading: false, error: null })  // 상태 업데이트
       return true
     } catch (err) {
-      const msg = err.response?.data?.detail || err.message || '로그인 실패. 백엔드 서버를 확인해주세요.'
+      const msg = errorText(err, '로그인 실패. 백엔드 서버를 확인해주세요.')
       set({ error: msg, loading: false })
       return false
     }
@@ -33,7 +39,7 @@ export const useAuthStore = create((set) => ({
       set({ loading: false })
       return true
     } catch (err) {
-      const msg = err.response?.data?.detail || err.message || '회원가입 실패. 백엔드 서버를 확인해주세요.'
+      const msg = errorText(err, '회원가입 실패. 백엔드 서버를 확인해주세요.')
       set({ error: msg, loading: false })
       return false
     }
