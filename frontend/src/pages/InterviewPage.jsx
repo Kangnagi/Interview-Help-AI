@@ -101,7 +101,7 @@ export default function InterviewPage() {
   const progress   = questions.length ? ((currentQuestionIdx + 1) / questions.length) * 100 : 0
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20, height: 'calc(100vh - 120px)' }}>
+    <div className="r-stack r-auto-h" style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20, height: 'calc(100vh - 120px)' }}>
 
       {/* 왼쪽: 카메라 + 질문 + 답변 */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

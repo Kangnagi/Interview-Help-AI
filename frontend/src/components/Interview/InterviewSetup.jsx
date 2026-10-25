@@ -188,7 +188,7 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
   }
 
   return (
-    <div style={{
+    <div className="is-root" style={{
       position: 'fixed', inset: 0, background: '#0a0d1a',
       display: 'flex', flexDirection: 'column', zIndex: 500, fontFamily: 'inherit',
     }}>
@@ -203,10 +203,25 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
         .setup-bar { border-radius: 3px 3px 0 0; transition: height .06s ease, background .15s; }
         @keyframes mic-ring { 0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,.5)} 60%{box-shadow:0 0 0 12px rgba(16,185,129,0)} }
         .mic-ring { animation: mic-ring 1.4s infinite; }
+        /* 휴대폰 · 세로 태블릿: 카메라 · 마이크를 위아래로 쌓고 화면 전체를 스크롤 (인라인 style보다 우선하려고 !important) */
+        @media (max-width: 760px) {
+          .is-root { overflow-y: auto; }
+          .is-header { padding: 12px 16px !important; }
+          .is-hint { display: none; }
+          .is-banner { padding: 10px 16px !important; flex-wrap: wrap; }
+          .is-body { flex: none !important; flex-direction: column; overflow: visible !important; }
+          .is-col { flex: none !important; padding: 14px 16px !important; border-right: none !important; }
+          .is-preview { flex: none !important; aspect-ratio: 4 / 3; }
+          .is-micbox { flex: none !important; padding: 18px !important; gap: 12px !important; }
+          .is-footer { flex-wrap: wrap; gap: 12px !important; padding: 12px 16px !important; position: sticky; bottom: 0; }
+          .is-spacer { display: none; }
+          .is-scene { max-width: none !important; flex-basis: 100%; order: -1; }
+          .is-ready { flex: 1; padding: 13px 16px !important; }
+        }
       `}</style>
 
       {/* 헤더 */}
-      <div style={{
+      <div className="is-header" style={{
         padding: '14px 28px', borderBottom: '1px solid rgba(255,255,255,.06)',
         background: '#111422', display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0,
       }}>
@@ -224,14 +239,14 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
           )}
         </div>
         <div style={{ flex: 1 }} />
-        <div style={{ fontSize: 12, color: 'rgba(255,255,255,.2)', textAlign: 'right', lineHeight: 1.6 }}>
+        <div className="is-hint" style={{ fontSize: 12, color: 'rgba(255,255,255,.2)', textAlign: 'right', lineHeight: 1.6 }}>
           카메라와 마이크를 확인하고<br />준비가 되면 시작하세요
         </div>
       </div>
 
       {/* 권한/장치 오류 배너 */}
       {permError && (
-        <div style={{
+        <div className="is-banner" style={{
           background: permError === 'denied' ? '#450a0a' : '#431407',
           borderBottom: `1px solid ${permError === 'denied' ? 'rgba(239,68,68,.35)' : 'rgba(249,115,22,.35)'}`,
           padding: '10px 28px', display: 'flex', alignItems: 'flex-start', gap: 12, flexShrink: 0,
@@ -276,17 +291,17 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
       )}
 
       {/* 본문 */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+      <div className="is-body" style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
 
         {/* 카메라 영역 */}
-        <div style={{
+        <div className="is-col" style={{
           flex: 1, display: 'flex', flexDirection: 'column', gap: 14,
           padding: '20px 16px 20px 28px', borderRight: '1px solid rgba(255,255,255,.04)',
         }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,.4)', letterSpacing: '.06em', textTransform: 'uppercase' }}>
             📹 카메라 미리보기
           </div>
-          <div style={{
+          <div className="is-preview" style={{
             flex: 1, position: 'relative', borderRadius: 14, overflow: 'hidden',
             background: '#0f1117',
             border: `2px solid ${camOk ? 'rgba(16,185,129,.5)' : camError ? 'rgba(239,68,68,.4)' : 'rgba(255,255,255,.06)'}`,
@@ -349,14 +364,14 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
         </div>
 
         {/* 마이크 영역 */}
-        <div style={{
+        <div className="is-col" style={{
           flex: 1, display: 'flex', flexDirection: 'column', gap: 14,
           padding: '20px 28px 20px 16px',
         }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,.4)', letterSpacing: '.06em', textTransform: 'uppercase' }}>
             🎤 마이크 테스트
           </div>
-          <div style={{
+          <div className="is-micbox" style={{
             flex: 1, background: '#111422', borderRadius: 14,
             border: micError ? '1px solid rgba(239,68,68,.35)' : '1px solid rgba(255,255,255,.05)',
             display: 'flex', flexDirection: 'column', alignItems: 'center',
@@ -450,19 +465,20 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
       </div>
 
       {/* 푸터 */}
-      <div style={{
+      <div className="is-footer" style={{
         padding: '14px 28px', borderTop: '1px solid rgba(255,255,255,.06)',
         background: '#111422', display: 'flex', alignItems: 'center', gap: 24, flexShrink: 0,
       }}>
         <StatusDot ok={camOk} error={!!camError} label="카메라" />
         <StatusDot ok={micOk} error={!!micError} label="마이크" />
-        <div style={{ flex: 1 }} />
-        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, maxWidth: 380, cursor: 'pointer', fontSize: 12, color: 'rgba(255,255,255,.6)', lineHeight: 1.5 }}
+        <div className="is-spacer" style={{ flex: 1 }} />
+        <label className="is-scene" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, maxWidth: 380, cursor: 'pointer', fontSize: 12, color: 'rgba(255,255,255,.6)', lineHeight: 1.5 }}
                title="면접 중 분석에 쓰는 작은 사진 중 감점된 장면 몇 개만 저장합니다. 본인 계정에서만 볼 수 있고 AI 학습에는 쓰지 않습니다.">
           <input type="checkbox" checked={keepScenes} onChange={(e) => toggleKeepScenes(e.target.checked)} style={{ marginTop: 3 }} />
           <span>감점 장면 사진 저장 — 분석 결과에서 어떤 자세 · 표정이었는지 확인 (본인만 보기 · 30일 뒤 자동 삭제)</span>
         </label>
         <button
+          className="is-ready"
           onClick={handleReady}
           style={{
             background: 'linear-gradient(90deg, #4f6ef7, #6d85f8)',

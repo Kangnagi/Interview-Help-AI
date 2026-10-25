@@ -406,10 +406,10 @@ export default function RealInterviewPage() {
       `}</style>
 
       {/* Top bar */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
+      <div className="iv-topbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
         <div>
           <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>🎯 실전 면접</span>
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>{resume.companyName} · {resume.jobTitle}</span>
+          <span className="iv-sub" style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>{resume.companyName} · {resume.jobTitle}</span>
         </div>
         {phase === 'interview' && (
           <span style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>
@@ -441,7 +441,7 @@ export default function RealInterviewPage() {
 
       {/* Intro */}
       {phase === 'intro' && (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 20 }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 20, padding: '0 16px' }}>
           <div style={{ fontSize: 56 }}>🎯</div>
           <div style={{ fontSize: 22, fontWeight: 800, color: '#fff' }}>실전 면접 안내</div>
           <div style={{ fontSize: 14, color: 'rgba(255,255,255,.5)', lineHeight: 1.9, textAlign: 'center' }}>
@@ -464,27 +464,27 @@ export default function RealInterviewPage() {
 
       {/* Interview stage */}
       {phase === 'interview' && (
-        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <div className="iv-stage" style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 40%, #1a2040 0%, #0a0d1a 70%)', pointerEvents: 'none' }} />
 
           {/* Question */}
-          <div key={qIndex} className="fade-up-center" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
+          <div key={qIndex} className="fade-up-center iv-q" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: isFollowUp ? '#f59e0b' : '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>
               {isFollowUp ? `Q${qIndex + 1} 꼬리 질문 · 방금 답변을 듣고 이어서 묻습니다` : `Q${qIndex + 1} 질문`}
             </div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '16px 24px', backdropFilter: 'blur(8px)' }}>
+            <div className="iv-qtext" style={{ fontSize: 20, fontWeight: 700, color: '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '16px 24px', backdropFilter: 'blur(8px)' }}>
               {currentQ}
             </div>
           </div>
 
           {/* AI Interviewer */}
-          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -54%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
+          <div className="iv-ai" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -54%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
             <div style={{ width: 130, height: 130, borderRadius: '50%', background: 'linear-gradient(135deg,#4f6ef7,#10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 64, boxShadow: '0 0 48px rgba(79,110,247,.35)' }}>🤖</div>
             <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(255,255,255,.4)', fontWeight: 500 }}>AI 면접관</div>
           </div>
 
           {/* Circular timer */}
-          <div style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
+          <div className="iv-timer iv-timer-ring" style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
             <div style={{ background: 'rgba(17,20,34,.85)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 14, padding: '12px 14px', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>답변 시간</div>
               <svg width={100} height={100} viewBox="0 0 100 100">
@@ -509,7 +509,7 @@ export default function RealInterviewPage() {
           <LiveVisionPanel recent={visionRecent} />
 
           {/* Camera */}
-          <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
+          <div className="iv-cam" style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
             <div style={{
               width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative',
               border: micActive ? '2.5px solid #22c55e' : '2px solid rgba(255,255,255,.1)',
@@ -527,7 +527,7 @@ export default function RealInterviewPage() {
           </div>
 
           {/* Bottom answer panel */}
-          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
+          <div className="iv-actions" style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
             <div className="fade-up" key={qIndex}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                 {sttSupported ? (
@@ -564,7 +564,7 @@ export default function RealInterviewPage() {
 
       {/* Result (fallback when backend unavailable) */}
       {phase === 'result' && (
-        <div style={{ flex: 1, overflow: 'auto', padding: '32px 40px' }}>
+        <div className="iv-result" style={{ flex: 1, overflow: 'auto', padding: '32px 40px' }}>
           <div style={{ maxWidth: 700, margin: '0 auto' }}>
             <div style={{ textAlign: 'center', marginBottom: 32 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
@@ -578,7 +578,7 @@ export default function RealInterviewPage() {
                 <div className="ri-result-a">{item.a || '(답변 없음)'}</div>
               </div>
             ))}
-            <div style={{ display: 'flex', gap: 12, marginTop: 24, justifyContent: 'center' }}>
+            <div style={{ display: 'flex', gap: 12, marginTop: 24, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button onClick={handleExit} style={{ background: 'transparent', color: 'rgba(255,255,255,.6)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '12px 24px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>목록으로</button>
               {backendInterviewId && (
                 <button onClick={() => navigate(`/interview/${backendInterviewId}/result`)} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>📊 AI 분석 보기</button>

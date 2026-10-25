@@ -65,6 +65,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--border-focus); }
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;   /* 폭을 넓힌 버튼(width: 100%)에서도 글자가 가운데 */
   gap: 6px;
   padding: 9px 20px;
   border-radius: var(--radius-md);
@@ -136,6 +137,73 @@ input:focus, textarea:focus, select:focus { border-color: var(--border-focus); }
 .layout__content {
   flex: 1;
   padding: 28px;
+}
+
+.layout__menu-btn { display: none; }
+.layout__backdrop { display: none; }
+
+/* 휴대폰 · 태블릿: 사이드바는 숨겨 두고 ☰ 버튼으로 연다 (본문이 화면 폭을 다 씀) */
+@media (max-width: 900px) {
+  .layout__sidebar {
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    z-index: 200;
+    overflow-y: auto;
+  }
+  .layout__sidebar.open { transform: none; box-shadow: var(--shadow-lg); }
+  .layout__backdrop { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 150; }
+  .layout__main { margin-left: 0; min-width: 0; }
+  .layout__header { padding: 0 16px; gap: 10px; height: 56px; }
+  .layout__menu-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; margin-left: -8px; border-radius: var(--radius-md);
+    font-size: 20px; color: var(--text-primary);
+  }
+  .layout__menu-btn:hover { background: var(--bg-page); }
+  .layout__content { padding: 16px; min-width: 0; }
+}
+@media (max-width: 600px) {
+  .card { padding: 16px; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr !important; gap: 14px !important; }   /* 아래 유틸리티 정의보다 앞에 있어서 !important */
+  /* 화면 코드의 인라인 grid를 좁은 화면에서만 바꾼다 (인라인 style보다 우선하려고 !important) */
+  .r-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }   /* 숫자 카드 4개 → 2 × 2 */
+  .r-stack  { grid-template-columns: 1fr !important; }              /* 2단 → 1단 */
+  .r-auto-h { height: auto !important; }                            /* 화면 높이에 맞춘 2단 → 1단이면 높이 제한 해제 */
+}
+
+/* ── 면접 화면 (연습 · 실전) — 휴대폰 · 세로 태블릿 ───────────────────
+   PC에선 질문 · 면접관 · 카메라 · 버튼을 화면 위에 겹쳐 놓지만(absolute), 좁은 화면에선 카메라(400×290)가
+   '면접 시작' · '답변 완료' 버튼을 덮었다 (세로 · 가로 태블릿 폭에서도 겹침) → 위에서 아래로 차례로 쌓고 스크롤.
+   인라인 style보다 우선하려고 !important */
+@media (max-width: 1024px) {
+  .iv-topbar { padding: 10px 12px !important; gap: 8px; }
+  .iv-sub { display: none; }
+  .iv-stage {
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 12px; overflow-y: auto !important; -webkit-overflow-scrolling: touch;
+  }
+  .iv-stage > .iv-q, .iv-stage > .iv-fb, .iv-stage > .iv-timer, .iv-stage > .iv-cam,
+  .iv-stage > .iv-actions, .iv-stage > .lv-panel {
+    position: relative !important; inset: auto !important; transform: none !important; animation: none !important;
+    width: 100% !important; max-width: none !important; height: auto !important; z-index: 1 !important;
+  }
+  .iv-ai { display: none !important; }
+  .iv-stage > .iv-timer { order: 0; align-self: flex-end; width: auto !important; }
+  .iv-timer > div { padding: 6px 12px !important; display: flex; gap: 12px; align-items: baseline; }
+  .iv-timer-ring > div { flex-direction: row !important; gap: 10px !important; }
+  .iv-timer-ring svg { width: 56px; height: 56px; }
+  .iv-result { padding: 20px 16px !important; }
+  .iv-q { order: 1; }
+  .iv-qtext { font-size: 16px !important; padding: 12px 14px !important; }
+  .iv-fb { order: 2; }
+  .iv-fbcard { padding: 18px !important; }
+  .iv-actions { order: 3; }   /* 질문 바로 밑에 답변 칸 · 버튼 (답하면서 질문이 보이게) */
+  .iv-cam { order: 4; aspect-ratio: 4 / 3; max-height: 36vh; }
+  .iv-stage > .iv-cam { width: auto !important; align-self: center; }
+  .iv-stage > .lv-panel { order: 5; margin-bottom: 8px; }
+  .iv-actions button { max-width: 100%; }
+  .iv-log.open { position: fixed; top: 0; right: 0; bottom: 0; width: min(86vw, 300px) !important; z-index: 550; box-shadow: var(--shadow-lg); }
+  .iv-log .pi-log-inner, .iv-log .ri-log-inner { width: 100% !important; }
 }
 
 /* ── 사이드바 ──────────────────────────────────── */

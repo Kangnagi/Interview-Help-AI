@@ -217,6 +217,9 @@ const CSS = `
 .sg-band i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
 
 .sg-scroll { overflow-x: auto; }
+@media (max-width: 680px) {   /* 표는 600px보다 좁게 그리면 글자가 겹쳐서, 휴대폰에선 옆으로 밀어 보게 안내 */
+  .sg-scroll::before { content: '← 옆으로 밀어서 보세요 →'; display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; position: sticky; left: 0; }
+}
 .sg-ns { min-width: 600px; border: 2px solid var(--text-primary); background: var(--bg-card); }
 .sg-ns > * + * { border-top: 2px solid var(--text-primary); }
 .sg-proc { padding: 12px 16px; font-size: 14px; line-height: 1.6; }

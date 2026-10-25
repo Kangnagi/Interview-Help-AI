@@ -137,7 +137,7 @@ export default function HistoryPage() {
 
       {/* ── 통계 카드 ── */}
       {items.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 24 }}>
+        <div className="r-grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 24 }}>
           {[
             { label: '전체 면접',  value: stats.total,                    icon: '📋', color: 'var(--primary)' },
             { label: '완료된 면접', value: stats.completed,               icon: '✅', color: '#10b981' },

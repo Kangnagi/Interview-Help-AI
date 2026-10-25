@@ -397,10 +397,10 @@ export default function PracticeInterviewPage() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
         {/* Top bar */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
+        <div className="iv-topbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
           <div>
             <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>🎓 연습 면접</span>
-            <span style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>{resume.companyName} · {resume.jobTitle}</span>
+            <span className="iv-sub" style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>{resume.companyName} · {resume.jobTitle}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {phase !== PHASE.WAITING && phase !== PHASE.DONE && (
@@ -432,16 +432,16 @@ export default function PracticeInterviewPage() {
         </div>
 
         {/* Stage */}
-        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <div className="iv-stage" style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 40%, #1a2040 0%, #0a0d1a 70%)', pointerEvents: 'none' }} />
 
           {/* Question */}
           {[PHASE.QUESTION, PHASE.ANSWERING, PHASE.FEEDBACK].includes(phase) && (
-            <div key={qIndex} className="fade-up-center" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
+            <div key={qIndex} className="fade-up-center iv-q" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: currentQuestion?.follow_up_of != null ? '#f59e0b' : '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>
                 {currentQuestion?.follow_up_of != null ? `Q${qIndex + 1} 꼬리 질문 · 방금 답변을 듣고 이어서 묻습니다` : `Q${qIndex + 1} 질문`}
               </div>
-              <div style={{ fontSize: phase === PHASE.FEEDBACK ? 16 : 20, fontWeight: 700, color: phase === PHASE.FEEDBACK ? 'rgba(255,255,255,.6)' : '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '14px 24px', backdropFilter: 'blur(8px)' }}>
+              <div className="iv-qtext" style={{ fontSize: phase === PHASE.FEEDBACK ? 16 : 20, fontWeight: 700, color: phase === PHASE.FEEDBACK ? 'rgba(255,255,255,.6)' : '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '14px 24px', backdropFilter: 'blur(8px)' }}>
                 {currentQ}
               </div>
             </div>
@@ -449,7 +449,7 @@ export default function PracticeInterviewPage() {
 
           {/* AI Interviewer — 피드백 화면에서는 숨김 */}
           {phase !== PHASE.FEEDBACK && (
-            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -54%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
+            <div className="iv-ai" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -54%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
               <div style={{ width: 130, height: 130, borderRadius: '50%', background: 'linear-gradient(135deg,#4f6ef7,#10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 64, boxShadow: '0 0 48px rgba(79,110,247,.35)' }}>🤖</div>
               <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(255,255,255,.4)', fontWeight: 500 }}>AI 면접관</div>
             </div>
@@ -457,8 +457,8 @@ export default function PracticeInterviewPage() {
 
           {/* 중간 피드백 카드 */}
           {phase === PHASE.FEEDBACK && (
-            <div key={`fb-${qIndex}`} className="fade-up-center" style={{ position: 'absolute', top: '32%', left: '50%', width: '62%', maxWidth: 580, zIndex: 10 }}>
-              <div style={{ background: 'rgba(17,20,34,.97)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 18, padding: '28px 32px', backdropFilter: 'blur(16px)', boxShadow: '0 8px 40px rgba(0,0,0,.6)' }}>
+            <div key={`fb-${qIndex}`} className="fade-up-center iv-fb" style={{ position: 'absolute', top: '32%', left: '50%', width: '62%', maxWidth: 580, zIndex: 10 }}>
+              <div className="iv-fbcard" style={{ background: 'rgba(17,20,34,.97)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 18, padding: '28px 32px', backdropFilter: 'blur(16px)', boxShadow: '0 8px 40px rgba(0,0,0,.6)' }}>
                 {currentFeedback.loading ? (
                   <div style={{ textAlign: 'center', padding: '16px 0' }}>
                     <div style={{ width: 36, height: 36, border: '3px solid rgba(255,255,255,.15)', borderTopColor: '#4f6ef7', borderRadius: '50%', animation: 'spin .7s linear infinite', margin: '0 auto 14px' }} />
@@ -532,7 +532,7 @@ export default function PracticeInterviewPage() {
           )}
 
           {/* Timer */}
-          <div style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
+          <div className="iv-timer" style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
             <div style={{ background: 'rgba(17,20,34,.85)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 12, padding: '10px 16px', backdropFilter: 'blur(8px)', textAlign: 'center' }}>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginBottom: 2 }}>면접 시간</div>
               <div style={{ fontSize: 22, fontWeight: 700, color: '#fff', fontFamily: 'monospace' }}>{fmt(totalSec)}</div>
@@ -549,7 +549,7 @@ export default function PracticeInterviewPage() {
           <LiveVisionPanel recent={visionRecent} />
 
           {/* Camera */}
-          <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
+          <div className="iv-cam" style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
             <div style={{ width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative', border: '2px solid rgba(255,255,255,.1)', boxShadow: '0 4px 20px rgba(0,0,0,.5)', background: '#111827' }}>
               <video ref={attachVideo} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
@@ -562,7 +562,7 @@ export default function PracticeInterviewPage() {
           </div>
 
           {/* Bottom action panel */}
-          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
+          <div className="iv-actions" style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
 
             {phase === PHASE.WAITING && (
               <div className="fade-up" style={{ textAlign: 'center' }}>
@@ -627,7 +627,7 @@ export default function PracticeInterviewPage() {
                 <div style={{ fontSize: 42, marginBottom: 10 }}>🎉</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', marginBottom: 6 }}>면접 완료!</div>
                 <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)', marginBottom: 20 }}>{backendQuestions.length}개 질문 · {fmt(totalSec)} 소요</div>
-                <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button onClick={handleExit} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>목록으로</button>
                   {backendInterviewId && (
                     <button onClick={() => navigate(`/interview/${backendInterviewId}/result`)} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>📊 AI 분석 보기</button>
@@ -641,9 +641,13 @@ export default function PracticeInterviewPage() {
       </div>
 
       {/* Log panel */}
-      <div className={`pi-log-panel${logOpen ? ' open' : ''}`}>
+      <div className={`pi-log-panel iv-log${logOpen ? ' open' : ''}`}>
         <div className="pi-log-inner">
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,.45)', marginBottom: 14 }}>📋 면접 로그</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,.45)' }}>📋 면접 로그</span>
+            {/* 휴대폰에선 로그가 화면을 덮어 위쪽 '로그' 버튼이 가려지므로 여기서 닫는다 */}
+            <button onClick={() => setLogOpen(false)} aria-label="로그 닫기" style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.45)', fontSize: 16, cursor: 'pointer', padding: '2px 6px' }}>✕</button>
+          </div>
           {log.length === 0
             ? <div style={{ fontSize: 13, color: 'rgba(255,255,255,.25)', textAlign: 'center', marginTop: 40 }}>아직 기록이 없습니다</div>
             : log.map((item, i) => (

@@ -101,7 +101,7 @@ export default function DashboardPage() {
       </div>
 
       {/* 상단 지표 카드 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 28 }}>
+      <div className="r-grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 28 }}>
         {[
           { label: '자기소개서',  value: resumes.length,                   color: 'var(--primary)', icon: '📄' },
           { label: '전체 면접',   value: history.length,                   color: '#6b7280',        icon: '📋' },
@@ -118,7 +118,7 @@ export default function DashboardPage() {
 
       {/* 점수 추이 + 레이더 차트 */}
       {trendData.length > 1 && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, marginBottom: 24 }}>
+        <div className="r-stack" style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, marginBottom: 24 }}>
           {/* 다항목 꺾은선 차트 */}
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -292,7 +292,7 @@ export default function DashboardPage() {
       </div>
 
       {/* 바로가기 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div className="r-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <h3 style={{ fontWeight: 600, fontSize: 15 }}>자기소개서 작성</h3>

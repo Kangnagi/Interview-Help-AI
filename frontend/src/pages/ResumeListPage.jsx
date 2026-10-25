@@ -96,11 +96,11 @@ export default function ResumeListPage() {
         .rl-guide__title { font-size:15px; font-weight:700; color:#3730a3; margin-bottom:6px; }
         .rl-guide__steps { display:flex; flex-direction:column; gap:4px; }
         .rl-guide__step {
-          display:flex; align-items:center; gap:8px;
+          display:flex; align-items:flex-start; gap:8px;
           font-size:13px; color:#4338ca;
         }
         .rl-guide__num {
-          width:20px; height:20px; border-radius:50%;
+          width:20px; height:20px; border-radius:50%; margin-top:1px;
           background:#4f6ef7; color:#fff;
           font-size:11px; font-weight:700;
           display:flex; align-items:center; justify-content:center;
@@ -175,11 +175,11 @@ export default function ResumeListPage() {
           <div className="rl-guide__steps">
             <div className="rl-guide__step">
               <span className="rl-guide__num">1</span>
-              자기소개서가 없다면 오른쪽 상단 <b>자기소개서 작성</b> 버튼을 눌러 먼저 작성해주세요.
+              <span>자기소개서가 없다면 오른쪽 상단 <b>자기소개서 작성</b> 버튼을 눌러 먼저 작성해주세요.</span>
             </div>
             <div className="rl-guide__step">
               <span className="rl-guide__num">2</span>
-              아래 목록에서 원하는 자기소개서 카드를 <b>클릭</b>하세요.
+              <span>아래 목록에서 원하는 자기소개서 카드를 <b>클릭</b>하세요.</span>
             </div>
             <div className="rl-guide__step">
               <span className="rl-guide__num">3</span>

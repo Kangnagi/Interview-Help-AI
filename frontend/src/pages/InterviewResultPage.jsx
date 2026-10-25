@@ -144,7 +144,7 @@ export default function InterviewResultPage() {
 
         {/* 강점 & 개선점 */}
         {((result.strengths?.length > 0) || (result.improvements?.length > 0)) && (
-          <div className="fade-up" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+          <div className="fade-up r-stack" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
             {/* 강점 */}
             <div style={{ background: 'rgba(34,197,94,.07)', border: '1px solid rgba(34,197,94,.2)', borderRadius: 14, padding: '20px 22px' }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: '#22c55e', marginBottom: 14 }}>✨ 강점</div>

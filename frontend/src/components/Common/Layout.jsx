@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'                   // 모달 상태 관리, 관리자 여부 조회
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'   // 라우팅
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'   // 라우팅
 import { useAuthStore } from '@/store/authStore'                 // 사용자 정보 및 로그아웃
 import SettingsModal from '@/components/Common/SettingsModal'     // 설정 모달 (미구현?)
 import toast from 'react-hot-toast'                              // 토스트 알림
@@ -18,10 +18,15 @@ export default function Layout() {
   const navigate = useNavigate()                                 // 페이지 네비게이션
   const [showSettings, setShowSettings] = useState(false)        // 설정 모달 표시 여부
   const [isAdmin, setIsAdmin] = useState(false)                  // 관리자면 '관리자 검토' 메뉴 표시
+  // 휴대폰 · 태블릿(폭 900px 이하)에선 사이드바를 숨겨 두고 머리글의 ☰ 버튼으로 연다 (global.css)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const { pathname } = useLocation()
 
   useEffect(() => {
     adminAPI.me().then((r) => setIsAdmin(r.data.is_admin)).catch(() => setIsAdmin(false))
   }, [user?.email])
+
+  useEffect(() => { setMenuOpen(false) }, [pathname])            // 메뉴에서 페이지를 고르면 닫음
 
   const navItems = isAdmin ? [...NAV_ITEMS, { to: '/admin/review', icon: '🛠️', label: '관리자 검토' }] : NAV_ITEMS
 
@@ -34,7 +39,7 @@ export default function Layout() {
   return (
     <div className="layout">
       {/* 사이드바 — 로고, 네비게이션, 사용자 정보 */}
-      <aside className="layout__sidebar">
+      <aside className={`layout__sidebar${menuOpen ? ' open' : ''}`}>
         <div className="sidebar__logo">
           <h1>내일의 <span>면접</span></h1>
           <p style={{ color: 'rgba(255,255,255,.4)', fontSize: 12, marginTop: 4 }}>v0.1.0 · 개발 환경</p>
@@ -73,10 +78,12 @@ export default function Layout() {
           </button>
         </div>
       </aside>
+      {menuOpen && <div className="layout__backdrop" onClick={() => setMenuOpen(false)} />}
 
       {/* 메인 콘텐츠 영역 */}
       <main className="layout__main">
         <header className="layout__header">
+          <button className="layout__menu-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="메뉴 열기" aria-expanded={menuOpen}>☰</button>
           <h2 style={{ fontSize: 16, fontWeight: 600 }}>내일의 면접</h2>
         </header>
         <div className="layout__content">
