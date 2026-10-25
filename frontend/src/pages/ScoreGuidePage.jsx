@@ -120,14 +120,14 @@ export default function ScoreGuidePage() {
 
             <div className="sg-if sg-case">
               <Cond q="질문 유형은?" left="경험형" right="가정·설계·지식형" />
-              <div className="sg-cell">
+              <div className="sg-cell" data-branch="경험형이면">
                 <div className="sg-if">
                   <Cond small node="d4e" on={on} q="상황 · 본인 행동 · 결과가 구체적인가?" sub="수치가 없어도 됨" />
                   <Cell node="d4en" on={on}><Result score="51~65" color={C['51~65']} text="사례는 있지만 구체성·결과가 약함" /></Cell>
                   <Cell node="d4ey" on={on}><Next /></Cell>
                 </div>
               </div>
-              <div className="sg-cell">
+              <div className="sg-cell" data-branch="가정·설계·지식형이면">
                 <div className="sg-if">
                   <Cond small node="d4d" on={on} q="단계별 방법과 선택 근거가 있는가?" sub="지난 경험의 수치 성과는 요구하지 않음" />
                   <Cell node="d4dn" on={on}><Result score="51~65" color={C['51~65']} text="방법은 있지만 단계·근거가 약함" /></Cell>
@@ -217,9 +217,6 @@ const CSS = `
 .sg-band i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
 
 .sg-scroll { overflow-x: auto; }
-@media (max-width: 680px) {   /* 표는 600px보다 좁게 그리면 글자가 겹쳐서, 휴대폰에선 옆으로 밀어 보게 안내 */
-  .sg-scroll::before { content: '← 옆으로 밀어서 보세요 →'; display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; position: sticky; left: 0; }
-}
 .sg-ns { min-width: 600px; border: 2px solid var(--text-primary); background: var(--bg-card); }
 .sg-ns > * + * { border-top: 2px solid var(--text-primary); }
 .sg-proc { padding: 12px 16px; font-size: 14px; line-height: 1.6; }
@@ -248,6 +245,38 @@ const CSS = `
 .sg-res p { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
 .sg-ns .on { background: #FFF4C2; transition: background-color .25s ease; }
 @media (prefers-reduced-motion: reduce) { .sg-ns .on { transition: none; } }
+
+/* 휴대폰: 옆으로 밀지 않고 화면 폭에 맞춰 한눈에 — 글자 · 여백을 줄이고, 유형 분기(경험형 / 가정·설계·지식형)는
+   나란히 두면 칸이 너무 좁아져(약 75px) 위아래로 쌓고 이름표를 붙인다 */
+@media (max-width: 680px) {
+  .sg-scroll { overflow-x: visible; }
+  .sg-ns { min-width: 0; border-width: 1.5px; }
+  .sg-ns > * + * { border-top-width: 1.5px; }
+  .sg-proc { padding: 10px 12px; font-size: 13px; }
+  .sg-sub { font-size: 12px; }
+  .sg-cond { min-height: 0; padding: 10px 15% 28px; border-bottom-width: 1.5px; }
+  .sg-cond.sm { min-height: 0; padding-inline: 14%; }
+  .sg-q, .sg-cond.sm .sg-q { font-size: 13px; }
+  /* 칸이 좁아 삼각형 선이 글자를 가로지르므로 글자 뒤를 칸 배경색으로 가림 (강조된 칸은 노란색이 그대로 이어짐) */
+  .sg-cond { background: var(--bg-card); }
+  .sg-q { display: inline-block; background: inherit; padding: 2px 6px; border-radius: 4px; }
+  .sg-q small { font-size: 11px; }
+  .sg-lab { font-size: 11px; bottom: 6px; }
+  .sg-lab.l { left: 8px; } .sg-lab.r { right: 8px; }
+  .sg-cell { padding: 10px; word-break: keep-all; overflow-wrap: anywhere; }
+  .sg-cell + .sg-cell { border-left-width: 1.5px; }
+  .sg-res { margin: -10px 0 -10px -10px; padding: 10px 10px 10px 8px; border-left-width: 4px; }
+  .sg-score { font-size: 15px; }
+  .sg-score span { font-size: 11px; margin-left: 4px; }
+  .sg-res p { font-size: 12px; line-height: 1.5; }
+  .sg-next { font-size: 12px; }
+  .sg-case { grid-template-columns: 1fr; }
+  .sg-case > .sg-cond { padding-bottom: 10px; }
+  .sg-case > .sg-cond svg, .sg-case > .sg-cond .sg-lab { display: none; }
+  .sg-case > .sg-cell + .sg-cell { border-left: none; border-top: 1.5px solid var(--text-primary); }
+  .sg-case > .sg-cell::before { content: attr(data-branch); display: block; padding: 6px 10px; font-size: 12px; font-weight: 700;
+                                color: var(--primary); background: var(--primary-light); border-bottom: 1.5px solid var(--text-primary); }
+}
 
 .sg-examples { display: grid; gap: 10px; }
 .sg-chips { display: flex; flex-wrap: wrap; gap: 8px; }
