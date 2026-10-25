@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
-import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
+import { useSpeechRecognition, STT_PROBLEM_TEXT } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
-import { wsUrl, recordingAudioConstraints } from '@/services/websocket'
+import { wsUrl, recordingAudioConstraints, IS_MOBILE_DEVICE } from '@/services/websocket'
 import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
 import LiveVisionPanel from '@/components/Interview/LiveVisionPanel'
 
@@ -83,7 +83,7 @@ export default function RealInterviewPage() {
   const r = 44, circ = 2 * Math.PI * r
   const timerColor = remaining > 60 ? '#10b981' : remaining > 30 ? '#f59e0b' : '#ef4444'
 
-  const { listening, interim, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
+  const { listening, interim, problem: sttProblem, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
     useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
 
   useEffect(() => {
@@ -219,7 +219,9 @@ export default function RealInterviewPage() {
         setDeviceError('camera')
       })
 
-    navigator.mediaDevices.getUserMedia(micConstraints)
+    // 휴대폰 · 태블릿은 마이크 스트림을 열지 않는다 (녹음 · 마이크 표시 없음) — 열어 두면 음성 인식에 소리가 가지 않음
+    // (services/websocket.js IS_MOBILE_DEVICE). micReady가 false로 남아 녹음도 시작하지 않는다.
+    if (!IS_MOBILE_DEVICE) navigator.mediaDevices.getUserMedia(micConstraints)
       .then((audioStream) => {
         micStreamRef.current = audioStream   // 마이크 표시와 녹음이 같은 스트림을 쓴다 (설정 화면에서 고른 마이크)
         setMicReady(true)
@@ -529,7 +531,7 @@ export default function RealInterviewPage() {
           {/* Bottom answer panel */}
           <div className="iv-actions" style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
             <div className="fade-up" key={qIndex}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
                 {sttSupported ? (
                   <button
                     onClick={toggleSTT}
@@ -542,6 +544,7 @@ export default function RealInterviewPage() {
                   <span style={{ fontSize: 12, color: 'rgba(255,255,255,.25)' }}>이 브라우저는 음성 인식을 지원하지 않습니다</span>
                 )}
                 {listening && <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>}
+                  {sttProblem && <span role="status" style={{ fontSize: 12, color: '#fbbf24', lineHeight: 1.5, flexBasis: '100%' }}>⚠️ {STT_PROBLEM_TEXT[sttProblem]}</span>}
               </div>
               <textarea
                 value={answer}

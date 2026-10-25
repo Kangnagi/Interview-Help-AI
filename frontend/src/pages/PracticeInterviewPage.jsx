@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
-import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
+import { useSpeechRecognition, STT_PROBLEM_TEXT } from '@/hooks/useSpeechRecognition'
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
-import { wsUrl, recordingAudioConstraints } from '@/services/websocket'
+import { wsUrl, recordingAudioConstraints, IS_MOBILE_DEVICE } from '@/services/websocket'
 import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
 import LiveVisionPanel from '@/components/Interview/LiveVisionPanel'
 import { useAuthStore } from '@/store/authStore'
@@ -95,7 +95,7 @@ export default function PracticeInterviewPage() {
   const currentQuestion = backendQuestions[qIndex]
   const currentQ = currentQuestion?.question_text || ''
 
-  const { listening, interim, toggle: toggleSTT, start: startSTT, stop: stopSTT, isSupported: sttSupported } =
+  const { listening, interim, problem: sttProblem, toggle: toggleSTT, start: startSTT, stop: stopSTT, isSupported: sttSupported } =
     useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
 
   // 오디오 스트리밍 시작 (WebSocket 연결)
@@ -167,7 +167,8 @@ export default function PracticeInterviewPage() {
 
   useEffect(() => {
     if (phase === PHASE.ANSWERING) {
-      startAudioStreaming()
+      // 휴대폰 · 태블릿은 녹음하지 않는다 — 녹음이 마이크를 잡으면 음성 인식에 소리가 가지 않음 (services/websocket.js IS_MOBILE_DEVICE)
+      if (!IS_MOBILE_DEVICE) startAudioStreaming()
       // 답변 시간이 되면 음성 입력을 자동으로 켠다 (예전엔 🎤 버튼을 눌러야 해서, 말만 하면 답변이 빈 칸으로 저장됐다)
       if (sttSupported) startSTT()
     } else {
@@ -252,9 +253,12 @@ export default function PracticeInterviewPage() {
         setDeviceError('camera')
       })
 
-    navigator.mediaDevices.getUserMedia(micConstraints).catch(() => {
-      setDeviceError((prev) => prev === 'camera' ? 'both' : 'mic')
-    })
+    // 마이크 권한 · 장치 확인만 하고 바로 놓는다 (예전엔 면접 내내 마이크를 잡고 있어 휴대폰에선 음성 인식을 막았다)
+    navigator.mediaDevices.getUserMedia(micConstraints)
+      .then((s) => s.getTracks().forEach((t) => t.stop()))
+      .catch(() => {
+        setDeviceError((prev) => prev === 'camera' ? 'both' : 'mic')
+      })
 
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -589,7 +593,7 @@ export default function PracticeInterviewPage() {
 
             {phase === PHASE.ANSWERING && (
               <div className="fade-up">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
                   {sttSupported ? (
                     <button
                       onClick={toggleSTT}
@@ -602,6 +606,7 @@ export default function PracticeInterviewPage() {
                     <span style={{ fontSize: 12, color: 'rgba(255,255,255,.25)' }}>이 브라우저는 음성 인식을 지원하지 않습니다</span>
                   )}
                   {listening && <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>}
+                  {sttProblem && <span role="status" style={{ fontSize: 12, color: '#fbbf24', lineHeight: 1.5, flexBasis: '100%' }}>⚠️ {STT_PROBLEM_TEXT[sttProblem]}</span>}
                 </div>
                 <textarea
                   value={answer}

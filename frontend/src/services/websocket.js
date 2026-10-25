@@ -14,6 +14,18 @@ export const wsUrl = (path) =>
   `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${path}`
 
 /**
+ * 휴대폰 · 태블릿 브라우저인지 — 이런 기기에선 답변을 녹음하지 않는다 (10/26).
+ * 안드로이드 크롬은 페이지가 마이크를 잡고 있으면(녹음 · 마이크 표시) 음성 인식(Web Speech API)에 소리가 가지 않아
+ * '인식 중지'가 떠 있는데 답변 칸에 글자가 들어오지 않았다 → 휴대폰에선 음성 인식을 살리고 녹음(음성 점수)은 기본값으로.
+ * PC는 둘을 동시에 처리하므로 그대로 녹음한다.
+ */
+export const IS_MOBILE_DEVICE = typeof navigator !== 'undefined' && (
+  navigator.userAgentData?.mobile === true ||
+  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)   // iPadOS는 PC(Mac)로 표시됨
+)
+
+/**
  * 발화 분석용 녹음의 마이크 설정 — 브라우저의 소음 제거 · 자동 음량 조절 · 에코 제거를 끈다.
  * (켜져 있으면 말 사이가 완전한 무음이 되고 음량 변화가 눌려, 음성 모델 · 침묵/음량 지표가 학습 때와 다른 소리를 받는다)
  * 음성 인식(Web Speech API)은 브라우저가 따로 소리를 받으므로 영향 없음.
