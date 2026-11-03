@@ -1,0 +1,309 @@
+import os
+import re
+import json
+import asyncio
+from dotenv import load_dotenv
+from google import genai
+
+load_dotenv(override=True)
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+client = None
+
+if GEMINI_API_KEY:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    print(f"Gemini 클라이언트 초기화 완료 (모델: {MODEL_NAME})")
+else:
+    print("GEMINI_API_KEY를 찾을 수 없습니다.")
+
+
+def _parse_json(text: str):
+    """Gemini 응답에서 JSON 추출 — 마크다운 코드블록·앞뒤 텍스트 제거 후 파싱"""
+    text = text.strip()
+    if "```" in text:
+        m = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
+        text = m.group(1).strip() if m else re.sub(r'```(?:json)?', '', text).strip()
+    # 객체 또는 배열 경계 탐색
+    for s, e in [('{', '}'), ('[', ']')]:
+        si, ei = text.find(s), text.rfind(e)
+        if si != -1 and ei > si:
+            return json.loads(text[si:ei + 1])
+    return json.loads(text)
+
+
+# ── 1) 질문별 즉시 피드백 (연습·실전 면접 중 실시간 호출) ─────────────────────────
+async def analyze_answer_with_gemini(question: str, answer: str, audio_image_bytes: bytes = None, kobert_scores: dict = None) -> dict:
+    if not GEMINI_API_KEY:
+        return {"score": 0, "feedback": "서버 오류: Gemini API 키가 설정되지 않았습니다.", "tip": ""}
+
+    answer_clean = (answer or "").strip()
+
+    if not answer_clean:
+        return {
+            "score": 20,
+            "feedback": "답변을 입력하지 않으셨습니다. 짧더라도 자신의 생각을 반드시 전달해야 합니다.",
+            "tip": "모르더라도 관련 경험이나 학습 의지를 짧게 표현해 보세요.",
+        }
+    if len(answer_clean) < 10:
+        return {
+            "score": 35,
+            "feedback": "답변이 너무 짧습니다. 이유와 구체적인 경험을 덧붙여 주세요.",
+            "tip": "STAR 기법(상황→과제→행동→결과)으로 구조화하면 짧은 답변도 풍성해집니다.",
+        }
+    kobert_context = ""
+    if kobert_scores and kobert_scores.get("status") == "success":
+        kobert_context = (
+            f"\n\n[참고 자료: KoBERT 모델의 1차 정량적 분석 결과]\n"
+            f"- 질문과 답변의 맥락 관련성: {kobert_scores.get('relevance_score', 0)}/100점\n"
+            f"- 답변 분량 및 내용 충실도: {kobert_scores.get('content_score', 0)}/100점\n"
+            f"- 어휘 다양성 및 명확성: {kobert_scores.get('clarity_score', 0)}/100점\n"
+            f"위 점수들을 면밀히 참고하여, 지원자가 어떤 부분(관련성, 충실도, 명확성 등)이 부족했거나 뛰어났는지 피드백에 자연스럽게 반영해 주세요."
+        )
+
+    prompt = (
+        "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
+        "지원자의 면접 질문과 답변, 그리고 AI의 1차 정량 평가 결과를 분석하여 반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지):\n"
+        '{"score":0~100,"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성 제안","tip":"다음 답변을 위한 실질적 개선 팁 한 문장"}\n\n'
+        f"면접 질문: {question}\n"
+        f"지원자 답변: {answer_clean}"
+        f"{kobert_context}"
+    )
+    contents = [prompt]
+    if audio_image_bytes:
+        contents.append({"mime_type": "image/png", "data": audio_image_bytes})
+
+    for attempt in range(3):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(model=MODEL_NAME, contents=contents),
+                timeout=25.0,
+            )
+            return _parse_json(response.text)
+        except Exception as e:
+            err_str = str(e)
+            is_quota = "429" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str
+            print(f"Gemini 피드백 생성 오류 (시도 {attempt + 1}/3): {e}")
+            if is_quota:
+                await asyncio.sleep(20)
+            elif attempt < 2:
+                await asyncio.sleep(5)
+
+    return {
+        "score": 60,
+        "feedback": "답변이 저장되었습니다. 면접 종료 후 종합 분석에서 상세 피드백을 확인하세요.",
+        "tip": "다음 질문에서는 구체적인 경험과 수치를 활용해 답변해 보세요.",
+    }
+
+
+# ── 2) 배치 분석 (면접 종료 후 전체 질문 일괄 평가) ───────────────────────────────
+async def analyze_answers_batch_with_gemini(qna_list: list) -> list:
+    n = len(qna_list)
+    fallback = [
+        {"content_score": 70, "relevance_score": 70, "clarity_score": 70,
+         "speech_score": 70, "posture_score": 70, "eye_contact_score": 70, "feedback": ""}
+        for _ in range(n)
+    ]
+
+    if not GEMINI_API_KEY or not qna_list:
+        return fallback
+
+    items = "\n\n".join(
+        f"[질문 {i + 1}]\n질문: {q['question']}\n지원자 답변: {q['answer'] or '없음'}"
+        for i, q in enumerate(qna_list)
+    )
+
+    prompt = (
+        "당신은 10년 차 전문 인사담당자이자 AI 면접관입니다.\n"
+        f"아래 면접 Q&A {n}개의 텍스트 내용만을 분석하여 반드시 아래 형식의 JSON 배열로만 응답하세요 (코드블록 금지).\n"
+        "배열 순서는 입력 순서와 반드시 일치해야 합니다.\n\n"
+        "점수 기준(0~100):\n"
+        "- content_score: 답변 내용의 충실도 및 적절성\n"
+        "- relevance_score: 질문과의 관련성\n"
+        "- clarity_score: 표현 명확성 및 논리 구조\n"
+        "- speech_score: 발화 품질 (추임새, 반복 표현, 문장 구조 기반 추정)\n\n"
+        "posture_score, eye_contact_score는 일단 기본값으로 80을 부여하세요. (다른 시스템에서 덮어씌워질 예정입니다.)\n\n"
+        '형식: [{"content_score":점수,"relevance_score":점수,"clarity_score":점수,'
+        '"speech_score":점수,"posture_score":80,"eye_contact_score":80,'
+        '"feedback":"1. 잘한 점\\n2. 아쉬운 점 및 개선 방향\\n3. 모범 답변 방향성"}]\n\n'
+        f"{items}"
+    )
+
+    contents = [prompt]
+    # 스펙트로그램 이미지 첨부 로직 삭제 (별도 함수에서 처리)
+
+    for attempt in range(3):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(model=MODEL_NAME, contents=contents),
+                timeout=60.0,
+            )
+            result = _parse_json(response.text)
+            if isinstance(result, dict) and len(result) == 1:
+                result = list(result.values())[0]
+            if isinstance(result, list):
+                while len(result) < n:
+                    result.append(fallback[0])
+                return result[:n]
+        except Exception as e:
+            wait = 10 + attempt * 10
+            print(f"Gemini 배치 분석 오류 (시도 {attempt + 1}/3): {e} -> {wait}s 대기")
+            await asyncio.sleep(wait)
+
+    return fallback
+
+
+async def analyze_speech_with_spectrogram(audio_image_bytes: bytes) -> dict:
+    """
+    스펙트로그램 이미지만을 사용하여 음성(발성, 흐름, 에너지)을 단독으로 평가합니다.
+    """
+    fallback = {"speech_score": 70, "feedback": ""}
+    if not GEMINI_API_KEY or not audio_image_bytes:
+        return fallback
+
+    prompt = (
+        "당신은 음성 분석 및 스피치 코칭 전문가입니다.\n"
+        "첨부된 이미지는 면접 답변의 '멜 스펙트로그램(Mel Spectrogram)'입니다.\n"
+        "이 이미지를 분석하여 발화의 흐름, 에너지 변화, 무음 구간 등을 파악하고, 발성과 말하기 방식에 대해 평가하세요.\n"
+        "반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지):\n"
+        '{"speech_score": 0~100, "feedback": "목소리 톤, 발성, 끊어 읽기 등에 대한 짧은 팁(1문장)"}'
+    )
+
+    contents = [
+        prompt,
+        {"mime_type": "image/png", "data": audio_image_bytes}
+    ]
+
+    for attempt in range(3):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(model=MODEL_NAME, contents=contents),
+                timeout=25.0,
+            )
+            return _parse_json(response.text)
+        except Exception as e:
+            err_str = str(e)
+            is_quota = "429" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str
+            print(f"Gemini 음성 평가 오류 (시도 {attempt + 1}/3): {e}")
+            if is_quota:
+                await asyncio.sleep(20)
+            elif attempt < 2:
+                await asyncio.sleep(5)
+
+    return fallback
+
+
+# ── 3) 종합 총평 생성 (파이프라인 마지막 단계) ────────────────────────────────────
+async def generate_overall_summary_with_gemini(qna_feedbacks: list[dict]) -> dict:
+    default = {
+        "feedback_summary": "AI 서비스 일시 오류로 총평을 생성할 수 없습니다. 질문별 피드백을 참고하세요.",
+        "strengths": [],
+        "improvements": [],
+    }
+
+    if not GEMINI_API_KEY or not qna_feedbacks:
+        return default
+
+    items_text = "\n\n".join(
+        (
+            f"[질문 {i + 1}]\n"
+            f"질문: {item['question']}\n"
+            f"답변: {item['answer'] or '없음'}\n"
+            f"종합 점수: {item.get('score', '?')}점 "
+            f"(내용:{item.get('content_score', '?')} / 관련성:{item.get('relevance_score', '?')} / 명확성:{item.get('clarity_score', '?')})\n"
+            f"AI 피드백 요약: {(item.get('feedback') or '').strip()[:300] or '없음'}"
+        )
+        for i, item in enumerate(qna_feedbacks)
+    )
+
+    prompt = (
+        "당신은 10년 차 전문 인사담당자입니다.\n"
+        "아래 면접 내용과 각 질문별 AI 점수·피드백을 종합 분석하여 지원자 전체 평가를 작성하세요.\n"
+        "반드시 아래 JSON 형식으로만 응답하세요 (코드블록 금지).\n\n"
+        '{"feedback_summary":"전체 면접 종합 총평 3~4문장 (점수 패턴·두드러진 강점·약점 기반)",'
+        '"strengths":["실제 답변·점수에 근거한 구체적 강점 1","강점 2","강점 3"],'
+        '"improvements":["점수가 낮거나 피드백에서 반복 지적된 구체적 개선점 1","개선점 2","개선점 3"]}\n\n'
+        "작성 규칙:\n"
+        "1. 강점·개선점은 이 지원자의 실제 답변 내용과 점수를 근거로 구체적으로 서술할 것\n"
+        "2. '성실하게 답변했습니다' 같은 일반적·추상적 표현 금지\n"
+        "3. 여러 질문에서 반복되는 패턴(예: 수치 활용 부족, 논리 구조 일관성 등)을 우선 언급\n"
+        "4. 점수가 높은 항목→강점, 낮은 항목→개선점으로 연결\n\n"
+        f"면접 내용:\n{items_text}"
+    )
+
+    for attempt in range(3):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(model=MODEL_NAME, contents=prompt),
+                timeout=60.0,
+            )
+            result = _parse_json(response.text)
+            if isinstance(result, dict) and "feedback_summary" in result:
+                result.setdefault("strengths", [])
+                result.setdefault("improvements", [])
+                return result
+        except Exception as e:
+            print(f"Gemini 총평 생성 오류 (시도 {attempt + 1}/3): {e}")
+            await asyncio.sleep(5 + attempt * 5)
+
+    return default
+
+
+# ── 4) 짧은 즉시 피드백 (현재 미사용, 하위 호환 유지) ─────────────────────────────
+async def analyze_answer_with_gemini_short(question: str, answer: str, audio_image_bytes: bytes = None) -> str:
+    if not GEMINI_API_KEY:
+        return "서버 오류: Gemini API 키가 설정되지 않았습니다."
+    answer_clean = (answer or "").strip()
+    if not answer_clean:
+        return "답변 내용이 없어 피드백을 생성할 수 없습니다."
+
+    prompt = f"질문: {question[:80]}\n답변: {answer_clean[:150]}\n2문장 이내로 핵심 피드백만 작성하세요."
+    for attempt in range(2):
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(model=MODEL_NAME, contents=prompt),
+                timeout=10.0,
+            )
+            return response.text
+        except Exception as e:
+            print(f"Gemini 짧은 피드백 오류 (시도 {attempt + 1}/2): {e}")
+            await asyncio.sleep(3)
+    return "피드백 생성에 실패했습니다."
+
+
+# ── 5) 자기소개서 기반 질문 생성 ────────────────────────────────────────────────
+async def generate_questions_from_resume(resume_text: str, category: str, num_questions: int = 5) -> list[str]:
+    if not GEMINI_API_KEY:
+        raise ValueError("서버 오류: Gemini API 키가 설정되지 않았습니다.")
+
+    ai_num = max(0, num_questions - 2)
+
+    prompt = (
+        f"당신은 채용 담당자입니다. 아래 자기소개서를 바탕으로 면접 질문 {ai_num}개를 생성하세요.\n\n"
+        "규칙:\n"
+        "1. 자기소개·지원동기는 제외 (이미 진행됨)\n"
+        "2. 자기소개서 내용에 직접 기반한 구체적 질문\n"
+        "3. 독립적으로 답할 수 있는 질문 (꼬리 질문 제외)\n"
+        "4. 순수 JSON 배열로만 반환: [\"질문1\", \"질문2\"]\n\n"
+        f"직무: {category}\n\n"
+        f"자기소개서:\n{resume_text[:2000]}"
+    )
+
+    try:
+        response = await client.aio.models.generate_content(model=MODEL_NAME, contents=prompt)
+        questions = _parse_json(response.text)
+        if isinstance(questions, dict):
+            for val in questions.values():
+                if isinstance(val, list):
+                    questions = val
+                    break
+        fixed = [
+            "간단한 자기소개 부탁드립니다.",
+            "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?",
+        ]
+        if isinstance(questions, list) and all(isinstance(q, str) for q in questions):
+            return fixed + questions[:ai_num]
+        raise ValueError("올바른 형식의 질문 리스트가 아닙니다.")
+    except Exception as e:
+        print(f"Gemini 질문 생성 오류: {e}")
+        return []

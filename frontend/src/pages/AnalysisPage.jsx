@@ -1,43 +1,70 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useInterviewStore } from '@/store/interviewStore'
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts'
+import AnswerRating from '@/components/Common/AnswerRating'
+import ConsentBanner from '@/components/Common/ConsentBanner'
+import SceneReplay from '@/components/Analysis/SceneReplay'
 
 export default function AnalysisPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { fetchAnalysis, analysis, loading } = useInterviewStore()
+  const { fetchAnalysis, analysis, resetAnalysis } = useInterviewStore()
   const [polling, setPolling] = useState(true)
+
+  // Clear stale analysis from a previous interview on mount
+  useEffect(() => {
+    resetAnalysis()
+  }, [id])
 
   useEffect(() => {
     let count = 0
+    let nullStreak = 0
     const timer = setInterval(async () => {
       const data = await fetchAnalysis(id)
       count++
-      if (data || count > 10) {
+      if (data === null) {
+        nullStreak++
+      } else {
+        nullStreak = 0
+      }
+      // 완료: total_score가 채워진 경우
+      // 타임아웃: 80회(240s) 초과
+      // 빠른 실패: 연속 3회 null(백엔드 다운 또는 레코드 없음)
+      const isComplete = data?.total_score != null
+      // 실패: 서버가 점수 없이 안내 문구만 남긴 경우 (분석 오류) — 더 기다리지 않는다
+      const failed = data != null && data.total_score == null && !!data.feedback_summary
+      const timedOut = count > 80
+      const backendDown = nullStreak >= 3
+      if (isComplete || failed || timedOut || backendDown) {
         clearInterval(timer)
         setPolling(false)
       }
-    }, 2000)
+    }, 3000)
     return () => clearInterval(timer)
   }, [id])
 
-  if (loading || polling && !analysis) {
+  if (polling) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <div className="spinner" style={{ margin: '0 auto 16px' }} />
         <p style={{ color: 'var(--text-secondary)' }}>AI가 면접을 분석하고 있습니다...</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 8 }}>최대 4분 소요될 수 있습니다</p>
       </div>
     )
   }
 
-  if (!analysis) {
+  if (analysis?.total_score == null) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <p>분석 결과를 불러올 수 없습니다</p>
-        <button className="btn btn-outline btn-sm" style={{ marginTop: 12 }} onClick={() => navigate('/dashboard')}>
-          대시보드로
-        </button>
+        {analysis?.feedback_summary && (
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 8 }}>{analysis.feedback_summary}</p>
+        )}
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 12 }}>
+          <button className="btn btn-outline btn-sm" onClick={() => window.location.reload()}>다시 시도</button>
+          <button className="btn btn-outline btn-sm" onClick={() => navigate('/dashboard')}>대시보드로</button>
+        </div>
       </div>
     )
   }
@@ -52,6 +79,7 @@ export default function AnalysisPage() {
   ]
 
   const totalColor = analysis.total_score >= 80 ? 'var(--secondary)' : analysis.total_score >= 60 ? 'var(--warning)' : 'var(--danger)'
+  const answeredQuestions = (analysis.question_feedbacks || []).filter((q) => q.answer_text)
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto' }}>
@@ -70,6 +98,9 @@ export default function AnalysisPage() {
           {analysis.total_score?.toFixed(0) ?? '—'}
         </p>
         <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 4 }}>/ 100점</p>
+        <Link to="/score-guide" style={{ display: 'inline-block', marginTop: 10, fontSize: 13, color: 'var(--primary)', fontWeight: 600 }}>
+          점수는 어떻게 매겨지나요? 점수 기준표 보기 →
+        </Link>
         {analysis.feedback_summary && (
           <p style={{ marginTop: 16, color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.7 }}>
             {analysis.feedback_summary}
@@ -115,18 +146,78 @@ export default function AnalysisPage() {
           {(analysis.strengths || []).map((s, i) => (
             <p key={i} style={{ fontSize: 13, color: '#047857', marginBottom: 6, lineHeight: 1.6 }}>· {s}</p>
           ))}
-          {!analysis.strengths?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 중...</p>}
+          {!analysis.strengths?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>총평 생성 완료 후 표시됩니다</p>}
         </div>
         <div className="card" style={{ border: '1px solid #FED7AA', background: '#FFF7ED' }}>
           <h3 style={{ fontWeight: 600, fontSize: 14, color: '#92400E', marginBottom: 12 }}>📈 개선점</h3>
           {(analysis.improvements || []).map((s, i) => (
             <p key={i} style={{ fontSize: 13, color: '#B45309', marginBottom: 6, lineHeight: 1.6 }}>· {s}</p>
           ))}
-          {!analysis.improvements?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>분석 중...</p>}
+          {!analysis.improvements?.length && <p style={{ fontSize: 13, color: '#9CA3AF' }}>총평 생성 완료 후 표시됩니다</p>}
         </div>
       </div>
 
-      <button className="btn btn-primary w-full btn-lg" onClick={() => navigate('/interview/setup')}>
+      {/* 감점 장면 (면접 중 사진을 움직이는 이미지로) */}
+      <SceneReplay interviewId={id} />
+
+      {/* 질문별 상세 분석 */}
+      {answeredQuestions.length > 0 && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h3 style={{ fontWeight: 600, fontSize: 14, marginBottom: 20 }}>📝 질문별 상세 분석</h3>
+          <ConsentBanner theme="light" />
+          {answeredQuestions.map((q, i) => {
+            const scoreColor = q.ai_score >= 80 ? 'var(--secondary)' : q.ai_score >= 60 ? 'var(--warning)' : 'var(--danger)'
+            const isLast = i === answeredQuestions.length - 1
+            return (
+              <div
+                key={q.id}
+                style={{
+                  marginBottom: isLast ? 0 : 24,
+                  paddingBottom: isLast ? 0 : 24,
+                  borderBottom: isLast ? 'none' : '1px solid var(--border)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10, gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--primary)', marginRight: 8 }}>Q{q.order}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{q.question_text}</span>
+                  </div>
+                  {q.ai_score != null && (
+                    <span style={{ fontSize: 17, fontWeight: 800, color: scoreColor, flexShrink: 0 }}>
+                      {Math.round(q.ai_score)}점
+                    </span>
+                  )}
+                </div>
+
+                {q.answer_text && (
+                  <div style={{ background: 'var(--bg-secondary, rgba(0,0,0,.04))', borderRadius: 8, padding: '10px 14px', marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5 }}>내 답변</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.65 }}>{q.answer_text}</div>
+                  </div>
+                )}
+
+                {q.ai_feedback ? (
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, paddingLeft: 2 }}>
+                    💬 {q.ai_feedback}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>피드백 없음</div>
+                )}
+
+                {q.ai_score != null && (
+                  <div style={{ marginTop: 10, height: 5, background: 'var(--border)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div style={{ width: `${q.ai_score}%`, height: '100%', background: scoreColor, borderRadius: 99, transition: 'width 1.2s' }} />
+                  </div>
+                )}
+
+                {q.ai_score != null && <AnswerRating interviewId={id} questionId={q.id} theme="light" />}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <button className="btn btn-primary w-full btn-lg" onClick={() => navigate('/resume')}>
         🎤 다시 면접하기
       </button>
     </div>

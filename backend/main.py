@@ -1,22 +1,25 @@
-"""
-AI 면접 도우미 — FastAPI 진입점
-- lifespan: DB 초기화 + AI 모델 사전 로딩 (Stub)
-- /api/v1 prefix 라우터 등록
-- /ws WebSocket 라우터 등록
-- CORS, 정적 업로드 디렉토리 마운트
-"""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.errors import RateLimitExceeded
+#from services.llm import korbert_service
 
 from core.config import settings
 from core.database import init_db
-from routers import auth, interview, analysis, websocket
-from services.llm.kobert_service import kobert_service
-from services.voice.whisper_service import whisper_service
+from core.rate_limit import limiter
+from core.security_middleware import SecurityHeadersMiddleware, RequestSizeLimitMiddleware
+from routers import auth, interview, analysis, websocket, stt, stats, feedback, admin_review, resume
 from services.vision.mediapipe_service import mediapipe_service
+from services.vision import scenes as scene_store   # 감점 장면 사진 30일 자동 삭제
+from services.voice import recordings                # 답변 녹음 30일 자동 삭제
+from services.llm.kobert_service import kobert_service
+from services.llm.llama_service import llama_service
+from services.voice.voice_model_service import voice_model_service
 
 logging.basicConfig(
     level=logging.INFO if settings.DEBUG else logging.WARNING,
@@ -27,22 +30,34 @@ logger = logging.getLogger("app")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Startup ──────────────────────────────
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} 시작")
 
-    # 1) DB 테이블 생성
     await init_db()
     logger.info("DB 초기화 완료")
 
-    # 2) AI 모델 사전 로딩 (현재 모두 Stub)
-    await kobert_service.load_model()
-    await whisper_service.load_model()
+    # KoBERT는 로딩 시간이 길고 현재 Llama 채점으로 대체되어 비활성화
+    # await kobert_service.load_model()
+
+    await llama_service.load_model()  # 파인튜닝된 Llama-3.2-3B(LoRA) 로딩
+
+    await asyncio.to_thread(voice_model_service.load)   # 음성 모델 (CPU, 수 초 이내)
+
     await mediapipe_service.initialize()
-    logger.info("AI 모델 준비 완료 (Stub)")
+    logger.info("AI 모델 준비 완료")
+
+    # 분석 도중 서버가 꺼져 멈춘 면접을 다시 분석 (백그라운드 — 서버 시작을 늦추지 않는다)
+    resume_task = asyncio.create_task(analysis.resume_stuck_analyses())
+    # 감점 장면 사진 30일 자동 삭제 (시작 시 한 번, 이후 6시간마다)
+    purge_task = asyncio.create_task(scene_store.purge_loop())
+    # 답변 녹음도 30일 자동 삭제 (services/voice/recordings.py)
+    recording_purge_task = asyncio.create_task(recordings.purge_loop())
 
     yield
 
-    # ── Shutdown ─────────────────────────────
+    resume_task.cancel()
+    purge_task.cancel()
+    recording_purge_task.cancel()
+
     logger.info("앱 종료")
 
 
@@ -50,11 +65,35 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # 운영 환경(DEBUG=False)에서는 API 문서·스키마를 외부에 노출하지 않는다.
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
 )
 
-# CORS
+# Rate Limiting — app.state에 등록해야 @limiter.limit() 데코레이터와 예외 핸들러가 동작한다.
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "요청이 너무 많습니다. 잠시 후 다시 시도해주세요"},
+    )
+
+
+app.add_middleware(SlowAPIMiddleware)   # limiter.default_limits(전체 API 제한)를 실제로 적용
+
+# 아래 미들웨어들은 등록 순서의 역순으로 요청을 감싼다 — 보안 헤더/크기 제한이
+# CORS보다 먼저 실행되어, 거부된 요청에도 보안 헤더가 always 붙는다.
+app.add_middleware(
+    RequestSizeLimitMiddleware,
+    default_max_bytes=settings.MAX_REQUEST_SIZE_MB * 1024 * 1024,
+    large_upload_max_bytes=settings.MAX_UPLOAD_REQUEST_SIZE_MB * 1024 * 1024,
+)
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -63,16 +102,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 업로드 정적 서빙 (개발용 — 운영에서는 S3/CDN 권장)
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+# Cloudflare Tunnel을 경유하므로 응답을 압축하면 전송량이 줄어 체감 속도가 개선된다.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# 라우터 등록 — REST는 /api/v1 prefix
+# 녹음 · 음성 그래프(uploads)는 웹으로 내보내지 않는다 — 분석은 서버가 파일을 직접 읽는다.
+# (예전엔 /uploads로 로그인 없이 열려 있어, 같은 네트워크에서 :8000으로 남의 녹음을 받을 수 있었다)
+
 API_PREFIX = "/api/v1"
 app.include_router(auth.router,      prefix=API_PREFIX)
 app.include_router(interview.router, prefix=API_PREFIX)
 app.include_router(analysis.router,  prefix=API_PREFIX)
-
-# WebSocket은 별도 prefix
+app.include_router(stt.router,       prefix=API_PREFIX)
+app.include_router(stats.router,     prefix=API_PREFIX)
+app.include_router(feedback.router,  prefix=API_PREFIX)
+app.include_router(admin_review.router, prefix=API_PREFIX)
+app.include_router(resume.router,    prefix=API_PREFIX)
 app.include_router(websocket.router)
 
 
@@ -81,7 +125,7 @@ async def root():
     return {
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "docs": "/docs",
+        "docs": "/docs" if settings.DEBUG else None,
     }
 
 

@@ -1,10 +1,27 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
+import { useSpeechRecognition, STT_PROBLEM_TEXT } from '@/hooks/useSpeechRecognition'
+import InterviewSetup from '@/components/Interview/InterviewSetup'
+import { interviewAPI, analysisAPI } from '@/services/api'
+import { wsUrl, recordingAudioConstraints, IS_MOBILE_DEVICE } from '@/services/websocket'
+import { useVisionStream, faceStatusFromResults } from '@/hooks/useVisionStream'
+import LiveVisionPanel from '@/components/Interview/LiveVisionPanel'
+import { useAuthStore } from '@/store/authStore'
 
-const PHASE = { WAITING: 'waiting', QUESTION: 'question', ANSWERING: 'answering', FEEDBACK: 'feedback', DONE: 'done' }
+const PHASE = {
+  SETUP: 'setup',
+  WAITING: 'waiting',
+  QUESTION: 'question',
+  ANSWERING: 'answering',
+  FEEDBACK: 'feedback',
+  DONE: 'done',
+}
 
-const SAMPLE_QUESTIONS = [
+// 이보다 짧은 답변은 꼬리 질문을 요청하지 않는다 (서버 FOLLOW_UP_MIN_ANSWER와 같게)
+const FOLLOW_UP_MIN_ANSWER = 40
+
+const FALLBACK_QUESTIONS = [
   '자기소개를 간략하게 해주세요.',
   '해당 직무에 지원하게 된 이유가 무엇인가요?',
   '본인의 가장 큰 강점과 약점은 무엇인가요?',
@@ -12,20 +29,16 @@ const SAMPLE_QUESTIONS = [
   '5년 후 본인의 모습을 어떻게 생각하시나요?',
 ]
 
-const SAMPLE_FEEDBACK = [
-  '답변이 구체적이고 명확했습니다. STAR 기법을 잘 활용하셨어요.',
-  '핵심을 잘 짚었지만, 구체적인 수치나 사례를 더 추가하면 좋겠습니다.',
-  '자신감 있게 답변하셨습니다. 조금 더 간결하게 정리하면 더욱 좋을 것 같습니다.',
-  '경험을 바탕으로 한 답변이 인상적입니다. 마무리 멘트를 더 강하게 하면 좋겠습니다.',
-]
-
 export default function PracticeInterviewPage() {
   const navigate = useNavigate()
   const { resumeId } = useParams()
   const resume = useResumeStore((s) => s.getResume(resumeId))
+  const resumesReady = useResumeStore((s) => Boolean(s.loadedFor) || s.loadError)   // 서버에서 자기소개서를 다 불러왔는지
   const { addInterviewRecord } = useResumeStore()
 
-  const [phase, setPhase] = useState(PHASE.WAITING)
+  const [phase, setPhase] = useState(PHASE.SETUP)
+  const [deviceIds, setDeviceIds] = useState({ cameraId: '', micId: '' })
+  const [sessionStarted, setSessionStarted] = useState(false)
   const [qIndex, setQIndex] = useState(0)
   const [answer, setAnswer] = useState('')
   const [log, setLog] = useState([])
@@ -34,77 +47,231 @@ export default function PracticeInterviewPage() {
   const [answerSec, setAnswerSec] = useState(0)
   const [exitConfirm, setExitConfirm] = useState(false)
   const [faceStatus, setFaceStatus] = useState('waiting')
-  const [micActive, setMicActive] = useState(false)
-  const [feedback, setFeedback] = useState('')
+  const [deviceError, setDeviceError] = useState(null)
+  const [backendInterviewId, setBackendInterviewId] = useState(null)
+  const [backendQuestions, setBackendQuestions] = useState([])
+  const [keepScenes, setKeepScenes] = useState(true)          // 감점 장면 사진 저장 (환경 설정 화면에서 고름)
+  const [currentFeedback, setCurrentFeedback] = useState({ loading: false, score: null, feedback: null, tip: null, error: false })
+  const [followUpLoading, setFollowUpLoading] = useState(false)   // 방금 답변으로 꼬리 질문을 만드는 중 (약 2~3초)
+
+  // Audio Streaming 관련 Refs
+  const wsRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const token = useAuthStore((s) => s.token)
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const setupStartedRef = useRef(false)
+  // 영상 칸이 화면에 나타날 때 카메라를 붙인다 — 카메라는 '준비 완료' 직후(아직 환경 설정 화면)에 켜져서,
+  // 예전엔 붙일 칸이 없어 연결이 버려지고 면접 화면의 내 카메라가 검은 화면으로 남았다
+  const attachVideo = useCallback((el) => {
+    videoRef.current = el
+    if (el && streamRef.current && el.srcObject !== streamRef.current) el.srcObject = streamRef.current
+  }, [])
   const totalTimer = useRef(null)
   const answerTimer = useRef(null)
   const detectionRef = useRef(null)
-  const micAnalyserRef = useRef(null)
 
-  const questions = SAMPLE_QUESTIONS.slice(0, 5)
-  const currentQ = questions[qIndex]
 
-  // 카메라 + 마이크
+  // 카메라 프레임을 서버(MediaPipe)로 보내 자세 · 시선을 실제로 잰다 — 결과로 카메라 칸 표시도 바꾼다
+  const visionRecentRef = useRef([])
+  const serverVisionRef = useRef(false)      // 서버 결과가 오기 시작하면 브라우저 얼굴 인식(FaceDetector) 표시는 쓰지 않음
+  const [visionRecent, setVisionRecent] = useState([])    // 왼쪽 아래 '실시간 분석' — 최근 6장(약 3초)
+  const handleVisionResult = useCallback((r) => {
+    visionRecentRef.current = [...visionRecentRef.current.slice(-2), r]
+    const st = faceStatusFromResults(visionRecentRef.current)
+    if (st) { serverVisionRef.current = true; setFaceStatus(st) }
+    setVisionRecent((prev) => [...prev.slice(-5), r])
+  }, [])
+  useVisionStream({
+    interviewId: backendInterviewId,
+    videoRef,
+    active: phase === PHASE.QUESTION || phase === PHASE.ANSWERING,
+    onResult: handleVisionResult,
+    keepScenes,
+    questionOrder: backendQuestions[qIndex]?.order,
+  })
+
+  const currentQuestion = backendQuestions[qIndex]
+  const currentQ = currentQuestion?.question_text || ''
+
+  const { listening, interim, problem: sttProblem, toggle: toggleSTT, start: startSTT, stop: stopSTT, isSupported: sttSupported } =
+    useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
+
+  // 오디오 스트리밍 시작 (WebSocket 연결)
+  const startAudioStreaming = useCallback(() => {
+    if (!backendInterviewId) return
+    
+    const ws = new WebSocket(wsUrl(`/ws/interview_audio/${backendInterviewId}?token=${localStorage.getItem('token') || token}`))   // 자동 연장된 최신 토큰
+    wsRef.current = ws
+    // 답변마다 연결을 새로 여므로, 열리자마자 '이 녹음은 어느 질문의 답변인지' 알린다.
+    // (안 보내면 서버가 녹음을 첫 질문에 연결해 매 답변이 첫 질문 녹음을 덮어쓴다)
+    const questionId = currentQuestion?.id
+    ws.onopen = () => {
+      if (questionId) ws.send(JSON.stringify({ type: 'question', question_id: questionId }))
+    }
+
+    // 설정 화면에서 고른 마이크로 녹음한다 (예전엔 기본 마이크로 녹음해 고른 마이크와 다를 수 있었다)
+    navigator.mediaDevices.getUserMedia({ audio: recordingAudioConstraints(deviceIds.micId) }).then((stream) => {
+      // 마이크 허용을 기다리는 사이 답변이 끝났으면(연결이 이미 바뀜/닫힘) 녹음을 시작하지 않고 마이크를 놓는다
+      if (wsRef.current !== ws || ws.readyState > WebSocket.OPEN) {
+        stream.getTracks().forEach((t) => t.stop())
+        return
+      }
+      // 녹음은 연결이 열린 뒤에 시작한다 — 예전엔 연결 전에 시작해, 열리기 전에 나온 첫 조각(webm 머리말)이
+      // 버려지면 서버가 녹음 전체를 읽지 못해 음성 점수가 기본값으로 나왔다 (실전 면접 녹음과 같은 방식)
+      const startRecording = () => {
+        if (wsRef.current !== ws || ws.readyState !== WebSocket.OPEN) {
+          stream.getTracks().forEach((t) => t.stop())
+          return
+        }
+        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+        mediaRecorderRef.current = recorder
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data)
+        }
+        // 500ms 단위로 오디오 조각을 서버에 전송
+        recorder.start(500)
+      }
+      if (ws.readyState === WebSocket.OPEN) startRecording()
+      else {
+        ws.addEventListener('open', startRecording, { once: true })     // onopen(질문 표시 전송) 다음에 실행됨
+        // 열리기 전에 답변이 끝나 연결이 닫히면 마이크를 놓는다 (녹음 중 끊긴 경우도 녹음할 곳이 없으니 같이 멈춤)
+        ws.addEventListener('close', () => stream.getTracks().forEach((t) => t.stop()), { once: true })
+      }
+    })
+  }, [backendInterviewId, token, currentQuestion?.id, deviceIds.micId])
+
+  // 오디오 스트리밍 종료
+  const stopAudioStreaming = useCallback(() => {
+    const recorder = mediaRecorderRef.current
+    const ws = wsRef.current
+    mediaRecorderRef.current = null
+    wsRef.current = null
+    const closeWs = () => ws?.close()
+    if (recorder && recorder.state !== 'inactive') {
+      // stop() 뒤에 마지막 조각(dataavailable)이 한 번 더 오므로, 그걸 보낸 다음 연결을 닫는다
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) ws.send(e.data)
+      }
+      recorder.onstop = () => {
+        recorder.stream.getTracks().forEach((t) => t.stop())   // 답변이 끝나면 마이크를 놓는다
+        closeWs()
+      }
+      recorder.stop()
+    } else {
+      recorder?.stream.getTracks().forEach((t) => t.stop())
+      closeWs()
+    }
+  }, [])
+
   useEffect(() => {
+    if (phase === PHASE.ANSWERING) {
+      // 휴대폰 · 태블릿은 녹음하지 않는다 — 녹음이 마이크를 잡으면 음성 인식에 소리가 가지 않음 (services/websocket.js IS_MOBILE_DEVICE)
+      if (!IS_MOBILE_DEVICE) startAudioStreaming()
+      // 답변 시간이 되면 음성 입력을 자동으로 켠다 (예전엔 🎤 버튼을 눌러야 해서, 말만 하면 답변이 빈 칸으로 저장됐다)
+      if (sttSupported) startSTT()
+    } else {
+      stopSTT()
+      stopAudioStreaming()
+    }
+    return () => stopAudioStreaming()
+  }, [phase, stopSTT, startSTT, sttSupported, startAudioStreaming, stopAudioStreaming])
+
+  const handleSetupReady = useCallback(async ({ cameraId, micId, keepScenes: keep = true }) => {
+    // '준비 완료'를 여러 번 눌러도 면접은 한 번만 만든다 (질문 생성 5~7초 사이에 다시 눌러 면접이 두 개씩 생겼다 — 10/4 · 10/6)
+    if (setupStartedRef.current) return
+    setupStartedRef.current = true
+    setDeviceIds({ cameraId, micId })
+    setKeepScenes(keep)
+    setSessionStarted(true)
+    // 질문을 만드는 동안(5~7초) 면접 화면의 'AI 면접 준비 중...'을 보여 준다 (예전엔 환경 설정 화면에 표시 없이 멈춰 있었다)
+    setPhase(PHASE.WAITING)
+
+    const resumeText = resume ? [
+      resume.title         && `제목: ${resume.title}`,
+      resume.companyName   && `지원 회사: ${resume.companyName}`,
+      resume.jobTitle      && `지원 직무: ${resume.jobTitle}`,
+      resume.jobDescription && `직무 설명: ${resume.jobDescription}`,
+      resume.idealCandidate && `인재상: ${resume.idealCandidate}`,
+      // 자기소개서는 여러 줄이라 맨 끝에 둔다 — 서버가 '자기소개서:' 뒤 전체를 떼어 키워드 질문에 쓴다
+      resume.selfIntroduction && `자기소개서: ${resume.selfIntroduction}`,
+    ].filter(Boolean).join('\n') : ''
+
+    try {
+      const { data: interview } = await interviewAPI.create({
+        title: `${resume?.title || '연습'} 연습면접`,
+        category: 'general',
+        interview_type: 'practice',
+        resume_ref_id: resumeId,
+        resume_text: resumeText || undefined,
+      })
+      setBackendInterviewId(interview.id)
+      const { data: questions } = await interviewAPI.getQuestions(interview.id)
+      setBackendQuestions(questions)
+    } catch (err) {
+      console.error('면접 세션 생성 실패:', err)
+      setBackendQuestions(
+        FALLBACK_QUESTIONS.map((q, i) => ({ id: null, order: i + 1, question_text: q }))
+      )
+    }
+  }, [resume, resumeId])
+
+  useEffect(() => {
+    if (!sessionStarted) return
     setFaceStatus('detecting')
-    navigator.mediaDevices?.getUserMedia({ video: true, audio: false })
+
+    const camConstraints = {
+      video: deviceIds.cameraId ? { deviceId: { exact: deviceIds.cameraId } } : true,
+      audio: false,
+    }
+    const micConstraints = {
+      audio: deviceIds.micId ? { deviceId: { exact: deviceIds.micId } } : true,
+      video: false,
+    }
+
+    navigator.mediaDevices.getUserMedia(camConstraints)
       .then((s) => {
         streamRef.current = s
         if (videoRef.current) videoRef.current.srcObject = s
         if (typeof FaceDetector !== 'undefined') {
           const detector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 })
           detectionRef.current = setInterval(async () => {
-            if (!videoRef.current || videoRef.current.readyState < 2) return
+            if (serverVisionRef.current || !videoRef.current || videoRef.current.readyState < 2) return
             try {
               const faces = await detector.detect(videoRef.current)
               setFaceStatus(faces.length > 0 ? 'detected' : 'lost')
             } catch { setFaceStatus('detected') }
           }, 800)
         } else {
-          setTimeout(() => setFaceStatus('detected'), 1500)
+          // 얼굴 인식 기능(FaceDetector)이 없는 브라우저(대부분의 Chrome) — 확인 없이 '얼굴 인식됨'을 띄우던 것을 '카메라 연결됨'으로
+          setFaceStatus('camera')
         }
       })
-      .catch(() => setFaceStatus('lost'))
+      .catch(() => {
+        setFaceStatus('lost')
+        setDeviceError('camera')
+      })
 
-    navigator.mediaDevices?.getUserMedia({ audio: true, video: false })
-      .then((audioStream) => {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)()
-        if (ctx.state === 'suspended') ctx.resume()
-        const analyser = ctx.createAnalyser()
-        analyser.fftSize = 512
-        analyser.smoothingTimeConstant = 0.4
-        ctx.createMediaStreamSource(audioStream).connect(analyser)
-        micAnalyserRef.current = analyser
-        const data = new Uint8Array(analyser.frequencyBinCount)
-        const check = () => {
-          analyser.getByteFrequencyData(data)
-          const avg = data.slice(0, 60).reduce((a, b) => a + b, 0) / 60
-          setMicActive(avg > 30)
-          micAnalyserRef.requestId = requestAnimationFrame(check)
-        }
-        check()
+    // 마이크 권한 · 장치 확인만 하고 바로 놓는다 (예전엔 면접 내내 마이크를 잡고 있어 휴대폰에선 음성 인식을 막았다)
+    navigator.mediaDevices.getUserMedia(micConstraints)
+      .then((s) => s.getTracks().forEach((t) => t.stop()))
+      .catch(() => {
+        setDeviceError((prev) => prev === 'camera' ? 'both' : 'mic')
       })
-      .catch(() => {})
 
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
       clearInterval(detectionRef.current)
-      clearInterval(totalTimer.current)
-      clearInterval(answerTimer.current)
     }
-  }, [])
+  }, [sessionStarted]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 총 타이머
   useEffect(() => {
-    if (phase === PHASE.WAITING || phase === PHASE.DONE) return
+    if ([PHASE.WAITING, PHASE.DONE, PHASE.SETUP].includes(phase)) return
     totalTimer.current = setInterval(() => setTotalSec((p) => p + 1), 1000)
     return () => clearInterval(totalTimer.current)
   }, [phase])
 
-  // 답변 타이머
   useEffect(() => {
     clearInterval(answerTimer.current)
     if (phase === PHASE.ANSWERING) {
@@ -116,29 +283,87 @@ export default function PracticeInterviewPage() {
 
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
-  const submitAnswer = () => {
-    clearInterval(answerTimer.current)
-    const fb = SAMPLE_FEEDBACK[Math.floor(Math.random() * SAMPLE_FEEDBACK.length)]
-    setFeedback(fb)
-    setPhase(PHASE.FEEDBACK)
-  }
-
-  const nextQuestion = () => {
-    setLog((prev) => [...prev, { q: currentQ, a: answer, feedback }])
-    if (qIndex + 1 >= questions.length) {
-      addInterviewRecord(resumeId, { type: 'practice', duration: totalSec, questions: questions.map((q) => ({ question: q })) })
-      setPhase(PHASE.DONE)
-    } else {
-      setQIndex((p) => p + 1)
-      setAnswer('')
-      setPhase(PHASE.QUESTION)
+  const submitAnswer = async () => {
+    // 아직 확정되지 않은 음성 인식 중간 결과(interim)까지 답변에 포함한다 (말을 끝내자마자 누르면 마지막 문장이 빠졌다)
+    const capturedAnswer = [answer, interim].filter(Boolean).join(' ').trim()
+    if (!capturedAnswer && !window.confirm('답변이 비어 있습니다. 이대로 넘어가면 이 질문은 0점 처리됩니다.\n그래도 다음으로 넘어갈까요?')) {
+      return
     }
+    stopSTT()
+    clearInterval(answerTimer.current)
+
+    const capturedQId = currentQuestion?.id
+
+    // 1. 답변 저장
+    if (backendInterviewId && capturedQId) {
+      try {
+        await interviewAPI.submitAnswer(backendInterviewId, capturedQId, { answer_text: capturedAnswer })
+      } catch (err) {
+        console.error('답변 저장 실패:', err)
+      }
+    }
+
+    setLog((prev) => [...prev, { q: currentQ, a: capturedAnswer }])
+
+    // 2. 실시간 꼬리 질문 — 방금 답변을 보고 서버가 이어 물을 질문을 만들면 바로 다음 순서에 끼워 넣는다
+    //    (꼬리 질문에 대한 답변 · 짧은 답변은 요청하지 않음, 서버가 면접당 최대 2개로 제한)
+    let questionsNow = backendQuestions
+    if (backendInterviewId && capturedQId && currentQuestion?.follow_up_of == null && capturedAnswer.length >= FOLLOW_UP_MIN_ANSWER) {
+      setFollowUpLoading(true)
+      try {
+        const { data } = await interviewAPI.followUp(backendInterviewId, capturedQId, { answer_text: capturedAnswer })
+        if (data?.question) {
+          questionsNow = [...backendQuestions.slice(0, qIndex + 1), data.question, ...backendQuestions.slice(qIndex + 1)]
+          setBackendQuestions(questionsNow)
+        }
+      } catch (err) {
+        console.error('꼬리 질문 생성 실패 (원래 순서대로 진행):', err)
+      } finally {
+        setFollowUpLoading(false)
+      }
+    }
+
+    // 3. 마지막 질문이면 면접 종료 후 분석 결과 페이지로 이동
+    if (qIndex + 1 >= questionsNow.length) {
+      addInterviewRecord(resumeId, {
+        type: 'practice',
+        duration: totalSec,
+        interviewId: backendInterviewId,
+        questions: questionsNow.map((q) => ({ question: q.question_text })),
+      })
+      if (backendInterviewId) {
+        try {
+          await interviewAPI.finish(backendInterviewId)
+          await analysisAPI.start(backendInterviewId)
+          navigate(`/analysis/${backendInterviewId}`)
+        } catch (err) {
+          console.error('면접 종료/분석 시작 실패:', err)
+          setPhase(PHASE.DONE)
+        }
+      } else {
+        setPhase(PHASE.DONE)
+      }
+      return
+    }
+
+    // 4. 다음 질문(또는 방금 끼워 넣은 꼬리 질문)으로 이동
+    setQIndex((p) => p + 1)
+    setAnswer('')
+    setPhase(PHASE.QUESTION)
   }
 
   const handleExit = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
     navigate('/resume')
   }
+
+  if (phase === PHASE.SETUP && resumesReady) {
+    return <InterviewSetup resumeInfo={resume} onReady={handleSetupReady} />
+  }
+
+  if (!resume && !resumesReady) return (
+    <div style={{ padding: 40, textAlign: 'center', color: '#fff', background: '#0f1117', minHeight: '100vh' }}>자기소개서를 불러오는 중...</div>
+  )
 
   if (!resume) return (
     <div style={{ padding: 40, textAlign: 'center', color: '#fff', background: '#0f1117', minHeight: '100vh' }}>
@@ -150,7 +375,6 @@ export default function PracticeInterviewPage() {
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0a0d1a', display: 'flex', zIndex: 500, fontFamily: 'inherit' }}>
       <style>{`
-        /* 로그 패널 */
         .pi-log-panel { width:0; overflow:hidden; transition:width .25s; flex-shrink:0; background:#111422; }
         .pi-log-panel.open { width:270px; border-left:1px solid rgba(255,255,255,.07); }
         .pi-log-inner { width:270px; padding:16px; height:100%; overflow-y:auto; }
@@ -158,7 +382,6 @@ export default function PracticeInterviewPage() {
         .pi-log-q { color:#4f6ef7; font-weight:600; margin-bottom:5px; }
         .pi-log-a { color:rgba(255,255,255,.6); margin-bottom:5px; line-height:1.5; }
         .pi-log-f { color:#22c55e; line-height:1.5; }
-        /* 얼굴 인식 배지 */
         .face-badge { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:5px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:600; white-space:nowrap; backdrop-filter:blur(6px); }
         .face-badge.detecting { background:rgba(245,158,11,.85); color:#fff; }
         .face-badge.detected  { background:rgba(16,185,129,.85); color:#fff; }
@@ -169,20 +392,23 @@ export default function PracticeInterviewPage() {
         @keyframes fadeUpCenter { from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
         .fade-up-center { animation:fadeUpCenter .35s ease forwards; }
         .fade-up { animation:fadeUp .35s ease; }
+        @keyframes stt-pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+        .stt-active { animation:stt-pulse 1s infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .fb-spinner { width:18px; height:18px; border:2px solid rgba(255,255,255,.2); border-top-color:#22c55e; border-radius:50%; animation:spin .7s linear infinite; display:inline-block; }
       `}</style>
 
-      {/* ── 메인 영역 ───────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* 상단 바 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
+        {/* Top bar */}
+        <div className="iv-topbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
           <div>
             <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>🎓 연습 면접</span>
-            <span style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>{resume.companyName} · {resume.jobTitle}</span>
+            <span className="iv-sub" style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>{resume.companyName} · {resume.jobTitle}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {phase !== PHASE.WAITING && phase !== PHASE.DONE && (
-              <span style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>Q {qIndex + 1} / {questions.length}</span>
+              <span style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>Q {qIndex + 1} / {backendQuestions.length}</span>
             )}
             <button onClick={() => setLogOpen((p) => !p)} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, padding: '6px 14px', color: 'rgba(255,255,255,.6)', fontSize: 12, cursor: 'pointer' }}>
               📋 로그 {log.length > 0 ? `(${log.length})` : ''}
@@ -191,35 +417,126 @@ export default function PracticeInterviewPage() {
           </div>
         </div>
 
-        {/* 진행바 */}
+        {/* 장치 오류 배너 */}
+        {deviceError && (
+          <div style={{ background: '#450a0a', borderBottom: '1px solid rgba(239,68,68,.3)', padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            <span>⚠️</span>
+            <span style={{ fontSize: 13, color: '#fca5a5', flex: 1 }}>
+              {deviceError === 'camera' && '카메라에 연결하지 못했습니다. 면접 설정 화면에서 카메라 권한을 확인해 주세요.'}
+              {deviceError === 'mic' && '마이크에 연결하지 못했습니다. 음성 입력 대신 텍스트로 답변할 수 있습니다.'}
+              {deviceError === 'both' && '카메라와 마이크에 연결하지 못했습니다. 브라우저 권한 설정을 확인해 주세요.'}
+            </span>
+            <button onClick={() => setDeviceError(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.3)', cursor: 'pointer', fontSize: 16 }}>✕</button>
+          </div>
+        )}
+
+        {/* Progress bar */}
         <div style={{ height: 3, background: '#1a1d2e', flexShrink: 0 }}>
-          <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / questions.length) * 100}%`, transition: 'width .4s' }} />
+          <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${backendQuestions.length ? (qIndex / backendQuestions.length) * 100 : 0}%`, transition: 'width .4s' }} />
         </div>
 
-        {/* ── 메인 무대 (하나의 블록) ── */}
-        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-
-          {/* 배경 그라디언트 */}
+        {/* Stage */}
+        <div className="iv-stage" style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at 50% 40%, #1a2040 0%, #0a0d1a 70%)', pointerEvents: 'none' }} />
 
-          {/* ── 질문 텍스트 (AI 면접관 위) ── */}
-          {(phase === PHASE.QUESTION || phase === PHASE.ANSWERING || phase === PHASE.FEEDBACK) && (
-            <div key={qIndex} className="fade-up-center" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>Q{qIndex + 1} 질문</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '16px 24px', backdropFilter: 'blur(8px)' }}>
+          {/* Question */}
+          {[PHASE.QUESTION, PHASE.ANSWERING, PHASE.FEEDBACK].includes(phase) && (
+            <div key={qIndex} className="fade-up-center iv-q" style={{ position: 'absolute', top: '8%', left: '50%', width: '60%', maxWidth: 640, textAlign: 'center', zIndex: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: currentQuestion?.follow_up_of != null ? '#f59e0b' : '#4f6ef7', letterSpacing: '.08em', marginBottom: 8, textTransform: 'uppercase' }}>
+                {currentQuestion?.follow_up_of != null ? `Q${qIndex + 1} 꼬리 질문 · 방금 답변을 듣고 이어서 묻습니다` : `Q${qIndex + 1} 질문`}
+              </div>
+              <div className="iv-qtext" style={{ fontSize: phase === PHASE.FEEDBACK ? 16 : 20, fontWeight: 700, color: phase === PHASE.FEEDBACK ? 'rgba(255,255,255,.6)' : '#fff', lineHeight: 1.55, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 14, padding: '14px 24px', backdropFilter: 'blur(8px)' }}>
                 {currentQ}
               </div>
             </div>
           )}
 
-          {/* ── AI 면접관 (가운데 살짝 위) ── */}
-          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -54%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
-            <div style={{ width: 130, height: 130, borderRadius: '50%', background: 'linear-gradient(135deg,#4f6ef7,#10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 64, boxShadow: '0 0 48px rgba(79,110,247,.35)' }}>🤖</div>
-            <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(255,255,255,.4)', fontWeight: 500 }}>AI 면접관</div>
-          </div>
+          {/* AI Interviewer — 피드백 화면에서는 숨김 */}
+          {phase !== PHASE.FEEDBACK && (
+            <div className="iv-ai" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -54%)', display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5 }}>
+              <div style={{ width: 130, height: 130, borderRadius: '50%', background: 'linear-gradient(135deg,#4f6ef7,#10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 64, boxShadow: '0 0 48px rgba(79,110,247,.35)' }}>🤖</div>
+              <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(255,255,255,.4)', fontWeight: 500 }}>AI 면접관</div>
+            </div>
+          )}
 
-          {/* ── 타이머 (오른쪽 상단) ── */}
-          <div style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
+          {/* 중간 피드백 카드 */}
+          {phase === PHASE.FEEDBACK && (
+            <div key={`fb-${qIndex}`} className="fade-up-center iv-fb" style={{ position: 'absolute', top: '32%', left: '50%', width: '62%', maxWidth: 580, zIndex: 10 }}>
+              <div className="iv-fbcard" style={{ background: 'rgba(17,20,34,.97)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 18, padding: '28px 32px', backdropFilter: 'blur(16px)', boxShadow: '0 8px 40px rgba(0,0,0,.6)' }}>
+                {currentFeedback.loading ? (
+                  <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                    <div style={{ width: 36, height: 36, border: '3px solid rgba(255,255,255,.15)', borderTopColor: '#4f6ef7', borderRadius: '50%', animation: 'spin .7s linear infinite', margin: '0 auto 14px' }} />
+                    <div style={{ fontSize: 14, color: 'rgba(255,255,255,.45)' }}>답변을 분석하고 있습니다...</div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.3)', letterSpacing: '.08em', marginBottom: 14, textTransform: 'uppercase' }}>Q{qIndex + 1} 답변 분석</div>
+
+                    {currentFeedback.score !== null ? (
+                      <>
+                        {/* 점수 */}
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, marginBottom: 10 }}>
+                          <span style={{
+                            fontSize: 44, fontWeight: 800, lineHeight: 1,
+                            color: currentFeedback.score >= 80 ? '#22c55e' : currentFeedback.score >= 60 ? '#f59e0b' : '#ef4444',
+                          }}>{currentFeedback.score}</span>
+                          <span style={{ fontSize: 16, color: 'rgba(255,255,255,.4)', marginBottom: 6 }}>/ 100</span>
+                        </div>
+                        {/* 점수 바 */}
+                        <div style={{ height: 5, background: 'rgba(255,255,255,.08)', borderRadius: 3, marginBottom: 18, overflow: 'hidden' }}>
+                          <div style={{
+                            height: '100%',
+                            width: `${currentFeedback.score}%`,
+                            background: currentFeedback.score >= 80 ? '#22c55e' : currentFeedback.score >= 60 ? '#f59e0b' : '#ef4444',
+                            borderRadius: 3,
+                            transition: 'width .6s ease',
+                          }} />
+                        </div>
+                        {/* 피드백 텍스트 */}
+                        <div style={{ fontSize: 13, color: 'rgba(255,255,255,.75)', lineHeight: 1.75, whiteSpace: 'pre-line', background: 'rgba(255,255,255,.04)', borderRadius: 10, padding: '12px 16px', marginBottom: currentFeedback.tip ? 10 : 18 }}>
+                          {currentFeedback.feedback}
+                        </div>
+                        {/* 팁 */}
+                        {currentFeedback.tip && (
+                          <div style={{ fontSize: 12, color: '#6d85f8', fontStyle: 'italic', background: 'rgba(79,110,247,.1)', borderRadius: 8, padding: '8px 14px', marginBottom: 18 }}>
+                            💡 {currentFeedback.tip}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 14, color: 'rgba(255,255,255,.35)', textAlign: 'center', padding: '12px 0 20px' }}>
+                        {currentFeedback.error ? '분석 중 오류가 발생했습니다.' : '답변이 없어 분석을 건너뜁니다.'}
+                      </div>
+                    )}
+
+                    {/* 다음 질문 버튼 */}
+                    <button
+                      onClick={nextQuestion}
+                      style={{
+                        width: '100%',
+                        background: qIndex + 1 >= backendQuestions.length
+                          ? 'linear-gradient(135deg,#10b981,#059669)'
+                          : 'linear-gradient(135deg,#4f6ef7,#6d85f8)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 12,
+                        padding: '14px 0',
+                        fontSize: 15,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        letterSpacing: '.02em',
+                      }}
+                    >
+                      {qIndex + 1 >= backendQuestions.length ? '✅ 면접 완료' : '다음 질문 →'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Timer */}
+          <div className="iv-timer" style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
             <div style={{ background: 'rgba(17,20,34,.85)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 12, padding: '10px 16px', backdropFilter: 'blur(8px)', textAlign: 'center' }}>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginBottom: 2 }}>면접 시간</div>
               <div style={{ fontSize: 22, fontWeight: 700, color: '#fff', fontFamily: 'monospace' }}>{fmt(totalSec)}</div>
@@ -232,38 +549,40 @@ export default function PracticeInterviewPage() {
             </div>
           </div>
 
-          {/* ── 면접자 카메라 (오른쪽 하단) ── */}
-          <div style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 440, height: 320 }}>
-            <div style={{
-              width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative',
-              border: micActive ? '2.5px solid #22c55e' : '2px solid rgba(255,255,255,.12)',
-              boxShadow: micActive ? '0 0 16px rgba(34,197,94,.4)' : '0 4px 20px rgba(0,0,0,.5)',
-              transition: 'border-color .15s, box-shadow .15s',
-              background: '#111827',
-            }}>
-              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
+          {/* 실시간 분석 (MediaPipe 실측값) */}
+          <LiveVisionPanel recent={visionRecent} />
+
+          {/* Camera */}
+          <div className="iv-cam" style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
+            <div style={{ width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative', border: '2px solid rgba(255,255,255,.1)', boxShadow: '0 4px 20px rgba(0,0,0,.5)', background: '#111827' }}>
+              <video ref={attachVideo} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
-              {/* 얼굴 인식 배지 */}
               {faceStatus === 'detecting' && <div className="face-badge detecting"><span className="face-dot" />인식 중...</div>}
-              {faceStatus === 'detected'  && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
-              {faceStatus === 'lost'      && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
+              {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
+              {faceStatus === 'camera' && <div className="face-badge detected"><span className="face-dot" />카메라 연결됨</div>}
+              {faceStatus === 'lost' && <div className="face-badge lost"><span className="face-dot" />얼굴 없음</div>}
+              {faceStatus === 'away' && <div className="face-badge detecting"><span className="face-dot" />정면을 봐 주세요</div>}
             </div>
           </div>
 
-          {/* ── 하단 액션 패널 ── */}
-          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '58%', maxWidth: 620 }}>
+          {/* Bottom action panel */}
+          <div className="iv-actions" style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '55%', maxWidth: 600 }}>
 
-            {/* 대기 */}
             {phase === PHASE.WAITING && (
               <div className="fade-up" style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 15, color: 'rgba(255,255,255,.5)', marginBottom: 16 }}>총 {questions.length}개 질문이 준비되었습니다</div>
-                <button onClick={() => setPhase(PHASE.QUESTION)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 40px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
-                  면접 시작 →
-                </button>
+                {backendQuestions.length === 0 ? (
+                  <div style={{ fontSize: 14, color: 'rgba(255,255,255,.4)' }}>AI 면접 준비 중...</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 15, color: 'rgba(255,255,255,.5)', marginBottom: 16 }}>총 {backendQuestions.length}개 질문이 준비되었습니다</div>
+                    <button onClick={() => setPhase(PHASE.QUESTION)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 40px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
+                      면접 시작 →
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
-            {/* 질문 확인 */}
             {phase === PHASE.QUESTION && (
               <div className="fade-up" style={{ textAlign: 'center' }}>
                 <button onClick={() => setPhase(PHASE.ANSWERING)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '13px 40px', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
@@ -272,46 +591,52 @@ export default function PracticeInterviewPage() {
               </div>
             )}
 
-            {/* 답변 입력 */}
             {phase === PHASE.ANSWERING && (
               <div className="fade-up">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                  {sttSupported ? (
+                    <button
+                      onClick={toggleSTT}
+                      className={listening ? 'stt-active' : ''}
+                      style={{ background: listening ? 'rgba(239,68,68,.15)' : 'rgba(79,110,247,.12)', border: `1.5px solid ${listening ? '#ef4444' : 'rgba(79,110,247,.5)'}`, borderRadius: 8, padding: '7px 16px', color: listening ? '#ef4444' : '#6d85f8', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
+                      {listening ? '🔴 인식 중지' : '🎤 음성 입력'}
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,.25)' }}>이 브라우저는 음성 인식을 지원하지 않습니다</span>
+                  )}
+                  {listening && <span style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', fontStyle: 'italic' }}>말씀하세요...</span>}
+                  {sttProblem && <span role="status" style={{ fontSize: 12, color: '#fbbf24', lineHeight: 1.5, flexBasis: '100%' }}>⚠️ {STT_PROBLEM_TEXT[sttProblem]}</span>}
+                </div>
                 <textarea
                   value={answer}
                   onChange={(e) => setAnswer(e.target.value)}
-                  placeholder="답변을 입력하거나 말씀해 주세요..."
+                  placeholder={sttSupported ? '답변을 입력하거나 위 버튼으로 음성 입력하세요' : '답변을 입력하세요'}
                   autoFocus
                   style={{ width: '100%', background: 'rgba(17,20,34,.9)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 12, padding: '14px 16px', color: '#fff', fontSize: 14, resize: 'none', minHeight: 90, fontFamily: 'inherit', backdropFilter: 'blur(8px)', boxSizing: 'border-box' }}
                 />
+                {interim && (
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', fontStyle: 'italic', marginTop: 5, padding: '0 4px' }}>💬 {interim}</div>
+                )}
                 <div style={{ display: 'flex', gap: 10, marginTop: 10, justifyContent: 'center' }}>
-                  <button onClick={() => { setPhase(PHASE.QUESTION); setAnswer('') }} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>재시작</button>
-                  <button onClick={submitAnswer} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✅ 답변 완료</button>
-                </div>
-              </div>
-            )}
-
-            {/* 피드백 */}
-            {phase === PHASE.FEEDBACK && (
-              <div className="fade-up">
-                <div style={{ background: 'rgba(16,185,129,.12)', border: '1.5px solid rgba(34,197,94,.4)', borderRadius: 12, padding: '14px 18px', marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', marginBottom: 6 }}>💡 AI 피드백</div>
-                  <div style={{ fontSize: 14, color: 'rgba(255,255,255,.85)', lineHeight: 1.6 }}>{feedback}</div>
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <button onClick={nextQuestion} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
-                    {qIndex + 1 >= questions.length ? '🎉 면접 종료' : '다음 질문 →'}
+                  <button onClick={() => { stopSTT(); setPhase(PHASE.QUESTION); setAnswer('') }} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>재시작</button>
+                  <button onClick={submitAnswer} disabled={followUpLoading} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: followUpLoading ? 'wait' : 'pointer', opacity: followUpLoading ? 0.6 : 1 }}>
+                    {followUpLoading ? '🤔 답변을 살펴보는 중…' : qIndex + 1 >= backendQuestions.length ? '✅ 면접 종료' : '✅ 답변 완료'}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* 완료 */}
             {phase === PHASE.DONE && (
               <div className="fade-up" style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 42, marginBottom: 10 }}>🎉</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', marginBottom: 6 }}>면접 완료!</div>
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)', marginBottom: 20 }}>{questions.length}개 질문 · {fmt(totalSec)} 소요</div>
-                <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+                <div style={{ fontSize: 13, color: 'rgba(255,255,255,.4)', marginBottom: 20 }}>{backendQuestions.length}개 질문 · {fmt(totalSec)} 소요</div>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button onClick={handleExit} style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '10px 24px', color: 'rgba(255,255,255,.6)', fontSize: 14, cursor: 'pointer' }}>목록으로</button>
+                  {backendInterviewId && (
+                    <button onClick={() => navigate(`/interview/${backendInterviewId}/result`)} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>📊 AI 분석 보기</button>
+                  )}
                   <button onClick={() => { setPhase(PHASE.WAITING); setQIndex(0); setLog([]); setTotalSec(0) }} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>다시 시작</button>
                 </div>
               </div>
@@ -320,24 +645,55 @@ export default function PracticeInterviewPage() {
         </div>
       </div>
 
-      {/* ── 로그 패널 (오른쪽 날개) ── */}
-      <div className={`pi-log-panel${logOpen ? ' open' : ''}`}>
+      {/* Log panel */}
+      <div className={`pi-log-panel iv-log${logOpen ? ' open' : ''}`}>
         <div className="pi-log-inner">
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,.45)', marginBottom: 14 }}>📋 면접 로그</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'rgba(255,255,255,.45)' }}>📋 면접 로그</span>
+            {/* 휴대폰에선 로그가 화면을 덮어 위쪽 '로그' 버튼이 가려지므로 여기서 닫는다 */}
+            <button onClick={() => setLogOpen(false)} aria-label="로그 닫기" style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.45)', fontSize: 16, cursor: 'pointer', padding: '2px 6px' }}>✕</button>
+          </div>
           {log.length === 0
             ? <div style={{ fontSize: 13, color: 'rgba(255,255,255,.25)', textAlign: 'center', marginTop: 40 }}>아직 기록이 없습니다</div>
             : log.map((item, i) => (
               <div key={i} className="pi-log-item">
                 <div className="pi-log-q">Q{i + 1}. {item.q}</div>
                 <div className="pi-log-a">A: {item.a || '(없음)'}</div>
-                <div className="pi-log-f">💡 {item.feedback}</div>
+                {item.feedbackState === 'loading' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, color: 'rgba(255,255,255,.35)', fontSize: 12 }}>
+                    <span className="fb-spinner" /> 분석 중...
+                  </div>
+                )}
+                {item.feedbackState === 'done' && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{
+                      display: 'inline-block',
+                      padding: '2px 10px',
+                      borderRadius: 99,
+                      background: item.score >= 80 ? 'rgba(34,197,94,.2)' : item.score >= 60 ? 'rgba(245,158,11,.2)' : 'rgba(239,68,68,.2)',
+                      color: item.score >= 80 ? '#22c55e' : item.score >= 60 ? '#f59e0b' : '#ef4444',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      marginBottom: 6,
+                    }}>
+                      {item.score}점
+                    </div>
+                    <div className="pi-log-f" style={{ whiteSpace: 'pre-line', fontSize: 11 }}>{item.feedback}</div>
+                    {item.tip && (
+                      <div style={{ marginTop: 5, fontSize: 11, color: '#4f6ef7', fontStyle: 'italic' }}>💡 {item.tip}</div>
+                    )}
+                  </div>
+                )}
+                {item.feedbackState === 'error' && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(239,68,68,.5)' }}>분석 실패</div>
+                )}
               </div>
             ))
           }
         </div>
       </div>
 
-      {/* 나가기 확인 */}
+      {/* Exit confirm */}
       {exitConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 600 }}>
           <div style={{ background: '#111422', borderRadius: 14, padding: '28px 32px', minWidth: 300, textAlign: 'center', border: '1px solid rgba(255,255,255,.1)' }}>

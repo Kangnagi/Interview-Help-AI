@@ -36,8 +36,10 @@ export default function SettingsModal({ onClose }) {
 
   const handleDataDelete = () => {
     if (deleteInput !== '삭제') return toast.error('"삭제"를 입력해주세요')
+    // 이 브라우저에 남은 기록만 지운다 (자기소개서는 계정에 저장 — 목록 화면에서 하나씩 삭제)
     localStorage.removeItem('ai_interview_resumes')
-    toast.success('면접 데이터가 삭제되었습니다')
+    if (user?.id != null) localStorage.removeItem(`ai_interview_records_${user.id}`)
+    toast.success('이 브라우저의 면접 데이터가 삭제되었습니다')
     setDeleteType(null); setDeleteInput('')
   }
 
@@ -170,7 +172,8 @@ export default function SettingsModal({ onClose }) {
                 <div className="sm-section-title">🗂 면접 데이터 관리</div>
                 <div style={{ background: '#f9fafb', borderRadius: 10, padding: 16, marginBottom: 16, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
                   <b style={{ color: 'var(--text-primary)' }}>저장된 데이터 현황</b><br />
-                  자기소개서, 면접 기록 등이 로컬에 저장됩니다.
+                  자기소개서와 면접 기록 · 분석 결과는 계정에 저장되어 다른 PC에서 로그인해도 그대로 보입니다.<br />
+                  아래 초기화는 이 브라우저에 남은 간단한 기록만 지웁니다. 자기소개서 삭제는 '면접 시작' 목록에서 하세요.
                 </div>
                 <button className="sm-danger-btn" onClick={() => { setDeleteType('data'); setDeleteInput('') }}>
                   🗑 면접 데이터 초기화

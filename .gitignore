@@ -19,5 +19,62 @@ Thumbs.db
 
 # Logs
 *.log
-backend/interview.db 
+logs/
+# 로컬 실행 도구 (node, cloudflared) — scripts/start_all.ps1이 사용
+.tools/
+# 예전 파이썬 가상환경, 설계기획서 pptx 압축 해제본
+backend/.venv311/
+unpacked/
+backend/interview.db
+backend/interview.db-wal
+backend/interview.db-shm
+backend/interview.db.bak*
 
+# 사용자 업로드 데이터 (면접 녹화·음성 스펙트로그램) — 개인정보라 저장소에 올리지 않음
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# 실제 사용자 답변으로 만든 학습 데이터 — 개인정보라 저장소에 올리지 않음
+backend/training/data/score_dataset_from_db.jsonl
+backend/training/data/score_train.jsonl
+backend/training/data/score_eval.jsonl
+backend/training/data/real_answers_scored*
+# 바탕화면 llama-finetune 데이터에서 뽑은 실제 면접 답변 — 원문 재배포 조건 미확인이라 올리지 않음
+backend/training/data/real_pool.jsonl
+backend/training/data/score_teacher_real.jsonl
+backend/training/data/mix_*.jsonl
+backend/training/data/real_eval.jsonl
+# Claude 채점 데이터 · 사람 보정 점수 (같은 바탕화면 원문 포함)
+backend/training/data/claude_*
+backend/training/data/human_*
+# 질문 전용 학습 데이터 (꼬리 질문은 바탕화면 실제 면접 답변으로 만들어 재배포 불가)
+backend/training/data/qgen_*
+# 학습 산출물(어댑터 가중치)은 용량이 커서 제외
+backend/training/output/
+
+# Node.js
+node_modules/
+frontend/node_modules/
+
+# Vite cache
+frontend/.vite/
+**/.vite/
+
+backend/kobert/
+backend/ai_models/
+# 음성 점수 모델(best_model.pt) — 어댑터처럼 git 제외, 음성 담당에게 따로 받아 넣음
+backend/services/voice/ai_model/
+.venv/
+venv/
+kobert/
+env/
+.conda/
+conda_env/
+kobert_env
+**/kobert/
+# pyenv or unexpected home directories
+.pyenv/
+$HOME/
+# Environment variables
+# 프런트엔드 운영 빌드 결과 (npm run serve가 매번 다시 만든다)
+frontend/dist/

@@ -1,40 +1,57 @@
-import { useState } from 'react'
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { useAuthStore } from '@/store/authStore'
-import SettingsModal from '@/components/Common/SettingsModal'
-import toast from 'react-hot-toast'
+import { useEffect, useState } from 'react'                   // 모달 상태 관리, 관리자 여부 조회
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'   // 라우팅
+import { useAuthStore } from '@/store/authStore'                 // 사용자 정보 및 로그아웃
+import SettingsModal from '@/components/Common/SettingsModal'     // 설정 모달 (미구현?)
+import toast from 'react-hot-toast'                              // 토스트 알림
+import { adminAPI } from '@/services/adminAPI'                   // 관리자 여부 확인 (관리자 메뉴 표시용)
 
+// 사이드바 네비게이션 메뉴
 const NAV_ITEMS = [
   { to: '/dashboard', icon: '🏠', label: '대시보드' },
   { to: '/resume',    icon: '📄', label: '면접 시작' },
   { to: '/history',   icon: '📋', label: '면접 이력' },
+  { to: '/score-guide', icon: '📏', label: '점수 기준표' },
 ]
 
 export default function Layout() {
-  const { user, logout } = useAuthStore()
-  const navigate = useNavigate()
-  const [showSettings, setShowSettings] = useState(false)
+  const { user, logout } = useAuthStore()                        // 사용자 정보 및 로그아웃 함수
+  const navigate = useNavigate()                                 // 페이지 네비게이션
+  const [showSettings, setShowSettings] = useState(false)        // 설정 모달 표시 여부
+  const [isAdmin, setIsAdmin] = useState(false)                  // 관리자면 '관리자 검토' 메뉴 표시
+  // 휴대폰 · 태블릿(폭 900px 이하)에선 사이드바를 숨겨 두고 머리글의 ☰ 버튼으로 연다 (global.css)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const { pathname } = useLocation()
+
+  useEffect(() => {
+    adminAPI.me().then((r) => setIsAdmin(r.data.is_admin)).catch(() => setIsAdmin(false))
+  }, [user?.email])
+
+  useEffect(() => { setMenuOpen(false) }, [pathname])            // 메뉴에서 페이지를 고르면 닫음
+
+  const navItems = isAdmin ? [...NAV_ITEMS, { to: '/admin/review', icon: '🛠️', label: '관리자 검토' }] : NAV_ITEMS
 
   const handleLogout = () => {
-    logout()
+    logout()                                                     // 로그아웃 처리 (토큰/사용자 정보 삭제)
     toast.success('로그아웃 되었습니다')
-    navigate('/login')
+    navigate('/login')                                           // 로그인 페이지로 이동
   }
 
   return (
     <div className="layout">
-      <aside className="layout__sidebar">
+      {/* 사이드바 — 로고, 네비게이션, 사용자 정보 */}
+      <aside className={`layout__sidebar${menuOpen ? ' open' : ''}`}>
         <div className="sidebar__logo">
-          <h1>AI <span>면접</span> 도우미</h1>
+          <h1>내일의 <span>면접</span></h1>
           <p style={{ color: 'rgba(255,255,255,.4)', fontSize: 12, marginTop: 4 }}>v0.1.0 · 개발 환경</p>
         </div>
 
+        {/* 네비게이션 메뉴 */}
         <nav className="sidebar__nav">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
-              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}  // 현재 페이지면 active 클래스 추가
             >
               <span className="icon">{item.icon}</span>
               {item.label}
@@ -42,6 +59,7 @@ export default function Layout() {
           ))}
         </nav>
 
+        {/* 사용자 정보 및 로그아웃 */}
         <div style={{ marginTop: 'auto', padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
           <button
             onClick={() => setShowSettings(true)}
@@ -60,17 +78,22 @@ export default function Layout() {
           </button>
         </div>
       </aside>
+      {menuOpen && <div className="layout__backdrop" onClick={() => setMenuOpen(false)} />}
 
+      {/* 메인 콘텐츠 영역 */}
       <main className="layout__main">
         <header className="layout__header">
-          <h2 style={{ fontSize: 16, fontWeight: 600 }}>AI 면접 도우미</h2>
+          <button className="layout__menu-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="메뉴 열기" aria-expanded={menuOpen}>☰</button>
+          <h2 style={{ fontSize: 16, fontWeight: 600 }}>내일의 면접</h2>
         </header>
         <div className="layout__content">
-          <Outlet />
+          <Outlet />                                              {/* 현재 라우트의 페이지 컴포넌트 렌더링 */}
         </div>
       </main>
 
+      {/* 설정 모달 */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   )
 }
+
