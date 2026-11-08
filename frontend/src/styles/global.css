@@ -89,6 +89,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--border-focus); }
   border: 1px solid var(--border);
   padding: 24px;
 }
+.ap-radar .recharts-surface { overflow: visible; }   /* 분석 결과 레이더 — 긴 항목 이름이 그림 밖 여백까지 그려지게 */
 
 .badge {
   display: inline-block;
