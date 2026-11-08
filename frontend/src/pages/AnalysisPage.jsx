@@ -113,8 +113,9 @@ export default function AnalysisPage() {
         {/* 레이더 차트 */}
         <div className="card ap-radar" style={{ paddingLeft: 10, paddingRight: 10 }}>   {/* 좁은 칸(태블릿)에서도 항목 이름이 잘리지 않게 좌우 여백을 줄임 */}
           <h3 style={{ fontWeight: 600, fontSize: 14, marginBottom: 16, paddingLeft: 14 }}>영역별 점수</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <RadarChart data={radarData} outerRadius="55%">
+          {/* 좌우 여백(margin)만 비워 두고 남은 칸을 그래프로 꽉 채움 — 칸 폭에 따라 크기가 저절로 맞춰져 태블릿에서도 이름이 잘리지 않음 */}
+          <ResponsiveContainer width="100%" height={320}>
+            <RadarChart data={radarData} outerRadius="100%" margin={{ top: 24, right: 50, bottom: 24, left: 50 }}>
               <PolarGrid />
               <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} />
               <Radar name="점수" dataKey="score" stroke="#4F6EF7" fill="#4F6EF7" fillOpacity={0.25} />
