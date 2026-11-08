@@ -17,10 +17,22 @@ const FALLBACK_QUESTIONS = [
 ]
 const Q_LIMIT = 120
 
+// 면접 체험 (10/28) — 자기소개서 없이 질문 3개, 시간 제한 없음(11/1 사용자 요청 — 답변 시간은 위로 세기만 한다).
+// 1번 자기소개, 2 · 3번은 서버가 앞 답변을 듣고 만든 꼬리 질문(못 만들면 쉬운 성격 · 가치관 질문)
+// — routers/interview.py TRIAL_*. 분석 결과는 실전 면접과 같다.
+const TRIAL_QUESTION_COUNT = 3
+const TRIAL_INFO = { companyName: '면접 체험', jobTitle: '자기소개 + 꼬리 질문 · 3문항' }   // 환경 설정 화면 머리글
+const TRIAL_FALLBACK_QUESTIONS = [   // 서버에 연결하지 못했을 때만
+  '간단한 자기소개 부탁드립니다.',
+  '본인의 성격 중 가장 큰 장점은 무엇이고, 그 장점이 드러났던 순간을 말씀해 주세요.',
+  '평소 가장 중요하게 생각하는 가치는 무엇이고, 그렇게 생각하게 된 계기는 무엇인가요?',
+]
+
 // 이보다 짧은 답변은 꼬리 질문을 요청하지 않는다 (서버 FOLLOW_UP_MIN_ANSWER와 같게)
 const FOLLOW_UP_MIN_ANSWER = 40
 
-export default function RealInterviewPage() {
+export default function RealInterviewPage({ trial = false }) {
+  const qLimit = trial ? null : Q_LIMIT   // 체험은 시간 제한 없음 — remaining이 '지금까지 답변한 시간'(위로 셈)
   const navigate = useNavigate()
   const { resumeId } = useParams()
   const resume = useResumeStore((s) => s.getResume(resumeId))
@@ -31,7 +43,7 @@ export default function RealInterviewPage() {
   const [deviceIds, setDeviceIds] = useState({ cameraId: '', micId: '' })
   const [sessionStarted, setSessionStarted] = useState(false)
   const [qIndex, setQIndex] = useState(0)
-  const [remaining, setRemaining] = useState(Q_LIMIT)
+  const [remaining, setRemaining] = useState(qLimit ?? 0)
   const [answer, setAnswer] = useState('')
   const [answers, setAnswers] = useState([])
   const [totalSec, setTotalSec] = useState(0)
@@ -75,13 +87,15 @@ export default function RealInterviewPage() {
 
   const activeQuestions = backendQuestions.length > 0
     ? backendQuestions.map((q) => q.question_text)
-    : FALLBACK_QUESTIONS
+    : (trial ? TRIAL_FALLBACK_QUESTIONS : FALLBACK_QUESTIONS)
+  // 체험은 꼬리 질문이 하나씩 생기므로 처음부터 '총 3문항'으로 보여 준다
+  const totalCount = trial ? TRIAL_QUESTION_COUNT : activeQuestions.length
   const currentQ = activeQuestions[qIndex]
   const isFollowUp = backendQuestions[qIndex]?.follow_up_of != null
 
-  const pct = Math.round(((Q_LIMIT - remaining) / Q_LIMIT) * 100)
+  const pct = qLimit ? Math.round(((qLimit - remaining) / qLimit) * 100) : 0
   const r = 44, circ = 2 * Math.PI * r
-  const timerColor = remaining > 60 ? '#10b981' : remaining > 30 ? '#f59e0b' : '#ef4444'
+  const timerColor = remaining > qLimit / 2 ? '#10b981' : remaining > qLimit / 4 ? '#f59e0b' : '#ef4444'
 
   const { listening, interim, problem: sttProblem, toggle: toggleSTT, stop: stopSTT, isSupported: sttSupported } =
     useSpeechRecognition({ onFinal: (t) => setAnswer((prev) => prev + t) })
@@ -163,25 +177,27 @@ export default function RealInterviewPage() {
     ].filter(Boolean).join('\n') : ''
 
     try {
-      const { data: interview } = await interviewAPI.create({
-        title: `${resume?.title || '실전'} 실전면접`,
-        category: 'general',
-        interview_type: 'real',
-        resume_ref_id: resumeId,
-        resume_text: resumeText || undefined,
-      })
+      const { data: interview } = await interviewAPI.create(trial
+        ? { title: '면접 체험', category: 'general', interview_type: 'trial' }
+        : {
+            title: `${resume?.title || '실전'} 실전면접`,
+            category: 'general',
+            interview_type: 'real',
+            resume_ref_id: resumeId,
+            resume_text: resumeText || undefined,
+          })
       setBackendInterviewId(interview.id)
       const { data: questions } = await interviewAPI.getQuestions(interview.id)
       setBackendQuestions(questions)
     } catch (err) {
       console.error('면접 세션 생성 실패:', err)
       setBackendQuestions(
-        FALLBACK_QUESTIONS.map((q, i) => ({ id: null, order: i + 1, question_text: q }))
+        (trial ? TRIAL_FALLBACK_QUESTIONS : FALLBACK_QUESTIONS).map((q, i) => ({ id: null, order: i + 1, question_text: q }))
       )
     }
 
     setPhase('intro')
-  }, [resume, resumeId])
+  }, [resume, resumeId, trial])
 
   useEffect(() => {
     if (!sessionStarted) return
@@ -261,14 +277,19 @@ export default function RealInterviewPage() {
 
   const startQTimer = useCallback(() => {
     clearInterval(timerRef.current)
-    setRemaining(Q_LIMIT)
+    if (!qLimit) {   // 체험: 자동으로 넘어가지 않고 답변한 시간만 센다
+      setRemaining(0)
+      timerRef.current = setInterval(() => setRemaining((p) => p + 1), 1000)
+      return
+    }
+    setRemaining(qLimit)
     timerRef.current = setInterval(() => {
       setRemaining((p) => {
         if (p <= 1) { clearInterval(timerRef.current); handleNextRef.current?.(); return 0 }
         return p - 1
       })
     }, 1000)
-  }, [])
+  }, [qLimit])
 
   const handleNext = useCallback(async () => {
     stopSTT()
@@ -284,7 +305,11 @@ export default function RealInterviewPage() {
     // 실시간 꼬리 질문 — 방금 답변을 보고 서버가 이어 물을 질문을 만들면 바로 다음 순서에 끼워 넣는다
     // (꼬리 질문에 대한 답변 · 짧은 답변은 요청하지 않음, 서버가 면접당 최대 2개로 제한)
     let questionsNow = backendQuestions
-    if (backendInterviewId && currentBackendQ?.id && currentBackendQ.follow_up_of == null && currentAnswer.length >= FOLLOW_UP_MIN_ANSWER) {
+    // 체험: 3번까지는 답변 길이와 상관없이 다음 질문을 요청 (서버가 꼬리 질문을 못 만들면 쉬운 질문으로 채움)
+    const wantNext = trial
+      ? qIndex + 1 < TRIAL_QUESTION_COUNT && qIndex + 1 >= backendQuestions.length
+      : currentBackendQ?.follow_up_of == null && currentAnswer.length >= FOLLOW_UP_MIN_ANSWER
+    if (backendInterviewId && currentBackendQ?.id && wantNext) {
       setFollowUpLoading(true)
       try {
         const { data } = await interviewAPI.followUp(backendInterviewId, currentBackendQ.id, { answer_text: currentAnswer })
@@ -299,6 +324,7 @@ export default function RealInterviewPage() {
       }
     }
     const isLast = qIndex + 1 >= (questionsNow.length > 0 ? questionsNow.length : activeQuestions.length)
+      || (trial && qIndex + 1 >= TRIAL_QUESTION_COUNT)
 
     if (isLast) {
       clearInterval(totalRef.current)
@@ -313,7 +339,7 @@ export default function RealInterviewPage() {
         try {
           await interviewAPI.finish(backendInterviewId)
           await analysisAPI.start(backendInterviewId)
-          addInterviewRecord(resumeId, {
+          if (!trial) addInterviewRecord(resumeId, {
             type: 'real',
             duration: totalSec,
             questions: currentAnswers,
@@ -322,11 +348,11 @@ export default function RealInterviewPage() {
           navigate(`/analysis/${backendInterviewId}`)
         } catch (err) {
           console.error('분석 시작 실패:', err)
-          addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: currentAnswers })
+          if (!trial) addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: currentAnswers })
           setPhase('result')
         }
       } else {
-        addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: currentAnswers })
+        if (!trial) addInterviewRecord(resumeId, { type: 'real', duration: totalSec, questions: currentAnswers })
         setPhase('result')
       }
       return
@@ -338,7 +364,7 @@ export default function RealInterviewPage() {
     }
     setQIndex((p) => p + 1)
     startQTimer()
-  }, [qIndex, answers, currentQ, answer, interim, activeQuestions.length, backendInterviewId, backendQuestions, resumeId, addInterviewRecord, navigate, stopSTT, totalSec, startQTimer, stopAudioRecording])
+  }, [qIndex, answers, currentQ, answer, interim, activeQuestions.length, backendInterviewId, backendQuestions, resumeId, addInterviewRecord, navigate, stopSTT, totalSec, startQTimer, stopAudioRecording, trial])
 
   handleNextRef.current = handleNext
 
@@ -347,10 +373,9 @@ export default function RealInterviewPage() {
     if (!backendInterviewId) {
       setIsCreating(true)
       try {
-        const { data: interviewData } = await interviewAPI.create({
-          title: resume?.title || '실전 면접',
-          category: 'general',
-        })
+        const { data: interviewData } = await interviewAPI.create(trial
+          ? { title: '면접 체험', category: 'general', interview_type: 'trial' }
+          : { title: resume?.title || '실전 면접', category: 'general' })
         setBackendInterviewId(interviewData.id)
         const { data: questions } = await interviewAPI.getQuestions(interviewData.id)
         setBackendQuestions(questions)
@@ -369,18 +394,18 @@ export default function RealInterviewPage() {
 
   const handleExit = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
-    navigate('/resume')
+    navigate(trial ? '/dashboard' : '/resume')
   }
 
-  if (phase === 'setup' && resumesReady) {
-    return <InterviewSetup resumeInfo={resume} onReady={handleSetupReady} />
+  if (phase === 'setup' && (resumesReady || trial)) {
+    return <InterviewSetup resumeInfo={trial ? TRIAL_INFO : resume} onReady={handleSetupReady} />
   }
 
-  if (!resume && !resumesReady) return (
+  if (!trial && !resume && !resumesReady) return (
     <div style={{ padding: 40, textAlign: 'center', color: '#fff', background: '#0a0d1a', minHeight: '100vh' }}>자기소개서를 불러오는 중...</div>
   )
 
-  if (!resume) return (
+  if (!trial && !resume) return (
     <div style={{ padding: 40, textAlign: 'center', color: '#fff', background: '#0a0d1a', minHeight: '100vh' }}>
       자기소개서를 찾을 수 없습니다.
       <button onClick={() => navigate('/resume')} style={{ marginLeft: 12, padding: '8px 16px', background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>목록으로</button>
@@ -410,12 +435,14 @@ export default function RealInterviewPage() {
       {/* Top bar */}
       <div className="iv-topbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', background: '#111422', borderBottom: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
         <div>
-          <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>🎯 실전 면접</span>
-          <span className="iv-sub" style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>{resume.companyName} · {resume.jobTitle}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>{trial ? '⚡ 면접 체험' : '🎯 실전 면접'}</span>
+          <span className="iv-sub" style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 12 }}>
+            {trial ? TRIAL_INFO.jobTitle : `${resume.companyName} · ${resume.jobTitle}`}
+          </span>
         </div>
         {phase === 'interview' && (
           <span style={{ fontSize: 13, color: 'rgba(255,255,255,.4)' }}>
-            Q {qIndex + 1} / {activeQuestions.length} &nbsp;·&nbsp; 총 {fmt(totalSec)}
+            Q {qIndex + 1} / {totalCount} &nbsp;·&nbsp; 총 {fmt(totalSec)}
           </span>
         )}
         <button onClick={() => setExitConfirm(true)} style={{ background: '#ef4444', border: 'none', borderRadius: 8, padding: '6px 16px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>나가기</button>
@@ -437,22 +464,26 @@ export default function RealInterviewPage() {
       {/* Progress bar */}
       {phase === 'interview' && (
         <div style={{ height: 3, background: '#1a1d2e', flexShrink: 0 }}>
-          <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / activeQuestions.length) * 100}%`, transition: 'width .4s' }} />
+          <div style={{ height: '100%', background: 'linear-gradient(90deg,#4f6ef7,#10b981)', width: `${(qIndex / totalCount) * 100}%`, transition: 'width .4s' }} />
         </div>
       )}
 
       {/* Intro */}
       {phase === 'intro' && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 20, padding: '0 16px' }}>
-          <div style={{ fontSize: 56 }}>🎯</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: '#fff' }}>실전 면접 안내</div>
+          <div style={{ fontSize: 56 }}>{trial ? '⚡' : '🎯'}</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#fff' }}>{trial ? '면접 체험 안내' : '실전 면접 안내'}</div>
           <div style={{ fontSize: 14, color: 'rgba(255,255,255,.5)', lineHeight: 1.9, textAlign: 'center' }}>
-            각 질문당 <b style={{ color: '#fff' }}>{Q_LIMIT}초</b>의 답변 시간이 주어집니다.<br />
-            시간이 지나면 자동으로 다음 질문으로 넘어갑니다.<br />
-            총 <b style={{ color: '#fff' }}>{activeQuestions.length}개</b>의 질문이 준비되어 있습니다.
+            {trial ? <>자기소개서 없이 <b style={{ color: '#fff' }}>질문 3개</b>로 끝나는 짧은 면접입니다.<br />
+              첫 질문은 자기소개, 다음 질문은 방금 한 답변을 듣고 이어서 묻습니다.<br />
+              <b style={{ color: '#fff' }}>시간 제한이 없으니</b> 편하게 답하고 '다음 질문'을 눌러 주세요.<br /></>
+              : <>각 질문당 <b style={{ color: '#fff' }}>{qLimit}초</b>의 답변 시간이 주어집니다.<br />
+              시간이 지나면 자동으로 다음 질문으로 넘어갑니다.<br /></>}
+            총 <b style={{ color: '#fff' }}>{totalCount}개</b>의 질문{trial ? '을 묻습니다' : '이 준비되어 있습니다'}.<br />
+            {trial && '끝나면 연습 · 실전 면접과 같은 분석 결과를 볼 수 있습니다.'}
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
-            <button onClick={() => navigate('/resume')} style={{ background: 'transparent', color: 'rgba(255,255,255,.5)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '12px 24px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
+            <button onClick={() => navigate(trial ? '/dashboard' : '/resume')} style={{ background: 'transparent', color: 'rgba(255,255,255,.5)', border: '1.5px solid rgba(255,255,255,.15)', borderRadius: 10, padding: '12px 24px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>취소</button>
             <button
               onClick={handleStart}
               disabled={isCreating}
@@ -485,7 +516,19 @@ export default function RealInterviewPage() {
             <div style={{ marginTop: 12, fontSize: 13, color: 'rgba(255,255,255,.4)', fontWeight: 500 }}>AI 면접관</div>
           </div>
 
+          {/* 체험: 시간 제한 없이 답변 시간 · 총 시간만 */}
+          {trial && (
+            <div className="iv-timer" style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
+              <div style={{ background: 'rgba(17,20,34,.85)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 12, padding: '10px 16px', backdropFilter: 'blur(8px)', textAlign: 'center' }}>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginBottom: 2 }}>답변 시간 · 제한 없음</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: '#10b981', fontFamily: 'monospace' }}>{fmt(remaining)}</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,.3)', marginTop: 2 }}>총 {fmt(totalSec)}</div>
+              </div>
+            </div>
+          )}
+
           {/* Circular timer */}
+          {!trial && (
           <div className="iv-timer iv-timer-ring" style={{ position: 'absolute', top: 20, right: 20, zIndex: 10 }}>
             <div style={{ background: 'rgba(17,20,34,.85)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 14, padding: '12px 14px', backdropFilter: 'blur(8px)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)' }}>답변 시간</div>
@@ -506,6 +549,7 @@ export default function RealInterviewPage() {
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.3)' }}>총 {fmt(totalSec)}</div>
             </div>
           </div>
+          )}
 
           {/* 실시간 분석 (MediaPipe 실측값) */}
           <LiveVisionPanel recent={visionRecent} />
@@ -557,7 +601,7 @@ export default function RealInterviewPage() {
               )}
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
                 <button onClick={handleNext} disabled={followUpLoading} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '11px 32px', fontSize: 14, fontWeight: 700, cursor: followUpLoading ? 'wait' : 'pointer', fontFamily: 'inherit', opacity: followUpLoading ? 0.6 : 1 }}>
-                  {followUpLoading ? '🤔 답변을 살펴보는 중…' : qIndex + 1 >= activeQuestions.length ? '면접 종료 →' : '다음 질문 →'}
+                  {followUpLoading ? '🤔 답변을 살펴보는 중…' : qIndex + 1 >= totalCount ? '면접 종료 →' : '다음 질문 →'}
                 </button>
               </div>
             </div>
@@ -586,7 +630,7 @@ export default function RealInterviewPage() {
               {backendInterviewId && (
                 <button onClick={() => navigate(`/interview/${backendInterviewId}/result`)} style={{ background: '#10b981', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>📊 AI 분석 보기</button>
               )}
-              <button onClick={() => navigate(`/resume/${resumeId}/history`)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>기록 보기</button>
+              {!trial && <button onClick={() => navigate(`/resume/${resumeId}/history`)} style={{ background: '#4f6ef7', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>기록 보기</button>}
             </div>
           </div>
         </div>

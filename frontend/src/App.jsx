@@ -41,6 +41,7 @@ export default function App() {
       {/* 풀스크린 면접 라우트 (Layout 밖 — 사이드바/헤더 없음) */}
       <Route path="/interview/practice/:resumeId" element={<PrivateRoute><PracticeInterviewPage /></PrivateRoute>} />
       <Route path="/interview/real/:resumeId"     element={<PrivateRoute><RealInterviewPage /></PrivateRoute>} />
+      <Route path="/interview/trial"              element={<PrivateRoute><RealInterviewPage trial /></PrivateRoute>} />   {/* 면접 체험 — 자기소개서 없이 3문항 */}
 
       {/* 인증 필요 라우트 (Layout 안에 중첩) */}
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>

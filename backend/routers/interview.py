@@ -1,4 +1,5 @@
 import json
+import re
 import logging
 import os
 from datetime import datetime
@@ -28,6 +29,22 @@ FIXED_QUESTIONS = [
     "해당 직무(또는 회사)에 지원하게 된 동기가 무엇인가요?",
 ]
 AI_QUESTIONS_PER_INTERVIEW = 3   # 고정 질문 뒤에 붙는 AI(또는 직무 기본) 질문 수
+
+# ── 면접 체험 (interview_type='trial', 10/28) ────────────────────────────────
+# 경진대회에서 "연습 · 실전은 오래 걸리고 질문이 어렵다"는 평 → 자기소개서 없이 짧게: 질문 3개, 질문당 60초(화면).
+# 1번 자기소개 → 2번은 자기소개 답변의 꼬리 질문 → 3번은 2번 답변의 꼬리 질문. 직무가 아니라 성격 · 가치관 쪽.
+# 꼬리 질문을 못 만들면(답변이 짧음 · 모델 실패 · 민감한 이야기) 아래 쉬운 질문으로 채워 항상 3개가 되게 한다.
+# 분석 결과는 다른 면접과 같다.
+TRIAL_QUESTION_COUNT = 3
+TRIAL_FIRST_QUESTION = "간단한 자기소개 부탁드립니다."
+TRIAL_BACKUP_QUESTIONS = [
+    "본인의 성격 중 가장 큰 장점은 무엇이고, 그 장점이 드러났던 순간을 말씀해 주세요.",
+    "평소 가장 중요하게 생각하는 가치는 무엇이고, 그렇게 생각하게 된 계기는 무엇인가요?",
+    "주변 사람들은 본인을 어떤 사람이라고 말하나요? 그렇게 말하는 이유도 함께 말씀해 주세요.",
+    "최근에 가장 뿌듯했던 일은 무엇이었고, 왜 뿌듯했나요?",
+]
+INTERVIEW_TYPES = {"practice", "real", "trial"}
+_TRIAL_JOB_WORDS = re.compile(r"지원하신|지원한|직무|입사|회사|업무|실무|채용")   # 체험(직무 없음)에 맞지 않는 말
 # 질문 만드는 방식이 바뀌면 올린다 — 버전이 다른 캐시는 버리고 새로 만든다
 # (2: 10/6 직무 설명 여러 줄 · [제목] 처리 — 예전 캐시엔 "'[지원 직무 이해]' 업무" 질문이 남아 있었다)
 QUESTION_POOL_VERSION = 2
@@ -63,8 +80,11 @@ async def create_interview(
 ):
     # 1. 질문 먼저 준비 — Llama 생성(수 초~십수 초) 동안 DB 쓰기 잠금을 잡고 있지 않도록 면접 레코드보다 먼저 만든다
     #    (SQLite는 쓰기 잠금이 DB 전체 하나라, 예전처럼 flush 후 생성하면 그동안 다른 사용자의 저장이 막혔다)
+    interview_type = body.interview_type if body.interview_type in INTERVIEW_TYPES else "practice"
     resume_text = body.resume_text or ""
     selected_ai = []
+    if interview_type == "trial":
+        return await _create_trial_interview(body, user_id, db)
     try:
         resume_hash = hashlib.sha256(resume_text.encode('utf-8')).hexdigest() if resume_text else ""
         cache_entry = _question_cache.get(resume_hash) if resume_hash else None
@@ -122,6 +142,7 @@ async def create_interview(
         user_id=user_id,
         title=body.title,
         category=body.category,
+        interview_type=interview_type,   # 예전엔 저장하지 않아 이력에서 실전 면접도 '연습 면접'으로 보였다
     )
     db.add(interview)
     await db.flush()  # ID 생성을 위해 flush
@@ -243,6 +264,54 @@ async def submit_answer(
     return {"message": "답변이 저장되었습니다"}
 
 
+async def _create_trial_interview(body, user_id: int, db: AsyncSession) -> Interview:
+    """면접 체험 — 자기소개 질문 하나로 시작한다 (2 · 3번은 답변을 듣고 follow-up에서 만든다)."""
+    interview = Interview(user_id=user_id, title=body.title or "면접 체험", category=body.category, interview_type="trial")
+    db.add(interview)
+    await db.flush()
+    db.add(InterviewQuestion(interview_id=interview.id, order=1, question_text=TRIAL_FIRST_QUESTION))
+    interview.total_questions = 1
+    await db.commit()
+    await db.refresh(interview)
+    return interview
+
+
+async def _trial_next_question(db: AsyncSession, interview: Interview, question: InterviewQuestion, body) -> dict:
+    """면접 체험의 다음 질문 — 방금 답변의 꼬리 질문, 못 만들면 쉬운 성격 · 가치관 질문. 3개가 되면 더 만들지 않는다.
+    같은 질문에 다시 요청하면 이미 만든 다음 질문을 돌려준다 (화면이 두 번 보내도 하나만 생김)."""
+    questions = (await db.execute(
+        select(InterviewQuestion).where(InterviewQuestion.interview_id == interview.id).order_by(InterviewQuestion.order)
+    )).scalars().all()
+    after = [q for q in questions if q.order == question.order + 1]
+    if after:
+        return {"question": _question_dict(after[0])}
+    if len(questions) >= TRIAL_QUESTION_COUNT or question.order != questions[-1].order:
+        return {"question": None, "reason": "체험 면접은 질문 3개로 끝납니다"}
+
+    answer = body.answer_text if body.answer_text is not None else (question.answer_text or "")
+    asked = [q.question_text for q in questions]
+    # 직무 면접이 아니라 성격 · 가치관 면접 → '강점 · 약점'과 '판단 근거(왜)' 유형을 먼저.
+    # 질문 모델은 직무 면접으로 학습해 '지원하신 직무에서는…'처럼 묻기도 해서(10/28 시험), 그런 질문이면 다른 유형으로 한 번 더
+    text = None
+    for prefer in (("strength", "why"), ("why", "role")):
+        text = await generate_follow_up(question.question_text, answer, asked,
+                                        [q.question_text for q in questions if q.follow_up_of is not None],
+                                        prefer_types=prefer)
+        if not text or not _TRIAL_JOB_WORDS.search(text):
+            break
+        logger.info(f"체험 꼬리 질문이 직무를 물어 다시 만듦: {text[:50]!r}")
+        text = None
+    follow_up_of = question.id if text else None
+    if not text:
+        text = next((q for q in TRIAL_BACKUP_QUESTIONS if q not in asked), TRIAL_BACKUP_QUESTIONS[-1])
+    nxt = InterviewQuestion(interview_id=interview.id, order=question.order + 1, question_text=text, follow_up_of=follow_up_of)
+    db.add(nxt)
+    interview.total_questions = len(questions) + 1
+    await db.commit()
+    await db.refresh(nxt)
+    return {"question": _question_dict(nxt)}
+
+
 @router.post("/{interview_id}/questions/{question_id}/follow-up")
 async def create_follow_up(
     interview_id: int,
@@ -258,6 +327,8 @@ async def create_follow_up(
     """
     interview = await _own_interview(db, interview_id, user_id)
     question = await _own_question(db, interview_id, question_id, user_id)
+    if interview.interview_type == "trial":
+        return await _trial_next_question(db, interview, question, body)
     if question.follow_up_of is not None:
         return {"question": None, "reason": "꼬리 질문에는 다시 묻지 않습니다"}
 

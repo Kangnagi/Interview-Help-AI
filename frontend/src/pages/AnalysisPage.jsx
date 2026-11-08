@@ -82,7 +82,7 @@ export default function AnalysisPage() {
   const answeredQuestions = (analysis.question_feedbacks || []).filter((q) => q.answer_text)
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto' }}>
+    <div style={{ maxWidth: 1000, margin: '0 auto' }}>   {/* 1줄 박스 3개가 들어가게 800 → 1000 */}
       <div className="flex justify-between items-center" style={{ marginBottom: 28 }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700 }}>면접 분석 결과</h2>
@@ -91,29 +91,31 @@ export default function AnalysisPage() {
         <button className="btn btn-outline btn-sm" onClick={() => navigate('/dashboard')}>← 대시보드</button>
       </div>
 
-      {/* 종합 점수 */}
-      <div className="card" style={{ textAlign: 'center', marginBottom: 20, padding: 36 }}>
-        <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }}>종합 점수</p>
-        <p style={{ fontSize: 64, fontWeight: 800, color: totalColor, lineHeight: 1 }}>
-          {analysis.total_score?.toFixed(0) ?? '—'}
-        </p>
-        <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 4 }}>/ 100점</p>
-        <Link to="/score-guide" style={{ display: 'inline-block', marginTop: 10, fontSize: 13, color: 'var(--primary)', fontWeight: 600 }}>
-          점수는 어떻게 매겨지나요? 점수 기준표 보기 →
-        </Link>
-        {analysis.feedback_summary && (
-          <p style={{ marginTop: 16, color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.7 }}>
-            {analysis.feedback_summary}
+      {/* 1줄: 종합 점수 | 영역별 점수 | 세부 항목 */}
+      <div className="grid-3" style={{ marginBottom: 20 }}>
+        {/* 종합 점수 */}
+        <div className="card" style={{ textAlign: 'center', padding: 28, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }}>종합 점수</p>
+          <p style={{ fontSize: 64, fontWeight: 800, color: totalColor, lineHeight: 1 }}>
+            {analysis.total_score?.toFixed(0) ?? '—'}
           </p>
-        )}
-      </div>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 4 }}>/ 100점</p>
+          <Link to="/score-guide" style={{ display: 'inline-block', marginTop: 10, fontSize: 13, color: 'var(--primary)', fontWeight: 600 }}>
+            점수는 어떻게 매겨지나요? 점수 기준표 보기 →
+          </Link>
+          {analysis.feedback_summary && (
+            <p style={{ marginTop: 16, color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.7 }}>
+              {analysis.feedback_summary}
+            </p>
+          )}
+        </div>
 
-      <div className="grid-2" style={{ marginBottom: 20 }}>
         {/* 레이더 차트 */}
-        <div className="card">
-          <h3 style={{ fontWeight: 600, fontSize: 14, marginBottom: 16 }}>영역별 점수</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <RadarChart data={radarData}>
+        <div className="card ap-radar" style={{ paddingLeft: 10, paddingRight: 10 }}>   {/* 좁은 칸(태블릿)에서도 항목 이름이 잘리지 않게 좌우 여백을 줄임 */}
+          <h3 style={{ fontWeight: 600, fontSize: 14, marginBottom: 16, paddingLeft: 14 }}>영역별 점수</h3>
+          {/* 좌우 여백(margin)만 비워 두고 남은 칸을 그래프로 꽉 채움 — 칸 폭에 따라 크기가 저절로 맞춰져 태블릿에서도 이름이 잘리지 않음 */}
+          <ResponsiveContainer width="100%" height={320}>
+            <RadarChart data={radarData} outerRadius="100%" margin={{ top: 24, right: 50, bottom: 24, left: 50 }}>
               <PolarGrid />
               <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} />
               <Radar name="점수" dataKey="score" stroke="#4F6EF7" fill="#4F6EF7" fillOpacity={0.25} />
@@ -139,7 +141,7 @@ export default function AnalysisPage() {
         </div>
       </div>
 
-      {/* 강점 / 개선점 */}
+      {/* 2줄: 강점 | 개선점 */}
       <div className="grid-2" style={{ marginBottom: 20 }}>
         <div className="card" style={{ border: '1px solid #D1FAE5', background: '#F0FDF4' }}>
           <h3 style={{ fontWeight: 600, fontSize: 14, color: '#065F46', marginBottom: 12 }}>✅ 강점</h3>
