@@ -1171,7 +1171,7 @@ def follow_up_question(keyword: str, avoid: set, types: list, motive: bool = Fal
 
 
 async def generate_follow_up(question: str, answer: str, existing_questions: list,
-                             previous_follow_ups: list = ()) -> Optional[str]:
+                             previous_follow_ups: list = (), prefer_types: tuple = ()) -> Optional[str]:
     """방금 답변으로 꼬리 질문 하나. 파고들 키워드가 없거나 실패하면 None (면접은 원래 순서대로 이어진다).
 
     유형은 답변을 보고 고르되, 이 면접의 앞 꼬리 질문이 쓴 유형은 피한다 (꼬리 질문이 둘이면 서로 다른 유형).
@@ -1186,6 +1186,9 @@ async def generate_follow_up(question: str, answer: str, existing_questions: lis
         return None
     used = frozenset(t for t in (follow_up_type_of(q) for q in previous_follow_ups) if t)
     types = follow_up_types(question, answer, used)
+    if prefer_types:   # 면접 체험: 직무 상황보다 성격 · 가치관 쪽 유형(강점 · 판단 근거)을 먼저 — 앞 꼬리 질문이 쓴 유형은 뒤로
+        first = [t for t in prefer_types if t not in used] + [t for t in prefer_types if t in used]
+        types = first + [t for t in types if t not in first]
     # 질문 어댑터가 있으면 유형대로 직접 쓴 꼬리 질문을 먼저, 두 번 다 탈락하면 아래 키워드 + 질문 틀 방식
     if llama_service.has_qgen_adapter:
         for t in types[:2]:   # 탈락하면 다음 유형으로 한 번 더 (한 번에 약 2초)

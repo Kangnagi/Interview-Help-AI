@@ -92,6 +92,19 @@ export default function ResumeListPage() {
           border:1.5px solid #c7d7fd; border-radius:14px;
           padding:18px 20px; margin-bottom:24px;
         }
+        .rl-trial {
+          width:100%; display:flex; align-items:center; gap:14px; text-align:left; cursor:pointer;
+          background:linear-gradient(135deg,#4f6ef7,#6d85f8); color:#fff; border:none; border-radius:14px;
+          padding:16px 20px; margin-bottom:16px; box-shadow:0 6px 18px rgba(79,110,247,.25); transition:transform .15s, box-shadow .15s;
+        }
+        .rl-trial:hover { transform:translateY(-1px); box-shadow:0 8px 22px rgba(79,110,247,.35); }
+        .rl-trial:focus-visible { outline:3px solid #c7d2fe; outline-offset:2px; }
+        .rl-trial__icon { font-size:26px; flex-shrink:0; }
+        .rl-trial__body { flex:1; display:flex; flex-direction:column; gap:3px; min-width:0; }
+        .rl-trial__body b { font-size:15px; }
+        .rl-trial__body span { font-size:12.5px; opacity:.9; line-height:1.5; }
+        .rl-trial__go { flex-shrink:0; font-size:13px; font-weight:700; background:rgba(255,255,255,.18); padding:8px 14px; border-radius:10px; white-space:nowrap; }
+        @media (max-width: 600px) { .rl-trial { flex-wrap:wrap; } .rl-trial__go { width:100%; text-align:center; } }
         .rl-guide__icon { font-size:28px; flex-shrink:0; margin-top:2px; }
         .rl-guide__title { font-size:15px; font-weight:700; color:#3730a3; margin-bottom:6px; }
         .rl-guide__steps { display:flex; flex-direction:column; gap:4px; }
@@ -166,6 +179,16 @@ export default function ResumeListPage() {
           ✏️ 자기소개서 작성
         </button>
       </div>
+
+      {/* 면접 체험 — 자기소개서 없이 바로 (경진대회 피드백: 연습 · 실전은 오래 걸리고 질문이 어렵다) */}
+      <button type="button" className="rl-trial" onClick={() => navigate('/interview/trial')}>
+        <span className="rl-trial__icon">⚡</span>
+        <span className="rl-trial__body">
+          <b>처음이라면 면접 체험부터</b>
+          <span>자기소개서 없이 질문 3개 · 약 3분 — 자기소개를 하면 답변을 듣고 이어서 묻습니다</span>
+        </span>
+        <span className="rl-trial__go">체험 시작 →</span>
+      </button>
 
       {/* 이용 안내 배너 */}
       <div className="rl-guide">

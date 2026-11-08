@@ -8,6 +8,7 @@ import { adminAPI } from '@/services/adminAPI'                   // 관리자 �
 // 사이드바 네비게이션 메뉴
 const NAV_ITEMS = [
   { to: '/dashboard', icon: '🏠', label: '대시보드' },
+  { to: '/interview/trial', icon: '⚡', label: '면접 체험' },   // 자기소개서 없이 3문항 (전시회 · 처음 써 보는 사람용)
   { to: '/resume',    icon: '📄', label: '면접 시작' },
   { to: '/history',   icon: '📋', label: '면접 이력' },
   { to: '/score-guide', icon: '📏', label: '점수 기준표' },
