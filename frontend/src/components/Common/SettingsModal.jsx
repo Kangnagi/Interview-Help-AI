@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { authAPI } from '@/services/api'
 import toast from 'react-hot-toast'
+import CameraSettingsTab from '@/components/Common/CameraSettingsTab'   // 카메라 미리보기 · 장치 · 밝기 · 대비
+import MicSettingsTab from '@/components/Common/MicSettingsTab'         // 마이크 고르기 · 소리 크기 · 녹음해서 들어 보기
 
 const TAB = { CAMERA: 'camera', MIC: 'mic', PROFILE: 'profile', DATA: 'data' }
 
@@ -11,14 +13,6 @@ export default function SettingsModal({ onClose }) {
   const navigate = useNavigate()
   const [withdrawing, setWithdrawing] = useState(false)
   const [tab, setTab] = useState(TAB.CAMERA)
-
-  // 카메라 설정
-  const [brightness, setBrightness] = useState(100)
-  const [contrast, setContrast] = useState(100)
-
-  // 마이크 설정
-  const [volume, setVolume] = useState(80)
-  const [noiseCancel, setNoiseCancel] = useState(true)
 
   // 개인 정보
   const [profileForm, setProfileForm] = useState({ username: user?.username || '', currentPw: '', newPw: '', confirmPw: '' })
@@ -97,7 +91,18 @@ export default function SettingsModal({ onClose }) {
         .sm-danger-btn { background:#fff1f1; color:#ef4444; border:1.5px solid #fecaca; border-radius:8px; padding:10px 18px; font:inherit; font-weight:600; font-size:13px; cursor:pointer; width:100%; transition:background .15s; margin-bottom:10px; }
         .sm-danger-btn:hover { background:#fee2e2; }
         .sm-save-btn { background:var(--primary); color:#fff; border:none; border-radius:8px; padding:10px 24px; font:inherit; font-weight:600; cursor:pointer; font-size:14px; }
-        .sm-preview-box { background:#111827; border-radius:10px; display:flex; align-items:center; justify-content:center; height:100px; color:rgba(255,255,255,.5); font-size:13px; margin-bottom:16px; }
+        .sm-cam-preview { position:relative; background:#111827; border-radius:10px; overflow:hidden; aspect-ratio:4 / 3; height:200px; margin:0 auto 18px; }
+        .sm-cam-preview video { width:100%; height:100%; object-fit:cover; }
+        .sm-cam-msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:16px; color:rgba(255,255,255,.6); font-size:13px; line-height:1.6; }
+        .sm-cam-note { font-size:12px; color:var(--text-muted, #6B7280); line-height:1.6; margin:-8px 0 16px; }
+        .sm-mic-meter { position:relative; height:12px; background:#f3f4f6; border-radius:99px; overflow:hidden; }
+        .sm-mic-meter > div { height:100%; border-radius:99px; transition:width .08s linear, background .2s; }
+        .sm-mic-good { position:absolute; top:0; bottom:0; left:47%; width:40%; border-left:2px dashed rgba(16,185,129,.5); border-right:2px dashed rgba(16,185,129,.5); }
+        .sm-mic-scale { position:relative; display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text-muted, #6B7280); margin-top:6px; height:16px; }
+        .sm-mic-scale button { position:absolute; top:0; transform:translateX(-50%); white-space:nowrap; background:none; border:none; font:inherit; font-size:11px; color:var(--primary); cursor:pointer; padding:0; }
+        .sm-mic-hint { font-size:12px; color:var(--text-muted, #6B7280); line-height:1.6; margin-top:8px; }
+        .sm-reset-btn:disabled { opacity:.5; cursor:default; }
+        .sm-reset-btn { background:#f3f4f6; color:var(--text-secondary); border:none; border-radius:8px; padding:10px 18px; font:inherit; font-size:14px; cursor:pointer; }
         .sm-section-title { font-size:13px; font-weight:700; color:var(--text-primary); margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border); }
       `}</style>
 
@@ -121,45 +126,10 @@ export default function SettingsModal({ onClose }) {
           {/* 내용 */}
           <div className="sm-content">
             {/* 카메라 */}
-            {tab === TAB.CAMERA && (
-              <>
-                <div className="sm-section-title">📷 카메라 설정</div>
-                <div className="sm-preview-box">📷 카메라 미리보기 (실제 연결 시 표시)</div>
-                <div className="sm-group">
-                  <div className="sm-label"><span>밝기 (Brightness)</span><span style={{ color: 'var(--primary)' }}>{brightness}%</span></div>
-                  <input type="range" className="sm-slider" min={50} max={150} value={brightness} onChange={(e) => setBrightness(+e.target.value)} />
-                </div>
-                <div className="sm-group">
-                  <div className="sm-label"><span>대비 (Contrast)</span><span style={{ color: 'var(--primary)' }}>{contrast}%</span></div>
-                  <input type="range" className="sm-slider" min={50} max={150} value={contrast} onChange={(e) => setContrast(+e.target.value)} />
-                </div>
-                <button className="sm-save-btn" onClick={() => handleSave('카메라')}>저장</button>
-              </>
-            )}
+            {tab === TAB.CAMERA && <CameraSettingsTab />}
 
             {/* 마이크 */}
-            {tab === TAB.MIC && (
-              <>
-                <div className="sm-section-title">🎙️ 마이크 설정</div>
-                <div className="sm-group">
-                  <div className="sm-label"><span>마이크 볼륨</span><span style={{ color: 'var(--primary)' }}>{volume}%</span></div>
-                  <input type="range" className="sm-slider" min={0} max={100} value={volume} onChange={(e) => setVolume(+e.target.value)} />
-                </div>
-                <div className="sm-group">
-                  <div className="sm-label" style={{ justifyContent: 'flex-start', gap: 12 }}>
-                    <label className="sm-toggle">
-                      <input type="checkbox" checked={noiseCancel} onChange={(e) => setNoiseCancel(e.target.checked)} />
-                      <span className="sm-toggle-slider" />
-                    </label>
-                    <span>노이즈 캔슬링</span>
-                  </div>
-                </div>
-                <div style={{ background: '#f0f4ff', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#4f6ef7', marginBottom: 16 }}>
-                  💡 실제 마이크 설정은 브라우저 권한이 허용되어야 동작합니다.
-                </div>
-                <button className="sm-save-btn" onClick={() => handleSave('마이크')}>저장</button>
-              </>
-            )}
+            {tab === TAB.MIC && <MicSettingsTab />}
 
             {/* 개인 정보 */}
             {tab === TAB.PROFILE && (

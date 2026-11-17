@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition, STT_PROBLEM_TEXT } from '@/hooks/useSpeechRecognition'
+import { withMicGain } from '@/utils/micSettings'           // 설정 > 마이크 녹음 음량 (100%면 원음 그대로)
+import { cameraVideoStyle } from '@/utils/cameraSettings'   // 설정 > 카메라 (밝기 · 대비 · 좌우 반전, 화면 표시만)
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
 import { wsUrl, recordingAudioConstraints, IS_MOBILE_DEVICE } from '@/services/websocket'
@@ -117,10 +119,12 @@ export default function RealInterviewPage({ trial = false }) {
       // 첫 조각보다 먼저 '지금은 이 질문의 답변'을 알린다 — 녹음도 연결이 열린 뒤에 시작해 앞부분 조각을 잃지 않는다
       if (currentQIdRef.current) ws.send(JSON.stringify({ type: 'question', question_id: currentQIdRef.current }))
       let recorder
+      const rec = withMicGain(stream)   // 녹음 음량 적용 (마이크 스트림 자체는 그대로 두고 소리 처리만 따로)
       try {
-        recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+        recorder = new MediaRecorder(rec.stream, { mimeType: 'audio/webm' })
       } catch (err) {
         console.error('녹음 시작 실패 (발화 분석 없이 진행):', err)
+        rec.close()
         ws.close()
         return
       }
@@ -128,7 +132,7 @@ export default function RealInterviewPage({ trial = false }) {
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data)
       }
-      recorder.onstop = () => ws.close()   // stop() 뒤 마지막 조각까지 보낸 다음 연결을 닫는다
+      recorder.onstop = () => { ws.close(); rec.close() }   // stop() 뒤 마지막 조각까지 보낸 다음 연결을 닫는다
       recorder.start(250)                  // 서버 CHUNK_SECONDS(0.25)와 같은 간격 — 질문 구간 시각 보정에 쓰임
     }
   }, [backendInterviewId])
@@ -562,7 +566,7 @@ export default function RealInterviewPage({ trial = false }) {
               boxShadow: micActive ? '0 0 16px rgba(34,197,94,.4)' : '0 4px 20px rgba(0,0,0,.5)',
               transition: 'border-color .15s, box-shadow .15s', background: '#111827',
             }}>
-              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
+              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', ...cameraVideoStyle() }} autoPlay playsInline muted />
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
               {faceStatus === 'detecting' && <div className="face-badge detecting"><span className="face-dot" />인식 중...</div>}
               {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}

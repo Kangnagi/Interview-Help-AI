@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition, STT_PROBLEM_TEXT } from '@/hooks/useSpeechRecognition'
+import { withMicGain } from '@/utils/micSettings'           // 설정 > 마이크 녹음 음량 (100%면 원음 그대로)
+import { cameraVideoStyle } from '@/utils/cameraSettings'   // 설정 > 카메라 (밝기 · 대비 · 좌우 반전, 화면 표시만)
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
 import { wsUrl, recordingAudioConstraints, IS_MOBILE_DEVICE } from '@/services/websocket'
@@ -125,7 +127,15 @@ export default function PracticeInterviewPage() {
           stream.getTracks().forEach((t) => t.stop())
           return
         }
-        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+        const rec = withMicGain(stream)   // 녹음 음량 적용 — 아래 정리 코드가 recorder.stream을 멈추므로 원래 마이크도 같이 놓게 묶어 둔다
+        const recorder = new MediaRecorder(rec.stream, { mimeType: 'audio/webm' })
+        if (rec.stream !== stream) {
+          recorder.addEventListener('stop', rec.close)
+          rec.stream.getTracks().forEach((t) => {
+            const stopProcessed = t.stop.bind(t)
+            t.stop = () => { stopProcessed(); stream.getTracks().forEach((m) => m.stop()); rec.close() }
+          })
+        }
         mediaRecorderRef.current = recorder
         recorder.ondataavailable = (e) => {
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data)
@@ -555,7 +565,7 @@ export default function PracticeInterviewPage() {
           {/* Camera */}
           <div className="iv-cam" style={{ position: 'absolute', bottom: 20, right: 20, zIndex: 10, width: 400, height: 290 }}>
             <div style={{ width: '100%', height: '100%', borderRadius: 14, overflow: 'hidden', position: 'relative', border: '2px solid rgba(255,255,255,.1)', boxShadow: '0 4px 20px rgba(0,0,0,.5)', background: '#111827' }}>
-              <video ref={attachVideo} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
+              <video ref={attachVideo} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', ...cameraVideoStyle() }} autoPlay playsInline muted />
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
               {faceStatus === 'detecting' && <div className="face-badge detecting"><span className="face-dot" />인식 중...</div>}
               {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}
