@@ -398,7 +398,7 @@ export default function RealInterviewPage({ trial = false }) {
   }
 
   if (phase === 'setup' && (resumesReady || trial)) {
-    return <InterviewSetup resumeInfo={trial ? TRIAL_INFO : resume} onReady={handleSetupReady} />
+    return <InterviewSetup resumeInfo={trial ? TRIAL_INFO : resume} onReady={handleSetupReady} onBack={() => navigate(trial ? '/dashboard' : '/resume')} />
   }
 
   if (!trial && !resume && !resumesReady) return (

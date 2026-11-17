@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 
-export default function InterviewSetup({ resumeInfo, onReady }) {
+// onBack: 헤더의 '돌아가기' (면접 기록은 '준비 완료' 뒤에 만들어지므로 여기서 나가도 남는 것이 없다.
+//         카메라 · 마이크는 화면을 벗어날 때 아래 정리 코드가 끈다)
+export default function InterviewSetup({ resumeInfo, onReady, onBack }) {
   const videoRef = useRef(null)
   const camStreamRef = useRef(null)
   const rafRef = useRef(null)
@@ -207,7 +209,7 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
         @media (max-width: 760px) {
           .is-root { overflow-y: auto; }
           .is-header { padding: 12px 16px !important; }
-          .is-hint { display: none; }
+          .is-back { padding: 6px 10px !important; }
           .is-banner { padding: 10px 16px !important; flex-wrap: wrap; }
           .is-body { flex: none !important; flex-direction: column; overflow: visible !important; }
           .is-col { flex: none !important; padding: 14px 16px !important; border-right: none !important; }
@@ -239,9 +241,13 @@ export default function InterviewSetup({ resumeInfo, onReady }) {
           )}
         </div>
         <div style={{ flex: 1 }} />
-        <div className="is-hint" style={{ fontSize: 12, color: 'rgba(255,255,255,.2)', textAlign: 'right', lineHeight: 1.6 }}>
-          카메라와 마이크를 확인하고<br />준비가 되면 시작하세요
-        </div>
+        {onBack && (
+          <button type="button" className="is-back" onClick={onBack} aria-label="돌아가기"
+                  style={{ background: 'transparent', color: 'rgba(255,255,255,.7)', border: '1.5px solid rgba(255,255,255,.15)',
+                           borderRadius: 8, padding: '7px 12px', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>
+            ← 돌아가기
+          </button>
+        )}
       </div>
 
       {/* 권한/장치 오류 배너 */}
