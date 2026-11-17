@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition, STT_PROBLEM_TEXT } from '@/hooks/useSpeechRecognition'
+import { cameraVideoStyle } from '@/utils/cameraSettings'   // 설정 > 카메라 (밝기 · 대비 · 좌우 반전, 화면 표시만)
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
 import { wsUrl, recordingAudioConstraints, IS_MOBILE_DEVICE } from '@/services/websocket'
@@ -562,7 +563,7 @@ export default function RealInterviewPage({ trial = false }) {
               boxShadow: micActive ? '0 0 16px rgba(34,197,94,.4)' : '0 4px 20px rgba(0,0,0,.5)',
               transition: 'border-color .15s, box-shadow .15s', background: '#111827',
             }}>
-              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }} autoPlay playsInline muted />
+              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', ...cameraVideoStyle() }} autoPlay playsInline muted />
               <div style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, color: 'rgba(255,255,255,.5)', background: 'rgba(0,0,0,.4)', padding: '2px 7px', borderRadius: 99 }}>📹 나</div>
               {faceStatus === 'detecting' && <div className="face-badge detecting"><span className="face-dot" />인식 중...</div>}
               {faceStatus === 'detected' && <div className="face-badge detected"><span className="face-dot" />얼굴 인식됨</div>}

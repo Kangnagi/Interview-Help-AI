@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import { cameraVideoStyle, loadCameraSettings, saveCameraSettings } from '@/utils/cameraSettings'   // 설정 > 카메라
+import { loadMicSettings, saveMicSettings } from '@/utils/micSettings'                                // 설정 > 마이크
 
 // onBack: 헤더의 '돌아가기' (면접 기록은 '준비 완료' 뒤에 만들어지므로 여기서 나가도 남는 것이 없다.
 //         카메라 · 마이크는 화면을 벗어날 때 아래 정리 코드가 끈다)
@@ -61,8 +63,13 @@ export default function InterviewSetup({ resumeInfo, onReady, onBack }) {
         const allMics = devs.filter((d) => d.kind === 'audioinput')
         setCameras(cams)
         setMics(allMics)
-        if (cams[0]) setSelCam(cams[0].deviceId)
-        if (allMics[0]) setSelMic(allMics[0].deviceId)
+        // 설정 > 카메라에서 고른 카메라가 있으면 그것부터 (없으면 첫 카메라)
+        const saved = loadCameraSettings().deviceId
+        const pick = cams.find((c) => c.deviceId === saved) || cams[0]
+        if (pick) setSelCam(pick.deviceId)
+        const savedMic = loadMicSettings().deviceId                     // 설정 > 마이크에서 고른 마이크부터
+        const pickMic = allMics.find((m) => m.deviceId === savedMic) || allMics[0]
+        if (pickMic) setSelMic(pickMic.deviceId)
       } catch {}
     }
     init()
@@ -315,7 +322,7 @@ export default function InterviewSetup({ resumeInfo, onReady, onBack }) {
           }}>
             <video
               ref={videoRef} autoPlay muted playsInline
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scaleX(-1)' }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', ...cameraVideoStyle() }}
             />
             {/* 연결 중 상태 */}
             {!camOk && !camError && (
@@ -360,7 +367,7 @@ export default function InterviewSetup({ resumeInfo, onReady, onBack }) {
             <label style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', display: 'block', marginBottom: 7 }}>
               카메라 선택 {cameras.length > 0 && <span style={{ color: 'rgba(79,110,247,.7)' }}>({cameras.length}개 감지됨)</span>}
             </label>
-            <select className="setup-select" value={selCam} onChange={(e) => { setCamError(null); setSelCam(e.target.value) }}>
+            <select className="setup-select" value={selCam} onChange={(e) => { setCamError(null); setSelCam(e.target.value); saveCameraSettings({ deviceId: e.target.value }) }}>
               {cameras.length === 0 && <option value="">카메라를 찾을 수 없습니다</option>}
               {cameras.map((c, i) => (
                 <option key={c.deviceId} value={c.deviceId}>{c.label || `카메라 ${i + 1}`}</option>
@@ -460,7 +467,7 @@ export default function InterviewSetup({ resumeInfo, onReady, onBack }) {
             <label style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', display: 'block', marginBottom: 7 }}>
               마이크 선택 {mics.length > 0 && <span style={{ color: 'rgba(79,110,247,.7)' }}>({mics.length}개 감지됨)</span>}
             </label>
-            <select className="setup-select" value={selMic} onChange={(e) => { setMicError(null); setSelMic(e.target.value) }}>
+            <select className="setup-select" value={selMic} onChange={(e) => { setMicError(null); setSelMic(e.target.value); saveMicSettings({ deviceId: e.target.value }) }}>
               {mics.length === 0 && <option value="">마이크를 찾을 수 없습니다</option>}
               {mics.map((m, i) => (
                 <option key={m.deviceId} value={m.deviceId}>{m.label || `마이크 ${i + 1}`}</option>
