@@ -4,6 +4,7 @@ import { useAuthStore } from '@/store/authStore'                 // 사용자 �
 import SettingsModal from '@/components/Common/SettingsModal'     // 설정 모달 (미구현?)
 import toast from 'react-hot-toast'                              // 토스트 알림
 import { adminAPI } from '@/services/adminAPI'                   // 관리자 여부 확인 (관리자 메뉴 표시용)
+import SiteFooter from '@/components/Common/SiteFooter'         // 하단 약관 링크 · 운영 정보
 
 // 사이드바 네비게이션 메뉴
 const NAV_ITEMS = [
@@ -90,6 +91,7 @@ export default function Layout() {
         <div className="layout__content">
           <Outlet />                                              {/* 현재 라우트의 페이지 컴포넌트 렌더링 */}
         </div>
+        <SiteFooter />
       </main>
 
       {/* 설정 모달 */}

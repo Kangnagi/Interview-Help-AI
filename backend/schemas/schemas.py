@@ -22,6 +22,10 @@ class UserCreate(BaseModel):
     # 평문 수신 후 security.py에서 argon2 해싱 처리. 8자 이상 (비밀번호 재설정과 같은 기준 — 예전엔 가입만 1글자도 됐다),
     # 128자 이하 (아주 긴 값으로 해싱에 시간을 끄는 것 방지)
     password: str = Field(min_length=8, max_length=128)
+    # 필수 동의 (가입 화면 체크박스) — 하나라도 빠지면 routers/auth.py register가 400
+    agree_terms: bool = False      # 이용약관
+    agree_privacy: bool = False    # 개인정보 수집 · 이용
+    over_14: bool = False          # 만 14세 이상
 
     @field_validator("username", mode="before")
     @classmethod
@@ -66,6 +70,11 @@ class PasswordResetConfirm(BaseModel):
     """POST /auth/password-reset/confirm — 새 비밀번호 설정"""
     token: str = Field(max_length=200)
     new_password: str = Field(max_length=128)
+
+
+class AccountDelete(BaseModel):
+    """DELETE /auth/me — 회원 탈퇴 (본인 확인용 비밀번호)"""
+    password: str = Field(max_length=128)
 
 
 # ─── Interview (면접) ─────────────────────────────────────────────────────────

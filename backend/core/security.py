@@ -4,6 +4,7 @@ from jose import JWTError, jwt                   # JWT 생성/디코딩 라이�
 from passlib.context import CryptContext         # 비밀번호 해싱 컨텍스트
 from fastapi import Depends, HTTPException, status   # FastAPI DI, HTTP 예외, 상태 코드
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials   # Bearer 토큰 추출
+from sqlalchemy import select                    # 탈퇴 · 정지 계정 확인
 from sqlalchemy.ext.asyncio import AsyncSession   # 계정 잠금 상태 갱신 시 사용
 from core.config import settings                 # SECRET_KEY, ALGORITHM 등 설정
 
@@ -60,6 +61,15 @@ async def get_current_user_id(
     if user_id is None:
         # sub 클레임이 없는 경우 (잘못된 토큰 구조)
         raise HTTPException(status_code=401, detail="토큰에 사용자 정보가 없습니다")
+
+    # 탈퇴(또는 정지)한 계정이면 아직 만료 전인 토큰이라도 막는다 — 다른 탭 · 기기에 남은 토큰으로
+    # 탈퇴 뒤에 자기소개서 · 면접 기록이 다시 쌓이지 않게 (회원 탈퇴: services/account.py)
+    from core.database import AsyncSessionLocal       # 순환 import 방지
+    from models.user import User
+    async with AsyncSessionLocal() as s:               # 요청 처리용 세션과 따로 짧게 열고 닫는다
+        active = (await s.execute(select(User.is_active).where(User.id == int(user_id)))).scalar_one_or_none()
+    if not active:
+        raise HTTPException(status_code=401, detail="다시 로그인해 주세요")
 
     return int(user_id)   # 문자열로 저장된 ID를 정수로 변환하여 반환
 

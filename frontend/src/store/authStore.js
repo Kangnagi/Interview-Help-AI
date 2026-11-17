@@ -32,10 +32,11 @@ export const useAuthStore = create((set) => ({
   },
 
   // 회원가입 함수
-  register: async (email, username, password) => {
+  // agreements = { agree_terms, agree_privacy, over_14 } — 필수 동의 (서버도 셋 다 true인지 확인)
+  register: async (email, username, password, agreements = {}) => {
     set({ loading: true, error: null })
     try {
-      await authAPI.register({ email, username, password })           // 백엔드 회원가입 요청
+      await authAPI.register({ email, username, password, ...agreements })   // 백엔드 회원가입 요청
       set({ loading: false })
       return true
     } catch (err) {

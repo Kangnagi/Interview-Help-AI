@@ -1,11 +1,15 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import { authAPI } from '@/services/api'
 import toast from 'react-hot-toast'
 
 const TAB = { CAMERA: 'camera', MIC: 'mic', PROFILE: 'profile', DATA: 'data' }
 
 export default function SettingsModal({ onClose }) {
-  const { user } = useAuthStore()
+  const { user, logout } = useAuthStore()
+  const navigate = useNavigate()
+  const [withdrawing, setWithdrawing] = useState(false)
   const [tab, setTab] = useState(TAB.CAMERA)
 
   // 카메라 설정
@@ -43,10 +47,28 @@ export default function SettingsModal({ onClose }) {
     setDeleteType(null); setDeleteInput('')
   }
 
-  const handleAccountDelete = () => {
-    if (deleteInput !== user?.username) return toast.error('아이디를 정확히 입력해주세요')
-    toast.success('회원 탈퇴가 처리되었습니다')
-    onClose()
+  // 회원 탈퇴 — 서버에서 자기소개서 · 면접 기록 · 녹음 · 감점 장면 사진을 모두 지우고 계정 정보를 비운다 (DELETE /auth/me)
+  const handleAccountDelete = async () => {
+    if (!deleteInput) return toast.error('비밀번호를 입력해주세요')
+    setWithdrawing(true)
+    try {
+      await authAPI.withdraw(deleteInput)
+      // 이 브라우저에 남은 이 계정의 기록도 지운다
+      localStorage.removeItem('ai_interview_resumes')
+      if (user?.id != null) {
+        localStorage.removeItem(`ai_interview_records_${user.id}`)
+        localStorage.removeItem(`tutorial_done_${user.id}`)
+      }
+      logout()
+      toast.success('회원 탈퇴가 처리되었습니다. 모든 기록이 삭제되었습니다.')
+      onClose()
+      navigate('/login', { replace: true })
+    } catch (err) {
+      const d = err.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : '탈퇴 처리에 실패했습니다. 잠시 후 다시 시도해주세요.')
+    } finally {
+      setWithdrawing(false)
+    }
   }
 
   return (
@@ -190,14 +212,17 @@ export default function SettingsModal({ onClose }) {
                     <div style={{ fontWeight: 700, color: '#ef4444', marginBottom: 8, fontSize: 14 }}>
                       {deleteType === 'data' ? '⚠️ 면접 데이터를 정말 삭제하시겠습니까?' : '⚠️ 정말 탈퇴하시겠습니까?'}
                     </div>
-                    <div style={{ fontSize: 13, color: '#9ca3af', marginBottom: 12 }}>
-                      {deleteType === 'data' ? '"삭제"를 입력하세요.' : `아이디 "${user?.username}"을 정확히 입력하세요.`}
+                    <div style={{ fontSize: 13, color: '#9ca3af', marginBottom: 12, lineHeight: 1.6 }}>
+                      {deleteType === 'data'
+                        ? '"삭제"를 입력하세요.'
+                        : <>자기소개서 · 면접 기록 · 녹음 · 감점 장면 사진이 <b style={{ color: '#ef4444' }}>모두 삭제되며 되돌릴 수 없습니다.</b><br />확인을 위해 비밀번호를 입력하세요.</>}
                     </div>
-                    <input className="sm-input" value={deleteInput} onChange={(e) => setDeleteInput(e.target.value)} style={{ marginBottom: 10 }} />
+                    <input className="sm-input" type={deleteType === 'account' ? 'password' : 'text'} autoComplete={deleteType === 'account' ? 'current-password' : 'off'}
+                           maxLength={128} value={deleteInput} onChange={(e) => setDeleteInput(e.target.value)} style={{ marginBottom: 10 }} />
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button onClick={() => setDeleteType(null)} style={{ flex: 1, background: '#f3f4f6', border: 'none', borderRadius: 8, padding: '9px', font: 'inherit', cursor: 'pointer' }}>취소</button>
-                      <button onClick={deleteType === 'data' ? handleDataDelete : handleAccountDelete} style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8, padding: '9px', font: 'inherit', fontWeight: 600, cursor: 'pointer' }}>
-                        {deleteType === 'data' ? '삭제' : '탈퇴'}
+                      <button disabled={withdrawing} onClick={deleteType === 'data' ? handleDataDelete : handleAccountDelete} style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8, padding: '9px', font: 'inherit', fontWeight: 600, cursor: withdrawing ? 'wait' : 'pointer' }}>
+                        {deleteType === 'data' ? '삭제' : withdrawing ? '처리 중...' : '탈퇴'}
                       </button>
                     </div>
                   </div>
