@@ -15,6 +15,17 @@ const NAV_ITEMS = [
   { to: '/score-guide', icon: '📏', label: '점수 기준표' },
 ]
 
+// 머리글에 보여 줄 지금 화면 이름 (메뉴에 없는 화면은 따로)
+function pageTitle(pathname, navItems) {
+  if (pathname === '/resume/new') return '자기소개서 작성'
+  if (/^\/resume\/[^/]+\/edit/.test(pathname)) return '자기소개서 수정'
+  if (/^\/resume\/[^/]+\/history/.test(pathname)) return '자기소개서별 면접 기록'
+  if (/^\/interview\/[^/]+\/report/.test(pathname)) return '세부 분석 리포트'
+  if (/^\/(analysis\/[^/]+|interview\/[^/]+\/result)/.test(pathname)) return '면접 분석 결과'
+  const hit = navItems.find((it) => pathname === it.to || pathname.startsWith(it.to + '/'))
+  return hit ? hit.label : '내일의 면접'
+}
+
 export default function Layout() {
   const { user, logout } = useAuthStore()                        // 사용자 정보 및 로그아웃 함수
   const navigate = useNavigate()                                 // 페이지 네비게이션
@@ -62,7 +73,7 @@ export default function Layout() {
         </nav>
 
         {/* 사용자 정보 및 로그아웃 */}
-        <div style={{ marginTop: 'auto', padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
+        <div className="sidebar__foot">
           <button
             onClick={() => setShowSettings(true)}
             style={{ width: '100%', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, padding: '9px 14px', color: 'rgba(255,255,255,.55)', fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}
@@ -86,7 +97,8 @@ export default function Layout() {
       <main className="layout__main">
         <header className="layout__header">
           <button className="layout__menu-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="메뉴 열기" aria-expanded={menuOpen}>☰</button>
-          <h2 style={{ fontSize: 16, fontWeight: 600 }}>내일의 면접</h2>
+          {/* 사이트 이름은 왼쪽 사이드바에 있으니 여기엔 지금 보고 있는 화면 이름 */}
+          <h2 style={{ fontSize: 16, fontWeight: 600 }}>{pageTitle(pathname, navItems)}</h2>
         </header>
         <div className="layout__content">
           <Outlet />                                              {/* 현재 라우트의 페이지 컴포넌트 렌더링 */}

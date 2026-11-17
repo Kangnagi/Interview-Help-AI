@@ -29,6 +29,7 @@
   /* 레이아웃 */
   --sidebar-width:  240px;
   --header-height:  64px;
+  --side-foot-height: 172px;   /* 사이드바 아래 사용자 칸 = 화면 하단 푸터 높이 (두 칸의 윗선을 맞춘다) */
   --radius-sm:      6px;
   --radius-md:      10px;
   --radius-lg:      16px;
@@ -209,8 +210,28 @@ input:focus, textarea:focus, select:focus { border-color: var(--border-focus); }
 
 /* ── 사이드바 ──────────────────────────────────── */
 .sidebar__logo {
-  padding: 20px 20px 16px;
+  /* 오른쪽 머리글(.layout__header)과 같은 높이 → 아랫선이 한 줄로 이어진다 */
+  height: var(--header-height);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 20px;
   border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.sidebar__foot {
+  margin-top: auto;
+  min-height: var(--side-foot-height);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 16px 20px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+@media (min-width: 901px) {
+  /* 푸터를 사이드바 아래 칸과 같은 높이로 → 맨 아래에서 두 윗선이 맞는다 */
+  .layout__main > .sf { min-height: var(--side-foot-height); margin-top: 32px; display: flex; flex-direction: column; justify-content: center; }
 }
 .sidebar__logo h1 {
   font-size: 16px;
