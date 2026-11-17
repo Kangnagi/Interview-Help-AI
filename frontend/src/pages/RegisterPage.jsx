@@ -7,7 +7,7 @@ import SiteFooter from '@/components/Common/SiteFooter'       // 약관 링크
 // 필수 동의 3가지 — 서버(routers/auth.py register)도 셋 다 true인지 확인한다
 const AGREE_ITEMS = [
   { key: 'agree_terms',   label: '이용약관에 동의합니다', link: '/terms' },
-  { key: 'agree_privacy', label: '개인정보 수집 · 이용에 동의합니다', link: '/privacy' },
+  { key: 'agree_privacy', label: '개인정보 수집 및 이용에 동의합니다', link: '/privacy' },
   { key: 'over_14',       label: '만 14세 이상입니다' },
 ]
 

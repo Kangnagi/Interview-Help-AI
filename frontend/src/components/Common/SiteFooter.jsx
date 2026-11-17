@@ -11,7 +11,6 @@ export default function SiteFooter({ compact = false }) {
       <Link to="/terms">이용약관</Link>
       <Link to="/privacy" className="sf-strong">개인정보처리방침</Link>
       <Link to="/ai-notice">AI 분석 안내</Link>
-      {!compact && <Link to="/score-guide">점수 기준표</Link>}
       {!compact && SITE.contactEmail && <a href={`mailto:${SITE.contactEmail}`}>문의하기</a>}
     </nav>
   )
@@ -21,11 +20,11 @@ export default function SiteFooter({ compact = false }) {
       <style>{CSS}</style>
       {compact ? links : (
         <>
-          <div className="sf-name">{SITE.name} · AI 모의면접 연습 서비스</div>
+          <div className="sf-name">{SITE.name}, AI 모의면접 연습 서비스</div>
           {links}
           <div className="sf-info">
             운영: {SITE.team} 팀 ({SITE.school ? `${SITE.school} ` : ''}{SITE.year} 졸업작품)
-            {SITE.contactEmail && <> · 문의: <a href={`mailto:${SITE.contactEmail}`}>{SITE.contactEmail}</a></>}
+            {SITE.contactEmail && <>, 문의: <a href={`mailto:${SITE.contactEmail}`}>{SITE.contactEmail}</a></>}
           </div>
           <div className="sf-info">AI 분석 결과는 면접 연습을 위한 참고 자료이며, 실제 채용 결과를 보장하지 않습니다.</div>
           <div className="sf-copy">© {SITE.year} {SITE.team}. All rights reserved.</div>

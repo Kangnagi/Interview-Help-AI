@@ -215,7 +215,7 @@ export default function SettingsModal({ onClose }) {
                     <div style={{ fontSize: 13, color: '#9ca3af', marginBottom: 12, lineHeight: 1.6 }}>
                       {deleteType === 'data'
                         ? '"삭제"를 입력하세요.'
-                        : <>자기소개서 · 면접 기록 · 녹음 · 감점 장면 사진이 <b style={{ color: '#ef4444' }}>모두 삭제되며 되돌릴 수 없습니다.</b><br />확인을 위해 비밀번호를 입력하세요.</>}
+                        : <>자기소개서, 면접 기록, 녹음, 감점 장면 사진이 <b style={{ color: '#ef4444' }}>모두 삭제되며 되돌릴 수 없습니다.</b><br />확인을 위해 비밀번호를 입력하세요.</>}
                     </div>
                     <input className="sm-input" type={deleteType === 'account' ? 'password' : 'text'} autoComplete={deleteType === 'account' ? 'current-password' : 'off'}
                            maxLength={128} value={deleteInput} onChange={(e) => setDeleteInput(e.target.value)} style={{ marginBottom: 10 }} />
