@@ -98,6 +98,8 @@ export default function SettingsModal({ onClose }) {
         .sm-mic-meter { position:relative; height:12px; background:#f3f4f6; border-radius:99px; overflow:hidden; }
         .sm-mic-meter > div { height:100%; border-radius:99px; transition:width .08s linear, background .2s; }
         .sm-mic-good { position:absolute; top:0; bottom:0; left:47%; width:40%; border-left:2px dashed rgba(16,185,129,.5); border-right:2px dashed rgba(16,185,129,.5); }
+        .sm-mic-scale { position:relative; display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text-muted, #6B7280); margin-top:6px; height:16px; }
+        .sm-mic-scale button { position:absolute; top:0; transform:translateX(-50%); white-space:nowrap; background:none; border:none; font:inherit; font-size:11px; color:var(--primary); cursor:pointer; padding:0; }
         .sm-mic-hint { font-size:12px; color:var(--text-muted, #6B7280); line-height:1.6; margin-top:8px; }
         .sm-reset-btn:disabled { opacity:.5; cursor:default; }
         .sm-reset-btn { background:#f3f4f6; color:var(--text-secondary); border:none; border-radius:8px; padding:10px 18px; font:inherit; font-size:14px; cursor:pointer; }

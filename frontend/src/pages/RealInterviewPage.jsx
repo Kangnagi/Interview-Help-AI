@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useResumeStore } from '@/store/resumeStore'
 import { useSpeechRecognition, STT_PROBLEM_TEXT } from '@/hooks/useSpeechRecognition'
+import { withMicGain } from '@/utils/micSettings'           // 설정 > 마이크 녹음 음량 (100%면 원음 그대로)
 import { cameraVideoStyle } from '@/utils/cameraSettings'   // 설정 > 카메라 (밝기 · 대비 · 좌우 반전, 화면 표시만)
 import InterviewSetup from '@/components/Interview/InterviewSetup'
 import { interviewAPI, analysisAPI } from '@/services/api'
@@ -118,10 +119,12 @@ export default function RealInterviewPage({ trial = false }) {
       // 첫 조각보다 먼저 '지금은 이 질문의 답변'을 알린다 — 녹음도 연결이 열린 뒤에 시작해 앞부분 조각을 잃지 않는다
       if (currentQIdRef.current) ws.send(JSON.stringify({ type: 'question', question_id: currentQIdRef.current }))
       let recorder
+      const rec = withMicGain(stream)   // 녹음 음량 적용 (마이크 스트림 자체는 그대로 두고 소리 처리만 따로)
       try {
-        recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+        recorder = new MediaRecorder(rec.stream, { mimeType: 'audio/webm' })
       } catch (err) {
         console.error('녹음 시작 실패 (발화 분석 없이 진행):', err)
+        rec.close()
         ws.close()
         return
       }
@@ -129,7 +132,7 @@ export default function RealInterviewPage({ trial = false }) {
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data)
       }
-      recorder.onstop = () => ws.close()   // stop() 뒤 마지막 조각까지 보낸 다음 연결을 닫는다
+      recorder.onstop = () => { ws.close(); rec.close() }   // stop() 뒤 마지막 조각까지 보낸 다음 연결을 닫는다
       recorder.start(250)                  // 서버 CHUNK_SECONDS(0.25)와 같은 간격 — 질문 구간 시각 보정에 쓰임
     }
   }, [backendInterviewId])

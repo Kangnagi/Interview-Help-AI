@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { recordingAudioConstraints } from '@/services/websocket'
-import { loadMicSettings, saveMicSettings } from '@/utils/micSettings'
+import { loadMicSettings, saveMicSettings, MIC_GAIN_MIN, MIC_GAIN_MAX } from '@/utils/micSettings'
 
 const TEST_SECONDS = 4
 
 /**
- * 설정 > 마이크 — 쓸 마이크 고르기, 실시간 소리 크기, 녹음해서 들어 보기.
+ * 설정 > 마이크 — 쓸 마이크 고르기, 녹음 음량, 실시간 소리 크기, 녹음해서 들어 보기.
+ * 소리 크기 막대와 시험 녹음 모두 녹음 음량을 적용한 소리라서, 면접 녹음과 같은 크기로 보인다.
  * 면접 녹음과 같은 조건(브라우저 소음 제거 · 자동 음량 조절 끔)으로 받아서, 여기서 들리는 크기가 실제 녹음 크기와 같다.
  * 이 탭이 닫히면(다른 탭 · 설정 창 닫기) 마이크를 끈다.
  */
@@ -14,8 +15,11 @@ export default function MicSettingsTab() {
   const streamRef = useRef(null)
   const recorderRef = useRef(null)
   const timerRef = useRef(null)
+  const gainRef = useRef(null)                        // 녹음 음량 (슬라이더를 움직이면 바로 바뀜)
+  const destRef = useRef(null)                        // 음량을 적용한 소리 (시험 녹음용)
   const [mics, setMics] = useState([])
   const [deviceId, setDeviceId] = useState(() => loadMicSettings().deviceId)
+  const [gain, setGain] = useState(() => loadMicSettings().gain)   // 녹음 음량 % (100 = 그대로)
   const [status, setStatus] = useState('loading')   // loading | ok | denied | notfound | busy | unavailable | other
   const [level, setLevel] = useState(0)              // 0~100 (지금 소리 크기)
   const [verdict, setVerdict] = useState('quiet')    // quiet | low | good | loud (최근 2초 기준)
@@ -58,7 +62,14 @@ export default function MicSettingsTab() {
         if (ctx.state === 'suspended') ctx.resume()
         const analyser = ctx.createAnalyser()
         analyser.fftSize = 2048
-        ctx.createMediaStreamSource(s).connect(analyser)
+        const g = ctx.createGain()
+        g.gain.value = loadMicSettings().gain / 100
+        gainRef.current = g
+        const dest = ctx.createMediaStreamDestination()
+        destRef.current = dest
+        ctx.createMediaStreamSource(s).connect(g)        // 마이크 → 녹음 음량 → (소리 크기 재기, 시험 녹음)
+        g.connect(analyser)
+        g.connect(dest)
         const buf = new Float32Array(analyser.fftSize)
         const recent = []                                  // 최근 2초의 [시각, 소리 dB, 깨짐 여부]
         let frame = 0
@@ -87,6 +98,9 @@ export default function MicSettingsTab() {
     }
   }, [deviceId])
 
+  // 슬라이더 → 막대 · 시험 녹음에 바로 반영
+  useEffect(() => { if (gainRef.current) gainRef.current.gain.value = gain / 100 }, [gain, status])
+
   useEffect(() => () => {                                    // 탭을 벗어나면 마이크 끄기 · 녹음 정리
     clearInterval(timerRef.current)
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
@@ -96,7 +110,7 @@ export default function MicSettingsTab() {
 
   // 녹음해서 들어 보기 — 지금 마이크로 몇 초 녹음해서 바로 재생 (서버로 보내지 않음)
   const recordTest = () => {
-    const s = streamRef.current
+    const s = destRef.current?.stream                     // 녹음 음량을 적용한 소리로 녹음
     if (!s || recLeft) return
     let rec
     try { rec = new MediaRecorder(s) } catch { toast.error('이 브라우저에서는 녹음해 볼 수 없습니다'); return }
@@ -116,7 +130,7 @@ export default function MicSettingsTab() {
   }
 
   const save = () => {
-    saveMicSettings({ deviceId })
+    saveMicSettings({ deviceId, gain })
     toast.success('마이크 설정을 저장했습니다. 다음 면접부터 적용됩니다')
   }
 
@@ -146,6 +160,21 @@ export default function MicSettingsTab() {
       </div>
 
       <div className="sm-group">
+        <div className="sm-label">
+          <span>녹음 음량</span>
+          <span style={{ color: 'var(--primary)' }}>{gain}%</span>
+        </div>
+        <input type="range" className="sm-slider" min={MIC_GAIN_MIN} max={MIC_GAIN_MAX} step={5} value={gain}
+               onChange={(e) => setGain(+e.target.value)} disabled={status !== 'ok'} />
+        <div className="sm-mic-scale">
+          <span>작게</span>
+          {/* 100% 눈금 위치 (50~200% 중 1/3 지점) */}
+          <button type="button" onClick={() => setGain(100)} style={{ left: `${((100 - MIC_GAIN_MIN) / (MIC_GAIN_MAX - MIC_GAIN_MIN)) * 100}%` }}>▲ 100% 원래 크기</button>
+          <span>크게</span>
+        </div>
+      </div>
+
+      <div className="sm-group">
         <div className="sm-label"><span>녹음해서 들어 보기</span></div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <button type="button" className="sm-reset-btn" onClick={recordTest} disabled={status !== 'ok' || recLeft > 0}>
@@ -154,11 +183,6 @@ export default function MicSettingsTab() {
           {playUrl && <audio src={playUrl} controls autoPlay style={{ height: 36, flex: 1, minWidth: 200 }} />}
         </div>
         <p className="sm-mic-hint">녹음한 소리는 이 화면에서만 재생되고 서버로 보내지 않습니다.</p>
-      </div>
-
-      <div className="sm-cam-note" style={{ marginTop: 0 }}>
-        소리가 작거나 크면 Windows의 설정 &gt; 시스템 &gt; 소리 &gt; 입력에서 마이크 볼륨을 조절해 주세요(Mac은 시스템 설정 &gt; 사운드 &gt; 입력).
-        목소리 분석이 정확하도록 면접 녹음에는 브라우저의 소음 제거와 자동 음량 조절을 쓰지 않습니다.
       </div>
 
       <button className="sm-save-btn" onClick={save} disabled={!deviceId}>저장</button>
@@ -175,9 +199,9 @@ function errorKind(err) {
 
 const VERDICT = {
   quiet: { label: '소리가 거의 없음', color: '#9ca3af', hint: '말해도 막대가 움직이지 않으면 다른 마이크를 골라 보세요.' },
-  low:   { label: '조금 작음', color: '#f59e0b', hint: '마이크에 조금 더 가까이 가거나 마이크 볼륨을 올려 주세요.' },
+  low:   { label: '조금 작음', color: '#f59e0b', hint: '아래 녹음 음량을 올리거나 마이크에 조금 더 가까이 가 주세요.' },
   good:  { label: '적당함', color: '#10b981', hint: '이 정도 크기면 목소리 분석에 충분합니다.' },
-  loud:  { label: '너무 큼', color: '#ef4444', hint: '소리가 깨질 수 있습니다. 마이크에서 조금 떨어지거나 볼륨을 낮춰 주세요.' },
+  loud:  { label: '너무 큼', color: '#ef4444', hint: '소리가 깨질 수 있습니다. 아래 녹음 음량을 낮추거나 마이크에서 조금 떨어져 주세요.' },
 }
 
 const STATUS_TEXT = {
