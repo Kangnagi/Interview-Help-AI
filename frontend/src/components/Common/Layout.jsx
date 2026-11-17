@@ -54,8 +54,8 @@ export default function Layout() {
       {/* 사이드바 — 로고, 네비게이션, 사용자 정보 */}
       <aside className={`layout__sidebar${menuOpen ? ' open' : ''}`}>
         <div className="sidebar__logo">
-          <h1>내일의 <span>면접</span></h1>
-          <p style={{ color: 'rgba(255,255,255,.4)', fontSize: 12, marginTop: 4 }}>v0.1.0 · 개발 환경</p>
+          {/* 대표 이미지(사이트 아이콘)를 글자 줄 높이에 맞춰 왼쪽에. 버전 표시는 하단 푸터로 옮김 */}
+          <h1><img src="/favicon.svg" alt="" className="sidebar__logo-img" /><div>내일의 <span>면접</span></div></h1>
         </div>
 
         {/* 네비게이션 메뉴 */}

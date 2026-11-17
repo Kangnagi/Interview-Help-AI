@@ -7,4 +7,5 @@ export const SITE = {
   privacyOfficer: '일 딴 고 팀 (서버와 AI 담당)',
   effectiveDate: '2026년 11월 17일',   // 약관 · 개인정보처리방침 시행일
   year: 2026,
+  version: 'v0.1.0 개발 환경',   // 하단 푸터 맨 아래에 작게 표시
 }

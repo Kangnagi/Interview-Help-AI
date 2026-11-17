@@ -238,7 +238,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--border-focus); }
   font-weight: 700;
   color: #fff;
   letter-spacing: -.2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+.sidebar__logo-img { width: 22px; height: 22px; flex-shrink: 0; }
 .sidebar__logo span { color: var(--primary); }
 
 .sidebar__nav { flex: 1; padding: 16px 12px; }

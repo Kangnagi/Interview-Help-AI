@@ -27,7 +27,7 @@ export default function SiteFooter({ compact = false }) {
             {SITE.contactEmail && <>, 문의: <a href={`mailto:${SITE.contactEmail}`}>{SITE.contactEmail}</a></>}
           </div>
           <div className="sf-info">AI 분석 결과는 면접 연습을 위한 참고 자료이며, 실제 채용 결과를 보장하지 않습니다.</div>
-          <div className="sf-copy">© {SITE.year} {SITE.team}. All rights reserved.</div>
+          <div className="sf-copy">© {SITE.year} {SITE.team}. All rights reserved.{SITE.version && <span className="sf-ver">{SITE.version}</span>}</div>
         </>
       )}
     </footer>
@@ -44,6 +44,7 @@ const CSS = `
 .sf-links .sf-strong { font-weight:700; color:var(--text-primary); }
 .sf-info a { color:inherit; }
 .sf-copy { margin-top:6px; }
+.sf-ver { margin-left:12px; font-size:11px; opacity:.7; }
 .sf-compact { border-top:none; padding:16px 0 20px; margin-top:0; text-align:center; }
 .sf-compact .sf-links { justify-content:center; margin:0; }
 @media (max-width:900px) { .sf { padding:16px 16px 20px; } }
