@@ -97,6 +97,7 @@ const FIELD_NAMES = {
 // ── Auth API (인증 관련 엔드포인트) ─────────────────────────────────
 export const authAPI = {
   register:             (data) => api.post('/auth/register', data),
+  withdraw:             (password) => api.delete('/auth/me', { data: { password } }),   // 회원 탈퇴 (기록 모두 삭제)
   login:                (data) => api.post('/auth/login', data),
   requestPasswordReset: (data) => api.post('/auth/password-reset/request', data),
   confirmPasswordReset: (data) => api.post('/auth/password-reset/confirm', data),

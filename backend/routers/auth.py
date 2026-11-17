@@ -7,6 +7,7 @@
   POST /auth/refresh                 — 아직 유효한 토큰을 새 토큰으로 연장 (사용 중 자동 연장, 로그인 후 SESSION_MAX_HOURS까지)
   POST /auth/password-reset/request  — 비밀번호 재설정 이메일 요청
   POST /auth/password-reset/confirm  — 토큰 검증 후 새 비밀번호 저장
+  DELETE /auth/me                    — 회원 탈퇴 (비밀번호 확인 → 기록 모두 삭제, services/account.py)
 """
 import secrets
 import time
@@ -32,8 +33,9 @@ from core.email_service import send_password_reset_email
 from models.user import User
 from schemas.schemas import (
     UserCreate, UserLogin, UserResponse, TokenResponse,
-    PasswordResetRequest, PasswordResetConfirm,
+    PasswordResetRequest, PasswordResetConfirm, AccountDelete,
 )
+from services.account import withdraw_user
 
 router = APIRouter(prefix="/auth", tags=["인증"])
 
@@ -47,6 +49,10 @@ async def register(request: Request, body: UserCreate, db: AsyncSession = Depend
     이메일 중복 확인 후 argon2 해시된 비밀번호로 User 레코드 생성.
     성공 시 생성된 사용자 정보를 반환 (비밀번호 제외).
     """
+    # 필수 동의 (이용약관 · 개인정보 수집 · 이용 · 만 14세 이상) — 화면에서도 막지만 API로 바로 보내는 경우도 막는다
+    if not (body.agree_terms and body.agree_privacy and body.over_14):
+        raise HTTPException(status_code=400, detail="필수 항목(이용약관 · 개인정보 수집 · 이용 · 만 14세 이상)에 모두 동의해야 가입할 수 있습니다")
+
     # 동일 이메일이 이미 있으면 400 반환 — 이메일은 로그인 식별자이므로 유일해야 함
     result = await db.execute(select(User).where(User.email == body.email))
     if result.scalar_one_or_none():
@@ -167,3 +173,27 @@ async def confirm_password_reset(request: Request, body: PasswordResetConfirm, d
     await db.commit()
 
     return {"message": "비밀번호가 성공적으로 변경되었습니다. 새 비밀번호로 로그인해주세요."}
+
+
+@router.delete("/me", status_code=200)
+@limiter.limit("5/minute")
+async def delete_account(request: Request, body: AccountDelete,
+                         credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+                         db: AsyncSession = Depends(get_db)):
+    """
+    회원 탈퇴 — 비밀번호를 다시 확인한 뒤 면접 기록 · 녹음 · 감점 장면 사진 · 자기소개서를 모두 지우고
+    계정의 이메일 · 이름 · 비밀번호를 지운다 (services/account.py). 되돌릴 수 없다.
+
+    관리자 계정(.env ADMIN_EMAILS)은 관리자 검토 기록이 걸려 있어 여기서 탈퇴할 수 없다.
+    """
+    payload = decode_token(credentials.credentials)
+    user = await db.get(User, int(payload.get("sub") or 0))
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="다시 로그인해 주세요")
+    if (user.email or "").lower() in settings.admin_emails:
+        raise HTTPException(status_code=403, detail="관리자 계정은 탈퇴할 수 없습니다")
+    if not verify_password(body.password, user.hashed_password):
+        await register_failed_login(user, db)                 # 비밀번호 맞히기 시도도 로그인 실패와 같이 센다
+        raise HTTPException(status_code=400, detail="비밀번호가 올바르지 않습니다")
+    removed = await withdraw_user(db, user)
+    return {"message": "회원 탈퇴가 처리되었습니다. 그동안 이용해 주셔서 감사합니다.", **removed}

@@ -19,6 +19,7 @@ import RealInterviewPage from '@/pages/RealInterviewPage'             // 실전 
 import InterviewResultPage from '@/pages/InterviewResultPage'         // 면접 상세 분석 리포트 페이지
 import AdminReviewPage from '@/pages/AdminReviewPage'                 // 관리자 검토 (AI 채점 바로잡기 → 재학습 데이터)
 import ScoreGuidePage from '@/pages/ScoreGuidePage'                 // 면접 점수 기준표 (N-S 차트)
+import PolicyPage from '@/pages/PolicyPage'                         // 이용약관 · 개인정보처리방침 · AI 분석 안내 (공개)
 
 // 보호된 라우트 — 로그인한 사용자만 접근 가능 (토큰 확인)
 function PrivateRoute({ children }) {
@@ -37,6 +38,9 @@ export default function App() {
       <Route path="/register"         element={<RegisterPage />} />
       <Route path="/forgot-password"  element={<ForgotPasswordPage />} />
       <Route path="/reset-password"   element={<ResetPasswordPage />} />
+      <Route path="/terms"            element={<PolicyPage doc="terms" />} />
+      <Route path="/privacy"          element={<PolicyPage doc="privacy" />} />
+      <Route path="/ai-notice"        element={<PolicyPage doc="ai" />} />
 
       {/* 풀스크린 면접 라우트 (Layout 밖 — 사이드바/헤더 없음) */}
       <Route path="/interview/practice/:resumeId" element={<PrivateRoute><PracticeInterviewPage /></PrivateRoute>} />

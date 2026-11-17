@@ -4,6 +4,7 @@ import { useAuthStore } from '@/store/authStore'                 // 사용자 �
 import SettingsModal from '@/components/Common/SettingsModal'     // 설정 모달 (미구현?)
 import toast from 'react-hot-toast'                              // 토스트 알림
 import { adminAPI } from '@/services/adminAPI'                   // 관리자 여부 확인 (관리자 메뉴 표시용)
+import SiteFooter from '@/components/Common/SiteFooter'         // 하단 약관 링크 · 운영 정보
 
 // 사이드바 네비게이션 메뉴
 const NAV_ITEMS = [
@@ -13,6 +14,17 @@ const NAV_ITEMS = [
   { to: '/history',   icon: '📋', label: '면접 이력' },
   { to: '/score-guide', icon: '📏', label: '점수 기준표' },
 ]
+
+// 머리글에 보여 줄 지금 화면 이름 (메뉴에 없는 화면은 따로)
+function pageTitle(pathname, navItems) {
+  if (pathname === '/resume/new') return '자기소개서 작성'
+  if (/^\/resume\/[^/]+\/edit/.test(pathname)) return '자기소개서 수정'
+  if (/^\/resume\/[^/]+\/history/.test(pathname)) return '자기소개서별 면접 기록'
+  if (/^\/interview\/[^/]+\/report/.test(pathname)) return '세부 분석 리포트'
+  if (/^\/(analysis\/[^/]+|interview\/[^/]+\/result)/.test(pathname)) return '면접 분석 결과'
+  const hit = navItems.find((it) => pathname === it.to || pathname.startsWith(it.to + '/'))
+  return hit ? hit.label : '내일의 면접'
+}
 
 export default function Layout() {
   const { user, logout } = useAuthStore()                        // 사용자 정보 및 로그아웃 함수
@@ -42,8 +54,8 @@ export default function Layout() {
       {/* 사이드바 — 로고, 네비게이션, 사용자 정보 */}
       <aside className={`layout__sidebar${menuOpen ? ' open' : ''}`}>
         <div className="sidebar__logo">
-          <h1>내일의 <span>면접</span></h1>
-          <p style={{ color: 'rgba(255,255,255,.4)', fontSize: 12, marginTop: 4 }}>v0.1.0 · 개발 환경</p>
+          {/* 대표 이미지(사이트 아이콘)를 글자 줄 높이에 맞춰 왼쪽에. 버전 표시는 하단 푸터로 옮김 */}
+          <h1><img src="/favicon.svg" alt="" className="sidebar__logo-img" /><div>내일의 <span>면접</span></div></h1>
         </div>
 
         {/* 네비게이션 메뉴 */}
@@ -61,7 +73,7 @@ export default function Layout() {
         </nav>
 
         {/* 사용자 정보 및 로그아웃 */}
-        <div style={{ marginTop: 'auto', padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
+        <div className="sidebar__foot">
           <button
             onClick={() => setShowSettings(true)}
             style={{ width: '100%', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, padding: '9px 14px', color: 'rgba(255,255,255,.55)', fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}
@@ -85,11 +97,13 @@ export default function Layout() {
       <main className="layout__main">
         <header className="layout__header">
           <button className="layout__menu-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="메뉴 열기" aria-expanded={menuOpen}>☰</button>
-          <h2 style={{ fontSize: 16, fontWeight: 600 }}>내일의 면접</h2>
+          {/* 사이트 이름은 왼쪽 사이드바에 있으니 여기엔 지금 보고 있는 화면 이름 */}
+          <h2 style={{ fontSize: 16, fontWeight: 600 }}>{pageTitle(pathname, navItems)}</h2>
         </header>
         <div className="layout__content">
           <Outlet />                                              {/* 현재 라우트의 페이지 컴포넌트 렌더링 */}
         </div>
+        <SiteFooter />
       </main>
 
       {/* 설정 모달 */}

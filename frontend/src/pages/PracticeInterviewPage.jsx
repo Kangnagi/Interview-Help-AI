@@ -358,7 +358,7 @@ export default function PracticeInterviewPage() {
   }
 
   if (phase === PHASE.SETUP && resumesReady) {
-    return <InterviewSetup resumeInfo={resume} onReady={handleSetupReady} />
+    return <InterviewSetup resumeInfo={resume} onReady={handleSetupReady} onBack={() => navigate('/resume')} />
   }
 
   if (!resume && !resumesReady) return (
