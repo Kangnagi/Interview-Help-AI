@@ -1,9 +1,11 @@
+import { useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { SITE } from '@/constants/siteInfo'
 import SiteFooter from '@/components/Common/SiteFooter'
 
 /**
- * 이용약관, 개인정보처리방침, AI 분석 안내: 로그인 없이도 볼 수 있는 공개 페이지 (가입 화면에서도 연다)
+ * 이용약관, 개인정보처리방침, AI 분석 안내: 로그인 없이도 볼 수 있는 공개 페이지
+ * 가입 화면에서는 페이지로 넘어가지 않고 PolicyModal(카드)로 같은 내용을 띄운다 (11/18)
  * 내용은 실제 동작과 맞춰 둔다: 보관 기간(services/vision/scenes.py · services/voice/recordings.py RETENTION_DAYS),
  * 로그인 잠금(core/config.py ACCOUNT_LOCK_*), 회원 탈퇴(services/account.py)를 바꾸면 여기도 고칠 것.
  */
@@ -34,6 +36,43 @@ export default function PolicyPage({ doc }) {
 }
 
 export const POLICY_PATHS = { terms: '/terms', privacy: '/privacy', ai: '/ai-notice' }
+
+/**
+ * 약관 카드 — 화면 위에 띄워 보여 준다 (가입 화면의 '보기'). 입력하던 내용은 그대로 남는다.
+ * onAgree가 있으면 '동의하고 닫기' 버튼을 보여 준다.
+ */
+export function PolicyModal({ doc, onClose, onAgree }) {
+  const page = PAGES[doc] || PAGES.terms
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'                    // 뒤 화면은 스크롤되지 않게
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
+  }, [onClose])
+
+  return (
+    <div className="pol-modal-bg" onClick={onClose}>
+      <style>{CSS}</style>
+      <div className="pol-modal" role="dialog" aria-modal="true" aria-labelledby="pol-modal-title" onClick={(e) => e.stopPropagation()}>
+        <div className="pol-modal-head">
+          <div>
+            <h2 id="pol-modal-title" className="pol-title" style={{ fontSize: 19, marginBottom: 2 }}>{page.title}</h2>
+            <p className="pol-sub" style={{ marginBottom: 0 }}>{SITE.name}, 시행일 {SITE.effectiveDate}</p>
+          </div>
+          <button type="button" className="pol-modal-x" onClick={onClose} aria-label="닫기">✕</button>
+        </div>
+        <div className="pol-modal-body">{page.body()}</div>
+        <div className="pol-modal-foot">
+          {onAgree
+            ? <><button type="button" className="pol-modal-btn" onClick={onClose}>닫기</button>
+                <button type="button" className="pol-modal-btn on" onClick={() => { onAgree(); onClose() }} autoFocus>동의하고 닫기</button></>
+            : <button type="button" className="pol-modal-btn on" onClick={onClose} autoFocus>확인</button>}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const A = ({ n, title, children }) => (
   <section className="pol-art">
@@ -272,5 +311,14 @@ const CSS = `
 .pol-table th { background:#f9fafb; font-weight:600; white-space:nowrap; }
 .pol-table td:first-child { white-space:nowrap; font-weight:600; color:var(--text-primary); }
 .pol-note { font-size:13px; color:var(--text-muted, #6B7280); margin-top:8px; }
+.pol-modal-bg { position:fixed; inset:0; z-index:1000; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center; padding:20px; }
+.pol-modal { width:100%; max-width:640px; max-height:min(80vh, 760px); background:#fff; border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); display:flex; flex-direction:column; overflow:hidden; text-align:left; }
+.pol-modal-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:20px 24px 14px; border-bottom:1px solid var(--border); }
+.pol-modal-x { background:none; border:none; font-size:18px; line-height:1; padding:4px; cursor:pointer; color:var(--text-muted, #6B7280); }
+.pol-modal-body { overflow-y:auto; padding:18px 24px 4px; overscroll-behavior:contain; }
+.pol-modal-foot { display:flex; justify-content:flex-end; gap:8px; padding:12px 24px 16px; border-top:1px solid var(--border); }
+.pol-modal-btn { font:inherit; font-size:14px; padding:9px 18px; border-radius:var(--radius-md); border:1.5px solid var(--border); background:#fff; cursor:pointer; color:var(--text-secondary); }
+.pol-modal-btn.on { background:var(--primary); border-color:var(--primary); color:#fff; font-weight:600; }
+@media (max-width:600px) { .pol-modal-head, .pol-modal-body, .pol-modal-foot { padding-left:18px; padding-right:18px; } }
 @media (max-width:600px) { .pol-box { padding:22px 18px; } .pol-page { padding-top:16px; } }
 `
