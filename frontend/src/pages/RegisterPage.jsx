@@ -2,12 +2,12 @@ import { useState } from 'react'                              // 로컬 상태 �
 import { Link, useNavigate } from 'react-router-dom'          // 라우팅
 import { useAuthStore } from '@/store/authStore'              // 회원가입 상태 관리
 import toast from 'react-hot-toast'                           // 토스트 알림
-import SiteFooter from '@/components/Common/SiteFooter'       // 약관 링크
+import { PolicyModal } from '@/pages/PolicyPage'             // 약관 '보기' 카드
 
 // 필수 동의 3가지 — 서버(routers/auth.py register)도 셋 다 true인지 확인한다
 const AGREE_ITEMS = [
-  { key: 'agree_terms',   label: '이용약관에 동의합니다', link: '/terms' },
-  { key: 'agree_privacy', label: '개인정보 수집 및 이용에 동의합니다', link: '/privacy' },
+  { key: 'agree_terms',   label: '이용약관에 동의합니다', doc: 'terms' },
+  { key: 'agree_privacy', label: '개인정보 수집 및 이용에 동의합니다', doc: 'privacy' },
   { key: 'over_14',       label: '만 14세 이상입니다' },
 ]
 
@@ -16,6 +16,7 @@ export default function RegisterPage() {
   const [form, setForm] = useState({ email: '', username: '', password: '', confirm: '' })
   const [agree, setAgree] = useState({ agree_terms: false, agree_privacy: false, over_14: false })
   const allAgreed = AGREE_ITEMS.every((it) => agree[it.key])
+  const [viewing, setViewing] = useState(null)                 // '보기'로 연 약관 항목 (카드로 띄움)
   const { register, loading, error } = useAuthStore()         // Zustand 스토어: register 함수, loading/error 상태
   const navigate = useNavigate()                              // 페이지 네비게이션
 
@@ -66,7 +67,7 @@ export default function RegisterPage() {
             </div>
           ))}
 
-          {/* 필수 동의 — 전체 동의 + 항목별 (약관 내용은 새 탭으로 열어 입력값이 지워지지 않게) */}
+          {/* 필수 동의 — 전체 동의 + 항목별 (약관 내용은 화면 위 카드로 띄워 입력값이 그대로 남게) */}
           <div style={styles.agreeBox}>
             <label style={{ ...styles.agreeRow, fontWeight: 600, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
               <input type="checkbox" checked={allAgreed}
@@ -80,7 +81,7 @@ export default function RegisterPage() {
                          onChange={(e) => setAgree((a) => ({ ...a, [it.key]: e.target.checked }))} />
                   <span><span style={{ color: 'var(--primary)' }}>(필수)</span> {it.label}</span>
                 </label>
-                {it.link && <a href={it.link} target="_blank" rel="noopener noreferrer" style={styles.agreeLink}>보기</a>}
+                {it.doc && <button type="button" onClick={() => setViewing(it)} style={styles.agreeLink}>보기</button>}
               </div>
             ))}
           </div>
@@ -96,8 +97,11 @@ export default function RegisterPage() {
           이미 계정이 있으신가요?{' '}
           <Link to="/login" style={{ color: 'var(--primary)' }}>로그인</Link>
         </p>
-        <SiteFooter compact />
       </div>
+      {viewing && (
+        <PolicyModal doc={viewing.doc} onClose={() => setViewing(null)}
+                     onAgree={() => setAgree((a) => ({ ...a, [viewing.key]: true }))} />
+      )}
     </div>
   )
 }
@@ -114,6 +118,6 @@ const styles = {
   foot:  { textAlign: 'center', marginTop: 20, fontSize: 14, color: 'var(--text-secondary)' },
   agreeBox:  { border: '1.5px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 },
   agreeRow:  { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' },
-  agreeLink: { fontSize: 12, color: 'var(--text-muted, #6B7280)', textDecoration: 'underline', flexShrink: 0 },
+  agreeLink: { fontSize: 12, color: 'var(--text-muted, #6B7280)', textDecoration: 'underline', flexShrink: 0, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' },
 }
 

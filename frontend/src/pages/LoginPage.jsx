@@ -2,7 +2,6 @@ import { useState } from 'react'                              // 로컬 상태 �
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'   // 라우팅 · 만료 안내(?expired=1&next=…)
 import { useAuthStore } from '@/store/authStore'              // 로그인 상태 관리
 import toast from 'react-hot-toast'                           // 토스트 알림
-import SiteFooter from '@/components/Common/SiteFooter'           // 약관 링크
 
 export default function LoginPage() {
   const [email, setEmail]       = useState('')                 // 이메일 입력값
@@ -68,7 +67,6 @@ export default function LoginPage() {
           계정이 없으신가요?{' '}
           <Link to="/register" style={{ color: 'var(--primary)' }}>회원가입</Link>
         </p>
-        <SiteFooter compact />
       </div>
     </div>
   )
